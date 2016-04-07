@@ -2638,7 +2638,7 @@ public:
   ulong      query_plan_flags; 
   ulong      query_plan_fsort_passes; 
   pthread_t  real_id;                           /* For debugging */
-  my_thread_id  thread_id;
+  my_thread_id  thread_id, thread_dbug_id;
   uint32      os_thread_id;
   uint	     tmp_table, global_disable_checkpoint;
   uint	     server_status,open_options;
@@ -2750,7 +2750,7 @@ public:
   /* for IS NULL => = last_insert_id() fix in remove_eq_conds() */
   bool       substitute_null_with_insert_id;
   bool	     in_lock_tables;
-  bool       bootstrap, cleanup_done;
+  bool       bootstrap, cleanup_done, free_connection_done;
 
   /**  is set if some thread specific value(s) used in a statement. */
   bool       thread_specific_used;
@@ -2892,7 +2892,7 @@ public:
   /* Debug Sync facility. See debug_sync.cc. */
   struct st_debug_sync_control *debug_sync_control;
 #endif /* defined(ENABLED_DEBUG_SYNC) */
-  THD(bool is_wsrep_applier= false);
+  THD(my_thread_id id, bool is_wsrep_applier= false);
 
   ~THD();
 
@@ -2912,6 +2912,8 @@ public:
   void change_user(void);
   void cleanup(void);
   void cleanup_after_query();
+  void free_connection();
+  void reset_for_reuse();
   bool store_globals();
   void reset_globals();
 #ifdef SIGNAL_WITH_VIO_CLOSE
