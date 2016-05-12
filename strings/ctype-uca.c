@@ -19104,7 +19104,7 @@ NULL       ,NULL       ,NULL       ,NULL
 };
 
 #define THAI_CONTRACTIONS 231
-MY_CONTRACTION thai_contraction[THAI_CONTRACTIONS] =
+MY_CONTRACTION thai_contractions[THAI_CONTRACTIONS] =
 {
 	{ /* <THAI CHARACTER SARA E, THAI CHARACTER KO KAI> */
 		{ 0x0E40, 0x0E01, 0 },
@@ -20262,6 +20262,39 @@ MY_CONTRACTION thai_contraction[THAI_CONTRACTIONS] =
 		false
 	},
 };
+MY_UCA_INFO my_uca_v520_th =
+{
+  {
+    {
+      0x10FFFF,      /* maxchar */
+        (uchar *)uca520_length,
+        (uint16 **)uca520_weight,
+        {            /* Contractions: */
+	  THAI_CONTRACTIONS, /*   nitems */
+          thai_contractions, /*   item */
+          NULL               /*   flags */
+      }
+    },
+  },
+
+  0x0009,    /* first_non_ignorable       p != ignore                       */
+  0x1342E,   /* last_non_ignorable        Not a CJK and not UASSIGNED       */
+
+  0x0332,    /* first_primary_ignorable   p == ignore                       */
+  0x101FD,   /* last_primary_ignorable                                      */
+
+  0x0000,    /* first_secondary_ignorable p,s= ignore                       */
+  0xFE73,    /* last_secondary_ignorable                                    */
+
+  0x0000,    /* first_tertiary_ignorable  p,s,t == ignore                   */
+  0xFE73,    /* last_tertiary_ignorable                                     */
+
+  0x0000,    /* first_trailing                                              */
+  0x0000,    /* last_trailing                                               */
+
+  0x0009,    /* first_variable            if alt=non-ignorable: p != ignore */
+  0x1D371,   /* last_variable             if alt=shifter: p,s,t == ignore   */
+};
 
 MY_UCA_INFO my_uca_v520=
 {
@@ -20271,9 +20304,9 @@ MY_UCA_INFO my_uca_v520=
       (uchar *) uca520_length,
       (uint16 **) uca520_weight,
       {              /* Contractions:     */
-	THAI_CONTRACTIONS,           /*   nitems          */
-	thai_contraction,        /*   item            */
-	512       /*   flags           */
+	0,           /*   nitems          */
+	NULL,        /*   item            */
+	NULL       /*   flags           */
       }
     },
   },
@@ -23864,6 +23897,7 @@ init_weight_level(MY_CHARSET_LOADER *loader, MY_COLL_RULES *rules, int level,
     else
       ncontractions++;
   }
+  ncontractions += src->contractions.nitems;
 
   /* Allocate pages that we'll overwrite and copy default weights */
   for (i= 0; i < npages; i++)
@@ -23896,6 +23930,13 @@ init_weight_level(MY_CHARSET_LOADER *loader, MY_COLL_RULES *rules, int level,
   {
     if (apply_one_rule(loader, rules, r, level, dst))
       return TRUE;
+  }
+
+  /*
+    Add Thai contraction from static array thai_contractions.
+  */
+  for (i = 0; i != src->contractions.nitems; i++) {
+	my_uca_add_contraction(&dst->contractions, src->contractions.item[i].ch, 2, false);
   }
   return FALSE;
 }
@@ -25787,6 +25828,39 @@ struct charset_info_st my_charset_utf8_unicode_520_ci=
     &my_charset_utf8_handler,
     &my_collation_any_uca_handler
 };
+
+struct charset_info_st my_charset_utf8_thai_520_ci =
+{
+	MY_PAGE2_COLLATION_ID_UTF8+2,0,0,             /* number       */
+	MY_CS_UTF8MB3_UCA_FLAGS,/* flags     */
+	MY_UTF8MB3,          /* csname       */
+	MY_UTF8MB3 "_thai_520_ci",/* name */
+	"",                  /* comment      */
+	"",                  /* tailoring    */
+	ctype_utf8,          /* ctype        */
+	NULL,                /* to_lower     */
+	NULL,                /* to_upper     */
+	NULL,                /* sort_order   */
+	&my_uca_v520_th,        /* uca          */
+	NULL,                /* tab_to_uni   */
+	NULL,                /* tab_from_uni */
+	&my_unicase_unicode520,/* caseinfo   */
+	NULL,                /* state_map    */
+	NULL,                /* ident_map    */
+	8,                   /* strxfrm_multiply */
+	1,                   /* caseup_multiply  */
+	1,                   /* casedn_multiply  */
+	1,                   /* mbminlen     */
+	3,                   /* mbmaxlen     */
+	9,                   /* min_sort_char */
+	0xFFFF,              /* max_sort_char */
+	' ',                 /* pad char      */
+	0,                   /* escape_with_backslash_is_dangerous */
+	1,                   /* levels_for_order   */
+	&my_charset_utf8_handler,
+	&my_collation_any_uca_handler
+};
+
 
 
 struct charset_info_st my_charset_utf8_vietnamese_ci=
