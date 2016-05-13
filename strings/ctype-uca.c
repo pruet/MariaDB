@@ -20257,6 +20257,11 @@ MY_CONTRACTION thai_contractions[THAI_CONTRACTIONS] =
     { 0x1F9D, 0x1FAE, 0 },
     FALSE
   },
+  { /* <THAI CHARACTER SARA AM> */
+    { 0x0E4D, 0x0E32, 0 },
+    { 0x1FA2, 0 },
+    FALSE
+  },
 };
 
 MY_UCA_INFO my_uca_v520_th =
