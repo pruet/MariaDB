@@ -19104,1164 +19104,1161 @@ NULL       ,NULL       ,NULL       ,NULL
 };
 
 #define THAI_CONTRACTIONS 231
+
 MY_CONTRACTION thai_contractions[THAI_CONTRACTIONS] =
 {
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER KO KAI> */
-		{ 0x0E40, 0x0E01, 0 },
-		{ 0x1F70, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER KO KAI> */
-		{ 0x0E41, 0x0E01, 0 },
-		{ 0x1F70, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER KO KAI> */
-		{ 0x0E42, 0x0E01, 0 },
-		{ 0x1F70, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KO KAI> */
-		{ 0x0E43, 0x0E01, 0 },
-		{ 0x1F70, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KO KAI> */
-		{ 0x0E44, 0x0E01, 0 },
-		{ 0x1F70, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER KHO KHAI> */
-		{ 0x0E40, 0x0E02, 0 },
-		{ 0x1F71, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO KHAI> */
-		{ 0x0E41, 0x0E02, 0 },
-		{ 0x1F71, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER KHO KHAI> */
-		{ 0x0E42, 0x0E02, 0 },
-		{ 0x1F71, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO KHAI> */
-		{ 0x0E43, 0x0E02, 0 },
-		{ 0x1F71, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO KHAI> */
-		{ 0x0E44, 0x0E02, 0 },
-		{ 0x1F71, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER KHO KHUAT> */
-		{ 0x0E40, 0x0E03, 0 },
-		{ 0x1F72, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO KHUAT> */
-		{ 0x0E41, 0x0E03, 0 },
-		{ 0x1F72, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER KHO KHUAT> */
-		{ 0x0E42, 0x0E03, 0 },
-		{ 0x1F72, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO KHUAT> */
-		{ 0x0E43, 0x0E03, 0 },
-		{ 0x1F72, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO KHUAT> */
-		{ 0x0E44, 0x0E03, 0 },
-		{ 0x1F72, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER KHO KHWAI> */
-		{ 0x0E40, 0x0E04, 0 },
-		{ 0x1F73, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO KHWAI> */
-		{ 0x0E41, 0x0E04, 0 },
-		{ 0x1F73, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER KHO KHWAI> */
-		{ 0x0E42, 0x0E04, 0 },
-		{ 0x1F73, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO KHWAI> */
-		{ 0x0E43, 0x0E04, 0 },
-		{ 0x1F73, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO KHWAI> */
-		{ 0x0E44, 0x0E04, 0 },
-		{ 0x1F73, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER KHO KHON> */
-		{ 0x0E40, 0x0E05, 0 },
-		{ 0x1F74, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO KHON> */
-		{ 0x0E41, 0x0E05, 0 },
-		{ 0x1F74, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER KHO KHON> */
-		{ 0x0E42, 0x0E05, 0 },
-		{ 0x1F74, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO KHON> */
-		{ 0x0E43, 0x0E05, 0 },
-		{ 0x1F74, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO KHON> */
-		{ 0x0E44, 0x0E05, 0 },
-		{ 0x1F74, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER KHO RAKHANG> */
-		{ 0x0E40, 0x0E06, 0 },
-		{ 0x1F75, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO RAKHANG> */
-		{ 0x0E41, 0x0E06, 0 },
-		{ 0x1F75, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER KHO RAKHANG> */
-		{ 0x0E42, 0x0E06, 0 },
-		{ 0x1F75, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO RAKHANG> */
-		{ 0x0E43, 0x0E06, 0 },
-		{ 0x1F75, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO RAKHANG> */
-		{ 0x0E44, 0x0E06, 0 },
-		{ 0x1F75, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER NGO NGU> */
-		{ 0x0E40, 0x0E07, 0 },
-		{ 0x1F76, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER NGO NGU> */
-		{ 0x0E41, 0x0E07, 0 },
-		{ 0x1F76, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER NGO NGU> */
-		{ 0x0E42, 0x0E07, 0 },
-		{ 0x1F76, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER NGO NGU> */
-		{ 0x0E43, 0x0E07, 0 },
-		{ 0x1F76, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER NGO NGU> */
-		{ 0x0E44, 0x0E07, 0 },
-		{ 0x1F76, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER CHO CHAN> */
-		{ 0x0E40, 0x0E08, 0 },
-		{ 0x1F77, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER CHO CHAN> */
-		{ 0x0E41, 0x0E08, 0 },
-		{ 0x1F77, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER CHO CHAN> */
-		{ 0x0E42, 0x0E08, 0 },
-		{ 0x1F77, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER CHO CHAN> */
-		{ 0x0E43, 0x0E08, 0 },
-		{ 0x1F77, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER CHO CHAN> */
-		{ 0x0E44, 0x0E08, 0 },
-		{ 0x1F77, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER CHO CHING> */
-		{ 0x0E40, 0x0E09, 0 },
-		{ 0x1F78, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER CHO CHING> */
-		{ 0x0E41, 0x0E09, 0 },
-		{ 0x1F78, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER CHO CHING> */
-		{ 0x0E42, 0x0E09, 0 },
-		{ 0x1F78, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER CHO CHING> */
-		{ 0x0E43, 0x0E09, 0 },
-		{ 0x1F78, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER CHO CHING> */
-		{ 0x0E44, 0x0E09, 0 },
-		{ 0x1F78, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER CHO CHANG> */
-		{ 0x0E40, 0x0E0A, 0 },
-		{ 0x1F79, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER CHO CHANG> */
-		{ 0x0E41, 0x0E0A, 0 },
-		{ 0x1F79, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER CHO CHANG> */
-		{ 0x0E42, 0x0E0A, 0 },
-		{ 0x1F79, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER CHO CHANG> */
-		{ 0x0E43, 0x0E0A, 0 },
-		{ 0x1F79, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER CHO CHANG> */
-		{ 0x0E44, 0x0E0A, 0 },
-		{ 0x1F79, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER SO SO> */
-		{ 0x0E40, 0x0E0B, 0 },
-		{ 0x1F7A, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER SO SO> */
-		{ 0x0E41, 0x0E0B, 0 },
-		{ 0x1F7A, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER SO SO> */
-		{ 0x0E42, 0x0E0B, 0 },
-		{ 0x1F7A, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER SO SO> */
-		{ 0x0E43, 0x0E0B, 0 },
-		{ 0x1F7A, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER SO SO> */
-		{ 0x0E44, 0x0E0B, 0 },
-		{ 0x1F7A, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER CHO CHOE> */
-		{ 0x0E40, 0x0E0C, 0 },
-		{ 0x1F7B, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER CHO CHOE> */
-		{ 0x0E41, 0x0E0C, 0 },
-		{ 0x1F7B, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER CHO CHOE> */
-		{ 0x0E42, 0x0E0C, 0 },
-		{ 0x1F7B, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER CHO CHOE> */
-		{ 0x0E43, 0x0E0C, 0 },
-		{ 0x1F7B, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER CHO CHOE> */
-		{ 0x0E44, 0x0E0C, 0 },
-		{ 0x1F7B, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER YO YING> */
-		{ 0x0E40, 0x0E0D, 0 },
-		{ 0x1F7C, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER YO YING> */
-		{ 0x0E41, 0x0E0D, 0 },
-		{ 0x1F7C, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER YO YING> */
-		{ 0x0E42, 0x0E0D, 0 },
-		{ 0x1F7C, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER YO YING> */
-		{ 0x0E43, 0x0E0D, 0 },
-		{ 0x1F7C, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER YO YING> */
-		{ 0x0E44, 0x0E0D, 0 },
-		{ 0x1F7C, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER DO CHADA> */
-		{ 0x0E40, 0x0E0E, 0 },
-		{ 0x1F7D, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER DO CHADA> */
-		{ 0x0E41, 0x0E0E, 0 },
-		{ 0x1F7D, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER DO CHADA> */
-		{ 0x0E42, 0x0E0E, 0 },
-		{ 0x1F7D, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER DO CHADA> */
-		{ 0x0E43, 0x0E0E, 0 },
-		{ 0x1F7D, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER DO CHADA> */
-		{ 0x0E44, 0x0E0E, 0 },
-		{ 0x1F7D, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER TO PATAK> */
-		{ 0x0E40, 0x0E0F, 0 },
-		{ 0x1F7E, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER TO PATAK> */
-		{ 0x0E41, 0x0E0F, 0 },
-		{ 0x1F7E, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER TO PATAK> */
-		{ 0x0E42, 0x0E0F, 0 },
-		{ 0x1F7E, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER TO PATAK> */
-		{ 0x0E43, 0x0E0F, 0 },
-		{ 0x1F7E, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER TO PATAK> */
-		{ 0x0E44, 0x0E0F, 0 },
-		{ 0x1F7E, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER THO THAN> */
-		{ 0x0E40, 0x0E10, 0 },
-		{ 0x1F7F, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER THO THAN> */
-		{ 0x0E41, 0x0E10, 0 },
-		{ 0x1F7F, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER THO THAN> */
-		{ 0x0E42, 0x0E10, 0 },
-		{ 0x1F7F, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO THAN> */
-		{ 0x0E43, 0x0E10, 0 },
-		{ 0x1F7F, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO THAN> */
-		{ 0x0E44, 0x0E10, 0 },
-		{ 0x1F7F, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER THO NANGMONTHO> */
-		{ 0x0E40, 0x0E11, 0 },
-		{ 0x1F80, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER THO NANGMONTHO> */
-		{ 0x0E41, 0x0E11, 0 },
-		{ 0x1F80, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER THO NANGMONTHO> */
-		{ 0x0E42, 0x0E11, 0 },
-		{ 0x1F80, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO NANGMONTHO> */
-		{ 0x0E43, 0x0E11, 0 },
-		{ 0x1F80, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO NANGMONTHO> */
-		{ 0x0E44, 0x0E11, 0 },
-		{ 0x1F80, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER THO PHUTHAO> */
-		{ 0x0E40, 0x0E12, 0 },
-		{ 0x1F81, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER THO PHUTHAO> */
-		{ 0x0E41, 0x0E12, 0 },
-		{ 0x1F81, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER THO PHUTHAO> */
-		{ 0x0E42, 0x0E12, 0 },
-		{ 0x1F81, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO PHUTHAO> */
-		{ 0x0E43, 0x0E12, 0 },
-		{ 0x1F81, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO PHUTHAO> */
-		{ 0x0E44, 0x0E12, 0 },
-		{ 0x1F81, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER NO NEN> */
-		{ 0x0E40, 0x0E13, 0 },
-		{ 0x1F82, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER NO NEN> */
-		{ 0x0E41, 0x0E13, 0 },
-		{ 0x1F82, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER NO NEN> */
-		{ 0x0E42, 0x0E13, 0 },
-		{ 0x1F82, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER NO NEN> */
-		{ 0x0E43, 0x0E13, 0 },
-		{ 0x1F82, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER NO NEN> */
-		{ 0x0E44, 0x0E13, 0 },
-		{ 0x1F82, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER DO DEK> */
-		{ 0x0E40, 0x0E14, 0 },
-		{ 0x1F83, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER DO DEK> */
-		{ 0x0E41, 0x0E14, 0 },
-		{ 0x1F83, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER DO DEK> */
-		{ 0x0E42, 0x0E14, 0 },
-		{ 0x1F83, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER DO DEK> */
-		{ 0x0E43, 0x0E14, 0 },
-		{ 0x1F83, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER DO DEK> */
-		{ 0x0E44, 0x0E14, 0 },
-		{ 0x1F83, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER TO TAO> */
-		{ 0x0E40, 0x0E15, 0 },
-		{ 0x1F84, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER TO TAO> */
-		{ 0x0E41, 0x0E15, 0 },
-		{ 0x1F84, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER TO TAO> */
-		{ 0x0E42, 0x0E15, 0 },
-		{ 0x1F84, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER TO TAO> */
-		{ 0x0E43, 0x0E15, 0 },
-		{ 0x1F84, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER TO TAO> */
-		{ 0x0E44, 0x0E15, 0 },
-		{ 0x1F84, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER THO THUNG> */
-		{ 0x0E40, 0x0E16, 0 },
-		{ 0x1F85, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER THO THUNG> */
-		{ 0x0E41, 0x0E16, 0 },
-		{ 0x1F85, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER THO THUNG> */
-		{ 0x0E42, 0x0E16, 0 },
-		{ 0x1F85, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO THUNG> */
-		{ 0x0E43, 0x0E16, 0 },
-		{ 0x1F85, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO THUNG> */
-		{ 0x0E44, 0x0E16, 0 },
-		{ 0x1F85, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER THO THAHAN> */
-		{ 0x0E40, 0x0E17, 0 },
-		{ 0x1F86, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER THO THAHAN> */
-		{ 0x0E41, 0x0E17, 0 },
-		{ 0x1F86, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER THO THAHAN> */
-		{ 0x0E42, 0x0E17, 0 },
-		{ 0x1F86, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO THAHAN> */
-		{ 0x0E43, 0x0E17, 0 },
-		{ 0x1F86, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO THAHAN> */
-		{ 0x0E44, 0x0E17, 0 },
-		{ 0x1F86, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER THO THONG> */
-		{ 0x0E40, 0x0E18, 0 },
-		{ 0x1F87, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER THO THONG> */
-		{ 0x0E41, 0x0E18, 0 },
-		{ 0x1F87, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER THO THONG> */
-		{ 0x0E42, 0x0E18, 0 },
-		{ 0x1F87, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO THONG> */
-		{ 0x0E43, 0x0E18, 0 },
-		{ 0x1F87, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO THONG> */
-		{ 0x0E44, 0x0E18, 0 },
-		{ 0x1F87, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER NO NU> */
-		{ 0x0E40, 0x0E19, 0 },
-		{ 0x1F88, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER NO NU> */
-		{ 0x0E41, 0x0E19, 0 },
-		{ 0x1F88, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER NO NU> */
-		{ 0x0E42, 0x0E19, 0 },
-		{ 0x1F88, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER NO NU> */
-		{ 0x0E43, 0x0E19, 0 },
-		{ 0x1F88, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER NO NU> */
-		{ 0x0E44, 0x0E19, 0 },
-		{ 0x1F88, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER BO BAIMAI> */
-		{ 0x0E40, 0x0E1A, 0 },
-		{ 0x1F89, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER BO BAIMAI> */
-		{ 0x0E41, 0x0E1A, 0 },
-		{ 0x1F89, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER BO BAIMAI> */
-		{ 0x0E42, 0x0E1A, 0 },
-		{ 0x1F89, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER BO BAIMAI> */
-		{ 0x0E43, 0x0E1A, 0 },
-		{ 0x1F89, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER BO BAIMAI> */
-		{ 0x0E44, 0x0E1A, 0 },
-		{ 0x1F89, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER PO PLA> */
-		{ 0x0E40, 0x0E1B, 0 },
-		{ 0x1F8A, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER PO PLA> */
-		{ 0x0E41, 0x0E1B, 0 },
-		{ 0x1F8A, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER PO PLA> */
-		{ 0x0E42, 0x0E1B, 0 },
-		{ 0x1F8A, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER PO PLA> */
-		{ 0x0E43, 0x0E1B, 0 },
-		{ 0x1F8A, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER PO PLA> */
-		{ 0x0E44, 0x0E1B, 0 },
-		{ 0x1F8A, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER PHO PHUNG> */
-		{ 0x0E40, 0x0E1C, 0 },
-		{ 0x1F8B, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER PHO PHUNG> */
-		{ 0x0E41, 0x0E1C, 0 },
-		{ 0x1F8B, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER PHO PHUNG> */
-		{ 0x0E42, 0x0E1C, 0 },
-		{ 0x1F8B, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER PHO PHUNG> */
-		{ 0x0E43, 0x0E1C, 0 },
-		{ 0x1F8B, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER PHO PHUNG> */
-		{ 0x0E44, 0x0E1C, 0 },
-		{ 0x1F8B, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER FO FA> */
-		{ 0x0E40, 0x0E1D, 0 },
-		{ 0x1F8C, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER FO FA> */
-		{ 0x0E41, 0x0E1D, 0 },
-		{ 0x1F8C, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER FO FA> */
-		{ 0x0E42, 0x0E1D, 0 },
-		{ 0x1F8C, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER FO FA> */
-		{ 0x0E43, 0x0E1D, 0 },
-		{ 0x1F8C, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER FO FA> */
-		{ 0x0E44, 0x0E1D, 0 },
-		{ 0x1F8C, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER PHO PHAN> */
-		{ 0x0E40, 0x0E1E, 0 },
-		{ 0x1F8D, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER PHO PHAN> */
-		{ 0x0E41, 0x0E1E, 0 },
-		{ 0x1F8D, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER PHO PHAN> */
-		{ 0x0E42, 0x0E1E, 0 },
-		{ 0x1F8D, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER PHO PHAN> */
-		{ 0x0E43, 0x0E1E, 0 },
-		{ 0x1F8D, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER PHO PHAN> */
-		{ 0x0E44, 0x0E1E, 0 },
-		{ 0x1F8D, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER FO FAN> */
-		{ 0x0E40, 0x0E1F, 0 },
-		{ 0x1F8E, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER FO FAN> */
-		{ 0x0E41, 0x0E1F, 0 },
-		{ 0x1F8E, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER FO FAN> */
-		{ 0x0E42, 0x0E1F, 0 },
-		{ 0x1F8E, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER FO FAN> */
-		{ 0x0E43, 0x0E1F, 0 },
-		{ 0x1F8E, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER FO FAN> */
-		{ 0x0E44, 0x0E1F, 0 },
-		{ 0x1F8E, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER PHO SAMPHAO> */
-		{ 0x0E40, 0x0E20, 0 },
-		{ 0x1F8F, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER PHO SAMPHAO> */
-		{ 0x0E41, 0x0E20, 0 },
-		{ 0x1F8F, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER PHO SAMPHAO> */
-		{ 0x0E42, 0x0E20, 0 },
-		{ 0x1F8F, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER PHO SAMPHAO> */
-		{ 0x0E43, 0x0E20, 0 },
-		{ 0x1F8F, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER PHO SAMPHAO> */
-		{ 0x0E44, 0x0E20, 0 },
-		{ 0x1F8F, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER MO MA> */
-		{ 0x0E40, 0x0E21, 0 },
-		{ 0x1F90, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER MO MA> */
-		{ 0x0E41, 0x0E21, 0 },
-		{ 0x1F90, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER MO MA> */
-		{ 0x0E42, 0x0E21, 0 },
-		{ 0x1F90, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER MO MA> */
-		{ 0x0E43, 0x0E21, 0 },
-		{ 0x1F90, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER MO MA> */
-		{ 0x0E44, 0x0E21, 0 },
-		{ 0x1F90, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER YO YAK> */
-		{ 0x0E40, 0x0E22, 0 },
-		{ 0x1F91, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER YO YAK> */
-		{ 0x0E41, 0x0E22, 0 },
-		{ 0x1F91, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER YO YAK> */
-		{ 0x0E42, 0x0E22, 0 },
-		{ 0x1F91, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER YO YAK> */
-		{ 0x0E43, 0x0E22, 0 },
-		{ 0x1F91, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER YO YAK> */
-		{ 0x0E44, 0x0E22, 0 },
-		{ 0x1F91, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER RO RUA> */
-		{ 0x0E40, 0x0E23, 0 },
-		{ 0x1F92, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER RO RUA> */
-		{ 0x0E41, 0x0E23, 0 },
-		{ 0x1F92, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER RO RUA> */
-		{ 0x0E42, 0x0E23, 0 },
-		{ 0x1F92, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER RO RUA> */
-		{ 0x0E43, 0x0E23, 0 },
-		{ 0x1F92, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER RO RUA> */
-		{ 0x0E44, 0x0E23, 0 },
-		{ 0x1F92, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER RU> */
-		{ 0x0E40, 0x0E24, 0 },
-		{ 0x1F93, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER RU> */
-		{ 0x0E41, 0x0E24, 0 },
-		{ 0x1F93, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER RU> */
-		{ 0x0E42, 0x0E24, 0 },
-		{ 0x1F93, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER RU> */
-		{ 0x0E43, 0x0E24, 0 },
-		{ 0x1F93, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER RU> */
-		{ 0x0E44, 0x0E24, 0 },
-		{ 0x1F93, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER LO LING> */
-		{ 0x0E40, 0x0E25, 0 },
-		{ 0x1F94, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER LO LING> */
-		{ 0x0E41, 0x0E25, 0 },
-		{ 0x1F94, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER LO LING> */
-		{ 0x0E42, 0x0E25, 0 },
-		{ 0x1F94, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER LO LING> */
-		{ 0x0E43, 0x0E25, 0 },
-		{ 0x1F94, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER LO LING> */
-		{ 0x0E44, 0x0E25, 0 },
-		{ 0x1F94, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER LU> */
-		{ 0x0E40, 0x0E26, 0 },
-		{ 0x1F95, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER LU> */
-		{ 0x0E41, 0x0E26, 0 },
-		{ 0x1F95, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER LU> */
-		{ 0x0E42, 0x0E26, 0 },
-		{ 0x1F95, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER LU> */
-		{ 0x0E43, 0x0E26, 0 },
-		{ 0x1F95, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER LU> */
-		{ 0x0E44, 0x0E26, 0 },
-		{ 0x1F95, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER WO WAEN> */
-		{ 0x0E40, 0x0E27, 0 },
-		{ 0x1F96, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER WO WAEN> */
-		{ 0x0E41, 0x0E27, 0 },
-		{ 0x1F96, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER WO WAEN> */
-		{ 0x0E42, 0x0E27, 0 },
-		{ 0x1F96, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER WO WAEN> */
-		{ 0x0E43, 0x0E27, 0 },
-		{ 0x1F96, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER WO WAEN> */
-		{ 0x0E44, 0x0E27, 0 },
-		{ 0x1F96, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER SO SALA> */
-		{ 0x0E40, 0x0E28, 0 },
-		{ 0x1F97, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER SO SALA> */
-		{ 0x0E41, 0x0E28, 0 },
-		{ 0x1F97, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER SO SALA> */
-		{ 0x0E42, 0x0E28, 0 },
-		{ 0x1F97, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER SO SALA> */
-		{ 0x0E43, 0x0E28, 0 },
-		{ 0x1F97, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER SO SALA> */
-		{ 0x0E44, 0x0E28, 0 },
-		{ 0x1F97, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER SO RUSI> */
-		{ 0x0E40, 0x0E29, 0 },
-		{ 0x1F98, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER SO RUSI> */
-		{ 0x0E41, 0x0E29, 0 },
-		{ 0x1F98, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER SO RUSI> */
-		{ 0x0E42, 0x0E29, 0 },
-		{ 0x1F98, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER SO RUSI> */
-		{ 0x0E43, 0x0E29, 0 },
-		{ 0x1F98, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER SO RUSI> */
-		{ 0x0E44, 0x0E29, 0 },
-		{ 0x1F98, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER SO SUA> */
-		{ 0x0E40, 0x0E2A, 0 },
-		{ 0x1F99, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER SO SUA> */
-		{ 0x0E41, 0x0E2A, 0 },
-		{ 0x1F99, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER SO SUA> */
-		{ 0x0E42, 0x0E2A, 0 },
-		{ 0x1F99, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER SO SUA> */
-		{ 0x0E43, 0x0E2A, 0 },
-		{ 0x1F99, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER SO SUA> */
-		{ 0x0E44, 0x0E2A, 0 },
-		{ 0x1F99, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER HO HIP> */
-		{ 0x0E40, 0x0E2B, 0 },
-		{ 0x1F9A, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER HO HIP> */
-		{ 0x0E41, 0x0E2B, 0 },
-		{ 0x1F9A, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER HO HIP> */
-		{ 0x0E42, 0x0E2B, 0 },
-		{ 0x1F9A, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER HO HIP> */
-		{ 0x0E43, 0x0E2B, 0 },
-		{ 0x1F9A, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER HO HIP> */
-		{ 0x0E44, 0x0E2B, 0 },
-		{ 0x1F9A, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER LO CHULA> */
-		{ 0x0E40, 0x0E2C, 0 },
-		{ 0x1F9B, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER LO CHULA> */
-		{ 0x0E41, 0x0E2C, 0 },
-		{ 0x1F9B, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER LO CHULA> */
-		{ 0x0E42, 0x0E2C, 0 },
-		{ 0x1F9B, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER LO CHULA> */
-		{ 0x0E43, 0x0E2C, 0 },
-		{ 0x1F9B, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER LO CHULA> */
-		{ 0x0E44, 0x0E2C, 0 },
-		{ 0x1F9B, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER O ANG> */
-		{ 0x0E40, 0x0E2D, 0 },
-		{ 0x1F9C, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER O ANG> */
-		{ 0x0E41, 0x0E2D, 0 },
-		{ 0x1F9C, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER O ANG> */
-		{ 0x0E42, 0x0E2D, 0 },
-		{ 0x1F9C, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER O ANG> */
-		{ 0x0E43, 0x0E2D, 0 },
-		{ 0x1F9C, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER O ANG> */
-		{ 0x0E44, 0x0E2D, 0 },
-		{ 0x1F9C, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA E, THAI CHARACTER HO NOKHUK> */
-		{ 0x0E40, 0x0E2E, 0 },
-		{ 0x1F9D, 0x1FAA, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AE, THAI CHARACTER HO NOKHUK> */
-		{ 0x0E41, 0x0E2E, 0 },
-		{ 0x1F9D, 0x1FAB, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA O, THAI CHARACTER HO NOKHUK> */
-		{ 0x0E42, 0x0E2E, 0 },
-		{ 0x1F9D, 0x1FAC, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER HO NOKHUK> */
-		{ 0x0E43, 0x0E2E, 0 },
-		{ 0x1F9D, 0x1FAD, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER HO NOKHUK> */
-		{ 0x0E44, 0x0E2E, 0 },
-		{ 0x1F9D, 0x1FAE, 0 },
-		false
-	},
-	{ /* <THAI CHARACTER SARA AM> */
-		{ 0x0E4D, 0x0E32, 0 },
-		{ 0x1FA2, 0 },
-		false
-	},
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER KO KAI> */
+    { 0x0E40, 0x0E01, 0 },
+    { 0x1F70, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER KO KAI> */
+    { 0x0E41, 0x0E01, 0 },
+    { 0x1F70, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER KO KAI> */
+    { 0x0E42, 0x0E01, 0 },
+    { 0x1F70, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KO KAI> */
+    { 0x0E43, 0x0E01, 0 },
+    { 0x1F70, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KO KAI> */
+    { 0x0E44, 0x0E01, 0 },
+    { 0x1F70, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER KHO KHAI> */
+    { 0x0E40, 0x0E02, 0 },
+    { 0x1F71, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO KHAI> */
+    { 0x0E41, 0x0E02, 0 },
+    { 0x1F71, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER KHO KHAI> */
+    { 0x0E42, 0x0E02, 0 },
+    { 0x1F71, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO KHAI> */
+    { 0x0E43, 0x0E02, 0 },
+    { 0x1F71, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO KHAI> */
+    { 0x0E44, 0x0E02, 0 },
+    { 0x1F71, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER KHO KHUAT> */
+    { 0x0E40, 0x0E03, 0 },
+    { 0x1F72, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO KHUAT> */
+    { 0x0E41, 0x0E03, 0 },
+    { 0x1F72, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER KHO KHUAT> */
+    { 0x0E42, 0x0E03, 0 },
+    { 0x1F72, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO KHUAT> */
+    { 0x0E43, 0x0E03, 0 },
+    { 0x1F72, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO KHUAT> */
+    { 0x0E44, 0x0E03, 0 },
+    { 0x1F72, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER KHO KHWAI> */
+    { 0x0E40, 0x0E04, 0 },
+    { 0x1F73, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO KHWAI> */
+    { 0x0E41, 0x0E04, 0 },
+    { 0x1F73, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER KHO KHWAI> */
+    { 0x0E42, 0x0E04, 0 },
+    { 0x1F73, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO KHWAI> */
+    { 0x0E43, 0x0E04, 0 },
+    { 0x1F73, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO KHWAI> */
+    { 0x0E44, 0x0E04, 0 },
+    { 0x1F73, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER KHO KHON> */
+    { 0x0E40, 0x0E05, 0 },
+    { 0x1F74, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO KHON> */
+    { 0x0E41, 0x0E05, 0 },
+    { 0x1F74, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER KHO KHON> */
+    { 0x0E42, 0x0E05, 0 },
+    { 0x1F74, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO KHON> */
+    { 0x0E43, 0x0E05, 0 },
+    { 0x1F74, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO KHON> */
+    { 0x0E44, 0x0E05, 0 },
+    { 0x1F74, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER KHO RAKHANG> */
+    { 0x0E40, 0x0E06, 0 },
+    { 0x1F75, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER KHO RAKHANG> */
+    { 0x0E41, 0x0E06, 0 },
+    { 0x1F75, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER KHO RAKHANG> */
+    { 0x0E42, 0x0E06, 0 },
+    { 0x1F75, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER KHO RAKHANG> */
+    { 0x0E43, 0x0E06, 0 },
+    { 0x1F75, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER KHO RAKHANG> */
+    { 0x0E44, 0x0E06, 0 },
+    { 0x1F75, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER NGO NGU> */
+    { 0x0E40, 0x0E07, 0 },
+    { 0x1F76, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER NGO NGU> */
+    { 0x0E41, 0x0E07, 0 },
+    { 0x1F76, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER NGO NGU> */
+    { 0x0E42, 0x0E07, 0 },
+    { 0x1F76, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER NGO NGU> */
+    { 0x0E43, 0x0E07, 0 },
+    { 0x1F76, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER NGO NGU> */
+    { 0x0E44, 0x0E07, 0 },
+    { 0x1F76, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER CHO CHAN> */
+    { 0x0E40, 0x0E08, 0 },
+    { 0x1F77, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER CHO CHAN> */
+    { 0x0E41, 0x0E08, 0 },
+    { 0x1F77, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER CHO CHAN> */
+    { 0x0E42, 0x0E08, 0 },
+    { 0x1F77, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER CHO CHAN> */
+    { 0x0E43, 0x0E08, 0 },
+    { 0x1F77, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER CHO CHAN> */
+    { 0x0E44, 0x0E08, 0 },
+    { 0x1F77, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER CHO CHING> */
+    { 0x0E40, 0x0E09, 0 },
+    { 0x1F78, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER CHO CHING> */
+    { 0x0E41, 0x0E09, 0 },
+    { 0x1F78, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER CHO CHING> */
+    { 0x0E42, 0x0E09, 0 },
+    { 0x1F78, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER CHO CHING> */
+    { 0x0E43, 0x0E09, 0 },
+    { 0x1F78, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER CHO CHING> */
+    { 0x0E44, 0x0E09, 0 },
+    { 0x1F78, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER CHO CHANG> */
+    { 0x0E40, 0x0E0A, 0 },
+    { 0x1F79, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER CHO CHANG> */
+    { 0x0E41, 0x0E0A, 0 },
+    { 0x1F79, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER CHO CHANG> */
+    { 0x0E42, 0x0E0A, 0 },
+    { 0x1F79, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER CHO CHANG> */
+    { 0x0E43, 0x0E0A, 0 },
+    { 0x1F79, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER CHO CHANG> */
+    { 0x0E44, 0x0E0A, 0 },
+    { 0x1F79, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER SO SO> */
+    { 0x0E40, 0x0E0B, 0 },
+    { 0x1F7A, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER SO SO> */
+    { 0x0E41, 0x0E0B, 0 },
+    { 0x1F7A, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER SO SO> */
+    { 0x0E42, 0x0E0B, 0 },
+    { 0x1F7A, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER SO SO> */
+    { 0x0E43, 0x0E0B, 0 },
+    { 0x1F7A, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER SO SO> */
+    { 0x0E44, 0x0E0B, 0 },
+    { 0x1F7A, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER CHO CHOE> */
+    { 0x0E40, 0x0E0C, 0 },
+    { 0x1F7B, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER CHO CHOE> */
+    { 0x0E41, 0x0E0C, 0 },
+    { 0x1F7B, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER CHO CHOE> */
+    { 0x0E42, 0x0E0C, 0 },
+    { 0x1F7B, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER CHO CHOE> */
+    { 0x0E43, 0x0E0C, 0 },
+    { 0x1F7B, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER CHO CHOE> */
+    { 0x0E44, 0x0E0C, 0 },
+    { 0x1F7B, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER YO YING> */
+    { 0x0E40, 0x0E0D, 0 },
+    { 0x1F7C, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER YO YING> */
+    { 0x0E41, 0x0E0D, 0 },
+    { 0x1F7C, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER YO YING> */
+    { 0x0E42, 0x0E0D, 0 },
+    { 0x1F7C, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER YO YING> */
+    { 0x0E43, 0x0E0D, 0 },
+    { 0x1F7C, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER YO YING> */
+    { 0x0E44, 0x0E0D, 0 },
+    { 0x1F7C, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER DO CHADA> */
+    { 0x0E40, 0x0E0E, 0 },
+    { 0x1F7D, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER DO CHADA> */
+    { 0x0E41, 0x0E0E, 0 },
+    { 0x1F7D, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER DO CHADA> */
+    { 0x0E42, 0x0E0E, 0 },
+    { 0x1F7D, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER DO CHADA> */
+    { 0x0E43, 0x0E0E, 0 },
+    { 0x1F7D, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER DO CHADA> */
+    { 0x0E44, 0x0E0E, 0 },
+    { 0x1F7D, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER TO PATAK> */
+    { 0x0E40, 0x0E0F, 0 },
+    { 0x1F7E, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER TO PATAK> */
+    { 0x0E41, 0x0E0F, 0 },
+    { 0x1F7E, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER TO PATAK> */
+    { 0x0E42, 0x0E0F, 0 },
+    { 0x1F7E, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER TO PATAK> */
+    { 0x0E43, 0x0E0F, 0 },
+    { 0x1F7E, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER TO PATAK> */
+    { 0x0E44, 0x0E0F, 0 },
+    { 0x1F7E, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER THO THAN> */
+    { 0x0E40, 0x0E10, 0 },
+    { 0x1F7F, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER THO THAN> */
+    { 0x0E41, 0x0E10, 0 },
+    { 0x1F7F, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER THO THAN> */
+    { 0x0E42, 0x0E10, 0 },
+    { 0x1F7F, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO THAN> */
+    { 0x0E43, 0x0E10, 0 },
+    { 0x1F7F, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO THAN> */
+    { 0x0E44, 0x0E10, 0 },
+    { 0x1F7F, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER THO NANGMONTHO> */
+    { 0x0E40, 0x0E11, 0 },
+    { 0x1F80, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER THO NANGMONTHO> */
+    { 0x0E41, 0x0E11, 0 },
+    { 0x1F80, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER THO NANGMONTHO> */
+    { 0x0E42, 0x0E11, 0 },
+    { 0x1F80, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO NANGMONTHO> */
+    { 0x0E43, 0x0E11, 0 },
+    { 0x1F80, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO NANGMONTHO> */
+    { 0x0E44, 0x0E11, 0 },
+    { 0x1F80, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER THO PHUTHAO> */
+    { 0x0E40, 0x0E12, 0 },
+    { 0x1F81, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER THO PHUTHAO> */
+    { 0x0E41, 0x0E12, 0 },
+    { 0x1F81, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER THO PHUTHAO> */
+    { 0x0E42, 0x0E12, 0 },
+    { 0x1F81, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO PHUTHAO> */
+    { 0x0E43, 0x0E12, 0 },
+    { 0x1F81, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO PHUTHAO> */
+    { 0x0E44, 0x0E12, 0 },
+    { 0x1F81, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER NO NEN> */
+    { 0x0E40, 0x0E13, 0 },
+    { 0x1F82, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER NO NEN> */
+    { 0x0E41, 0x0E13, 0 },
+    { 0x1F82, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER NO NEN> */
+    { 0x0E42, 0x0E13, 0 },
+    { 0x1F82, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER NO NEN> */
+    { 0x0E43, 0x0E13, 0 },
+    { 0x1F82, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER NO NEN> */
+    { 0x0E44, 0x0E13, 0 },
+    { 0x1F82, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER DO DEK> */
+    { 0x0E40, 0x0E14, 0 },
+    { 0x1F83, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER DO DEK> */
+    { 0x0E41, 0x0E14, 0 },
+    { 0x1F83, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER DO DEK> */
+    { 0x0E42, 0x0E14, 0 },
+    { 0x1F83, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER DO DEK> */
+    { 0x0E43, 0x0E14, 0 },
+    { 0x1F83, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER DO DEK> */
+    { 0x0E44, 0x0E14, 0 },
+    { 0x1F83, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER TO TAO> */
+    { 0x0E40, 0x0E15, 0 },
+    { 0x1F84, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER TO TAO> */
+    { 0x0E41, 0x0E15, 0 },
+    { 0x1F84, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER TO TAO> */
+    { 0x0E42, 0x0E15, 0 },
+    { 0x1F84, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER TO TAO> */
+    { 0x0E43, 0x0E15, 0 },
+    { 0x1F84, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER TO TAO> */
+    { 0x0E44, 0x0E15, 0 },
+    { 0x1F84, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER THO THUNG> */
+    { 0x0E40, 0x0E16, 0 },
+    { 0x1F85, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER THO THUNG> */
+    { 0x0E41, 0x0E16, 0 },
+    { 0x1F85, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER THO THUNG> */
+    { 0x0E42, 0x0E16, 0 },
+    { 0x1F85, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO THUNG> */
+    { 0x0E43, 0x0E16, 0 },
+    { 0x1F85, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO THUNG> */
+    { 0x0E44, 0x0E16, 0 },
+    { 0x1F85, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER THO THAHAN> */
+    { 0x0E40, 0x0E17, 0 },
+    { 0x1F86, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER THO THAHAN> */
+    { 0x0E41, 0x0E17, 0 },
+    { 0x1F86, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER THO THAHAN> */
+    { 0x0E42, 0x0E17, 0 },
+    { 0x1F86, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO THAHAN> */
+    { 0x0E43, 0x0E17, 0 },
+    { 0x1F86, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO THAHAN> */
+    { 0x0E44, 0x0E17, 0 },
+    { 0x1F86, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER THO THONG> */
+    { 0x0E40, 0x0E18, 0 },
+    { 0x1F87, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER THO THONG> */
+    { 0x0E41, 0x0E18, 0 },
+    { 0x1F87, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER THO THONG> */
+    { 0x0E42, 0x0E18, 0 },
+    { 0x1F87, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER THO THONG> */
+    { 0x0E43, 0x0E18, 0 },
+    { 0x1F87, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER THO THONG> */
+    { 0x0E44, 0x0E18, 0 },
+    { 0x1F87, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER NO NU> */
+    { 0x0E40, 0x0E19, 0 },
+    { 0x1F88, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER NO NU> */
+    { 0x0E41, 0x0E19, 0 },
+    { 0x1F88, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER NO NU> */
+    { 0x0E42, 0x0E19, 0 },
+    { 0x1F88, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER NO NU> */
+    { 0x0E43, 0x0E19, 0 },
+    { 0x1F88, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER NO NU> */
+    { 0x0E44, 0x0E19, 0 },
+    { 0x1F88, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER BO BAIMAI> */
+    { 0x0E40, 0x0E1A, 0 },
+    { 0x1F89, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER BO BAIMAI> */
+    { 0x0E41, 0x0E1A, 0 },
+    { 0x1F89, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER BO BAIMAI> */
+    { 0x0E42, 0x0E1A, 0 },
+    { 0x1F89, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER BO BAIMAI> */
+    { 0x0E43, 0x0E1A, 0 },
+    { 0x1F89, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER BO BAIMAI> */
+    { 0x0E44, 0x0E1A, 0 },
+    { 0x1F89, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER PO PLA> */
+    { 0x0E40, 0x0E1B, 0 },
+    { 0x1F8A, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER PO PLA> */
+    { 0x0E41, 0x0E1B, 0 },
+    { 0x1F8A, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER PO PLA> */
+    { 0x0E42, 0x0E1B, 0 },
+    { 0x1F8A, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER PO PLA> */
+    { 0x0E43, 0x0E1B, 0 },
+    { 0x1F8A, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER PO PLA> */
+    { 0x0E44, 0x0E1B, 0 },
+    { 0x1F8A, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER PHO PHUNG> */
+    { 0x0E40, 0x0E1C, 0 },
+    { 0x1F8B, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER PHO PHUNG> */
+    { 0x0E41, 0x0E1C, 0 },
+    { 0x1F8B, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER PHO PHUNG> */
+    { 0x0E42, 0x0E1C, 0 },
+    { 0x1F8B, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER PHO PHUNG> */
+    { 0x0E43, 0x0E1C, 0 },
+    { 0x1F8B, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER PHO PHUNG> */
+    { 0x0E44, 0x0E1C, 0 },
+    { 0x1F8B, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER FO FA> */
+    { 0x0E40, 0x0E1D, 0 },
+    { 0x1F8C, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER FO FA> */
+    { 0x0E41, 0x0E1D, 0 },
+    { 0x1F8C, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER FO FA> */
+    { 0x0E42, 0x0E1D, 0 },
+    { 0x1F8C, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER FO FA> */
+    { 0x0E43, 0x0E1D, 0 },
+    { 0x1F8C, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER FO FA> */
+    { 0x0E44, 0x0E1D, 0 },
+    { 0x1F8C, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER PHO PHAN> */
+    { 0x0E40, 0x0E1E, 0 },
+    { 0x1F8D, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER PHO PHAN> */
+    { 0x0E41, 0x0E1E, 0 },
+    { 0x1F8D, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER PHO PHAN> */
+    { 0x0E42, 0x0E1E, 0 },
+    { 0x1F8D, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER PHO PHAN> */
+    { 0x0E43, 0x0E1E, 0 },
+    { 0x1F8D, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER PHO PHAN> */
+    { 0x0E44, 0x0E1E, 0 },
+    { 0x1F8D, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER FO FAN> */
+    { 0x0E40, 0x0E1F, 0 },
+    { 0x1F8E, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER FO FAN> */
+    { 0x0E41, 0x0E1F, 0 },
+    { 0x1F8E, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER FO FAN> */
+    { 0x0E42, 0x0E1F, 0 },
+    { 0x1F8E, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER FO FAN> */
+    { 0x0E43, 0x0E1F, 0 },
+    { 0x1F8E, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER FO FAN> */
+    { 0x0E44, 0x0E1F, 0 },
+    { 0x1F8E, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER PHO SAMPHAO> */
+    { 0x0E40, 0x0E20, 0 },
+    { 0x1F8F, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER PHO SAMPHAO> */
+    { 0x0E41, 0x0E20, 0 },
+    { 0x1F8F, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER PHO SAMPHAO> */
+    { 0x0E42, 0x0E20, 0 },
+    { 0x1F8F, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER PHO SAMPHAO> */
+    { 0x0E43, 0x0E20, 0 },
+    { 0x1F8F, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER PHO SAMPHAO> */
+    { 0x0E44, 0x0E20, 0 },
+    { 0x1F8F, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER MO MA> */
+    { 0x0E40, 0x0E21, 0 },
+    { 0x1F90, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER MO MA> */
+    { 0x0E41, 0x0E21, 0 },
+    { 0x1F90, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER MO MA> */
+    { 0x0E42, 0x0E21, 0 },
+    { 0x1F90, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER MO MA> */
+    { 0x0E43, 0x0E21, 0 },
+    { 0x1F90, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER MO MA> */
+    { 0x0E44, 0x0E21, 0 },
+    { 0x1F90, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER YO YAK> */
+    { 0x0E40, 0x0E22, 0 },
+    { 0x1F91, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER YO YAK> */
+    { 0x0E41, 0x0E22, 0 },
+    { 0x1F91, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER YO YAK> */
+    { 0x0E42, 0x0E22, 0 },
+    { 0x1F91, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER YO YAK> */
+    { 0x0E43, 0x0E22, 0 },
+    { 0x1F91, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER YO YAK> */
+    { 0x0E44, 0x0E22, 0 },
+    { 0x1F91, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER RO RUA> */
+    { 0x0E40, 0x0E23, 0 },
+    { 0x1F92, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER RO RUA> */
+    { 0x0E41, 0x0E23, 0 },
+    { 0x1F92, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER RO RUA> */
+    { 0x0E42, 0x0E23, 0 },
+    { 0x1F92, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER RO RUA> */
+    { 0x0E43, 0x0E23, 0 },
+    { 0x1F92, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER RO RUA> */
+    { 0x0E44, 0x0E23, 0 },
+    { 0x1F92, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER RU> */
+    { 0x0E40, 0x0E24, 0 },
+    { 0x1F93, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER RU> */
+    { 0x0E41, 0x0E24, 0 },
+    { 0x1F93, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER RU> */
+    { 0x0E42, 0x0E24, 0 },
+    { 0x1F93, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER RU> */
+    { 0x0E43, 0x0E24, 0 },
+    { 0x1F93, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER RU> */
+    { 0x0E44, 0x0E24, 0 },
+    { 0x1F93, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER LO LING> */
+    { 0x0E40, 0x0E25, 0 },
+    { 0x1F94, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER LO LING> */
+    { 0x0E41, 0x0E25, 0 },
+    { 0x1F94, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER LO LING> */
+    { 0x0E42, 0x0E25, 0 },
+    { 0x1F94, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER LO LING> */
+    { 0x0E43, 0x0E25, 0 },
+    { 0x1F94, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER LO LING> */
+    { 0x0E44, 0x0E25, 0 },
+    { 0x1F94, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER LU> */
+    { 0x0E40, 0x0E26, 0 },
+    { 0x1F95, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER LU> */
+    { 0x0E41, 0x0E26, 0 },
+    { 0x1F95, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER LU> */
+    { 0x0E42, 0x0E26, 0 },
+    { 0x1F95, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER LU> */
+    { 0x0E43, 0x0E26, 0 },
+    { 0x1F95, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER LU> */
+    { 0x0E44, 0x0E26, 0 },
+    { 0x1F95, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER WO WAEN> */
+    { 0x0E40, 0x0E27, 0 },
+    { 0x1F96, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER WO WAEN> */
+    { 0x0E41, 0x0E27, 0 },
+    { 0x1F96, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER WO WAEN> */
+    { 0x0E42, 0x0E27, 0 },
+    { 0x1F96, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER WO WAEN> */
+    { 0x0E43, 0x0E27, 0 },
+    { 0x1F96, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER WO WAEN> */
+    { 0x0E44, 0x0E27, 0 },
+    { 0x1F96, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER SO SALA> */
+    { 0x0E40, 0x0E28, 0 },
+    { 0x1F97, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER SO SALA> */
+    { 0x0E41, 0x0E28, 0 },
+    { 0x1F97, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER SO SALA> */
+    { 0x0E42, 0x0E28, 0 },
+    { 0x1F97, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER SO SALA> */
+    { 0x0E43, 0x0E28, 0 },
+    { 0x1F97, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER SO SALA> */
+    { 0x0E44, 0x0E28, 0 },
+    { 0x1F97, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER SO RUSI> */
+    { 0x0E40, 0x0E29, 0 },
+    { 0x1F98, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER SO RUSI> */
+    { 0x0E41, 0x0E29, 0 },
+    { 0x1F98, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER SO RUSI> */
+    { 0x0E42, 0x0E29, 0 },
+    { 0x1F98, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER SO RUSI> */
+    { 0x0E43, 0x0E29, 0 },
+    { 0x1F98, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER SO RUSI> */
+    { 0x0E44, 0x0E29, 0 },
+    { 0x1F98, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER SO SUA> */
+    { 0x0E40, 0x0E2A, 0 },
+    { 0x1F99, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER SO SUA> */
+    { 0x0E41, 0x0E2A, 0 },
+    { 0x1F99, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER SO SUA> */
+    { 0x0E42, 0x0E2A, 0 },
+    { 0x1F99, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER SO SUA> */
+    { 0x0E43, 0x0E2A, 0 },
+    { 0x1F99, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER SO SUA> */
+    { 0x0E44, 0x0E2A, 0 },
+    { 0x1F99, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER HO HIP> */
+    { 0x0E40, 0x0E2B, 0 },
+    { 0x1F9A, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER HO HIP> */
+    { 0x0E41, 0x0E2B, 0 },
+    { 0x1F9A, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER HO HIP> */
+    { 0x0E42, 0x0E2B, 0 },
+    { 0x1F9A, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER HO HIP> */
+    { 0x0E43, 0x0E2B, 0 },
+    { 0x1F9A, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER HO HIP> */
+    { 0x0E44, 0x0E2B, 0 },
+    { 0x1F9A, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER LO CHULA> */
+    { 0x0E40, 0x0E2C, 0 },
+    { 0x1F9B, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER LO CHULA> */
+    { 0x0E41, 0x0E2C, 0 },
+    { 0x1F9B, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER LO CHULA> */
+    { 0x0E42, 0x0E2C, 0 },
+    { 0x1F9B, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER LO CHULA> */
+    { 0x0E43, 0x0E2C, 0 },
+    { 0x1F9B, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER LO CHULA> */
+    { 0x0E44, 0x0E2C, 0 },
+    { 0x1F9B, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER O ANG> */
+    { 0x0E40, 0x0E2D, 0 },
+    { 0x1F9C, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER O ANG> */
+    { 0x0E41, 0x0E2D, 0 },
+    { 0x1F9C, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER O ANG> */
+    { 0x0E42, 0x0E2D, 0 },
+    { 0x1F9C, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER O ANG> */
+    { 0x0E43, 0x0E2D, 0 },
+    { 0x1F9C, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER O ANG> */
+    { 0x0E44, 0x0E2D, 0 },
+    { 0x1F9C, 0x1FAE, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA E, THAI CHARACTER HO NOKHUK> */
+    { 0x0E40, 0x0E2E, 0 },
+    { 0x1F9D, 0x1FAA, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AE, THAI CHARACTER HO NOKHUK> */
+    { 0x0E41, 0x0E2E, 0 },
+    { 0x1F9D, 0x1FAB, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA O, THAI CHARACTER HO NOKHUK> */
+    { 0x0E42, 0x0E2E, 0 },
+    { 0x1F9D, 0x1FAC, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMUAN, THAI CHARACTER HO NOKHUK> */
+    { 0x0E43, 0x0E2E, 0 },
+    { 0x1F9D, 0x1FAD, 0 },
+    FALSE
+  },
+  { /* <THAI CHARACTER SARA AI MAIMALAI, THAI CHARACTER HO NOKHUK> */
+    { 0x0E44, 0x0E2E, 0 },
+    { 0x1F9D, 0x1FAE, 0 },
+    FALSE
+  },
 };
+
 MY_UCA_INFO my_uca_v520_th =
 {
   {
@@ -23723,6 +23720,38 @@ my_charset_loader_error_for_rule(MY_CHARSET_LOADER *loader,
 }
 
 
+/**
+  Initialize one contraction:
+  - add flags for the characters in the contraction
+  - add a contraction to the arrray
+  @param    contractions -
+  @param    str          - array of characters in the contraction
+  @param    length       - number of characters in the contraction
+  @param    with_context - "previous context" or a normal contraction
+  @return   a pointer where the caller should store contraction weights
+*/
+static uint16 *
+my_uca_init_one_contraction(MY_CONTRACTIONS *contractions,
+                            my_wc_t *str, uint length, my_bool with_context)
+{
+  int flag;
+  uint i;
+  my_uca_add_contraction_flag(contractions, str[0],
+                              with_context ?
+                              MY_UCA_PREVIOUS_CONTEXT_HEAD :
+                              MY_UCA_CNT_HEAD);
+  for (i= 1, flag= MY_UCA_CNT_MID1; i < length - 1; i++, flag<<= 1)
+    my_uca_add_contraction_flag(contractions, str[i], flag);
+  my_uca_add_contraction_flag(contractions, str[i],
+                              with_context ?
+                              MY_UCA_PREVIOUS_CONTEXT_TAIL :
+                              MY_UCA_CNT_TAIL);
+  /* Add new contraction to the contraction list */
+  return my_uca_add_contraction(contractions, str, length,
+                                with_context)->weight;
+}
+
+
 static my_bool
 apply_one_rule(MY_CHARSET_LOADER *loader,
                MY_COLL_RULES *rules, MY_COLL_RULE *r, int level,
@@ -23776,23 +23805,9 @@ apply_one_rule(MY_CHARSET_LOADER *loader,
 
   if (nshift >= 2) /* Contraction */
   {
-    size_t i;
-    int flag;
     MY_CONTRACTIONS *contractions= &dst->contractions;
-    /* Add HEAD, MID and TAIL flags for the contraction parts */
-    my_uca_add_contraction_flag(contractions, r->curr[0],
-                                r->with_context ?
-                                MY_UCA_PREVIOUS_CONTEXT_HEAD :
-                                MY_UCA_CNT_HEAD);
-    for (i= 1, flag= MY_UCA_CNT_MID1; i < nshift - 1; i++, flag<<= 1)
-      my_uca_add_contraction_flag(contractions, r->curr[i], flag);
-    my_uca_add_contraction_flag(contractions, r->curr[i],
-                                r->with_context ?
-                                MY_UCA_PREVIOUS_CONTEXT_TAIL :
-                                MY_UCA_CNT_TAIL);
-    /* Add new contraction to the contraction list */
-    to= my_uca_add_contraction(contractions, r->curr, nshift,
-                               r->with_context)->weight;
+    to= my_uca_init_one_contraction(contractions,
+                                    r->curr, nshift, r->with_context);
     /* Store weights of the "reset to" character */
     dst->contractions.nitems--; /* Temporarily hide - it's incomplete */
     rc= my_char_weight_put(dst,
@@ -23897,6 +23912,7 @@ init_weight_level(MY_CHARSET_LOADER *loader, MY_COLL_RULES *rules, int level,
     else
       ncontractions++;
   }
+
   ncontractions += src->contractions.nitems;
 
   /* Allocate pages that we'll overwrite and copy default weights */
@@ -23933,10 +23949,21 @@ init_weight_level(MY_CHARSET_LOADER *loader, MY_COLL_RULES *rules, int level,
   }
 
   /*
-    Add Thai contraction from static array thai_contractions.
+    Add built-in contractions (e.g. for Thai)
   */
-  for (i = 0; i != src->contractions.nitems; i++) {
-	my_uca_add_contraction(&dst->contractions, src->contractions.item[i].ch, 2, false);
+  for (i= 0; i != src->contractions.nitems; i++)
+  {
+    MY_CONTRACTION *item= &src->contractions.item[i];
+    /*
+      TODO: calculate length from item->ch.
+      Generally contractions can consist of more than 2 characters.
+    */
+    uint length= 2;
+    uint16 *weights= my_uca_init_one_contraction(&dst->contractions,
+                                                 item->ch, length,
+                                                 item->with_context);
+    memcpy(weights, item->weight, length * sizeof(uint16));
+    weights[length]= 0;
   }
   return FALSE;
 }
