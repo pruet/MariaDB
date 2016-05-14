@@ -101,7 +101,7 @@ extern MY_UNICASE_INFO my_unicase_unicode520;
 */
 #define MY_UCA_MAX_WEIGHT_SIZE (8+1)               /* Including 0 terminator */
 #define MY_UCA_CONTRACTION_MAX_WEIGHT_SIZE (2*8+1) /* Including 0 terminator */
-#define MY_UCA_WEIGHT_LEVELS   1
+#define MY_UCA_WEIGHT_LEVELS   2
 
 typedef struct my_contraction_t
 {
@@ -733,6 +733,13 @@ my_bool  my_like_range_simple(CHARSET_INFO *cs,
 
 /* For ASCII-based multi-byte character sets with mbminlen=1 */
 my_bool  my_like_range_mb(CHARSET_INFO *cs,
+			  const char *ptr, size_t ptr_length,
+			  pbool escape, pbool w_one, pbool w_many,
+			  size_t res_length,
+			  char *min_str, char *max_str,
+			  size_t *min_length, size_t *max_length);
+
+my_bool  my_like_range_mb_multilevel(CHARSET_INFO *cs,
 			  const char *ptr, size_t ptr_length,
 			  pbool escape, pbool w_one, pbool w_many,
 			  size_t res_length,

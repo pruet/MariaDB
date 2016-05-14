@@ -7892,9 +7892,9 @@ static const uint16 uca520_p00E[]= { /* 0E00 (3 weights per char) */
 0xFBC0,0x8E3C,0x0000, 0xFBC0,0x8E3D,0x0000, 0xFBC0,0x8E3E,0x0000, /* 0E3C */
 0x11EB,0x0000,0x0000, 0x1FAA,0x0000,0x0000, 0x1FAB,0x0000,0x0000, /* 0E3F */
 0x1FAC,0x0000,0x0000, 0x1FAD,0x0000,0x0000, 0x1FAE,0x0000,0x0000, /* 0E42 */
-0x1FAF,0x0000,0x0000, 0x11D1,0x0000,0x0000, 0x0000,0x0000,0x0000, /* 0E45 */
-0x0000,0x0000,0x0000, 0x0000,0x0000,0x0000, 0x0000,0x0000,0x0000, /* 0E48 */
-0x0000,0x0000,0x0000, 0x0000,0x0000,0x0000, 0x0000,0x0000,0x0000, /* 0E4B */
+0x1FAF,0x0000,0x0000, 0x11D1,0x0000,0x0000, 0x0000,0x0117,0x0000, /* 0E45 */
+0x0000,0x0118,0x0000, 0x0000,0x0119,0x0000, 0x0000,0x011A,0x0000, /* 0E48 */
+0x0000,0x011B,0x0000, 0x0000,0x011C,0x0000, 0x0000,0x011D,0x0000, /* 0E4B */
 0x0000,0x0000,0x0000, 0x0467,0x0000,0x0000, 0x1205,0x0000,0x0000, /* 0E4E */
 0x1206,0x0000,0x0000, 0x1207,0x0000,0x0000, 0x1208,0x0000,0x0000, /* 0E51 */
 0x1209,0x0000,0x0000, 0x120A,0x0000,0x0000, 0x120B,0x0000,0x0000, /* 0E54 */
@@ -20269,14 +20269,24 @@ MY_UCA_INFO my_uca_v520_th =
   {
     {
       0x10FFFF,      /* maxchar */
-        (uchar *)uca520_length,
-        (uint16 **)uca520_weight,
-        {            /* Contractions: */
-	  THAI_CONTRACTIONS, /*   nitems */
-          thai_contractions, /*   item */
-          NULL               /*   flags */
-      }
+      (uchar *)uca520_length,
+      (uint16 **)uca520_weight,
+      {            /* Contractions: */
+         THAI_CONTRACTIONS, /*   nitems */
+         thai_contractions, /*   item */
+         NULL               /*   flags */
+      },
     },
+    {
+      0x10FFFF,      /* maxchar */
+      (uchar *)uca520_length,
+      (uint16 **)uca520_weight,
+      {            /* Contractions: */
+         0, /*   nitems */
+         NULL, /*   item */
+         NULL               /*   flags */
+      },
+    }
   },
 
   0x0009,    /* first_non_ignorable       p != ignore                       */
@@ -21926,6 +21936,40 @@ static int my_strnncoll_uca(CHARSET_INFO *cs,
   return  (t_is_prefix && t_res < 0) ? 0 : (s_res - t_res);
 }
 
+/*
+  Extension of my_strnncoll_uca with now considering multi-level weight in UCA
+*/
+static int my_strnncoll_uca_multilevel(CHARSET_INFO *cs, 
+                                       my_uca_scanner_handler *scanner_handler,
+                                       const uchar *s, size_t slen,
+                                       const uchar *t, size_t tlen,
+                                       my_bool t_is_prefix)
+{
+  my_uca_scanner sscanner;
+  my_uca_scanner tscanner;
+  int s_res;
+  int t_res;
+  int ret;
+
+  uchar level_num = cs->levels_for_order;
+
+  for(uchar i = 0; i != level_num; i++)
+  {
+    scanner_handler->init(&sscanner, cs, &cs->uca->level[i], s, slen);
+    scanner_handler->init(&tscanner, cs, &cs->uca->level[i], t, tlen);
+  
+    do
+    {
+      s_res= scanner_handler->next(&sscanner);
+      t_res= scanner_handler->next(&tscanner);
+    } while ( s_res == t_res && s_res >0);
+  
+    ret = (t_is_prefix && t_res < 0) ? 0 : (s_res - t_res);
+    /* If */
+    if (ret != 0) break;
+  }
+  return ret;
+}
 
 static inline int
 my_space_weight(CHARSET_INFO *cs) /* W3-TODO */
@@ -22062,6 +22106,74 @@ static int my_strnncollsp_uca(CHARSET_INFO *cs,
 }
 
 /*
+  Extension of my_strnncollsp_uca with now considering multi-level weight in UCA
+*/
+
+static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs, 
+                                          my_uca_scanner_handler *scanner_handler,
+                                          const uchar *s, size_t slen,
+                                          const uchar *t, size_t tlen,
+                                          my_bool diff_if_only_endspace_difference)
+{
+  my_uca_scanner sscanner, tscanner;
+  int s_res, t_res;
+  uchar level_num = cs->levels_for_order;
+  int ret;
+  
+#ifndef VARCHAR_WITH_DIFF_ENDSPACE_ARE_DIFFERENT_FOR_UNIQUE
+  diff_if_only_endspace_difference= 0;
+#endif
+
+  for (uchar i = 0; i != level_num; i++) 
+  {
+    scanner_handler->init(&sscanner, cs, &cs->uca->level[i], s, slen);
+    scanner_handler->init(&tscanner, cs, &cs->uca->level[i], t, tlen);
+    
+    do
+    {
+      s_res= scanner_handler->next(&sscanner);
+      t_res= scanner_handler->next(&tscanner);
+    } while ( s_res == t_res && s_res >0);
+    
+    /* both are end-of-line, so go to next level*/
+    if (s_res < 0 &&  t_res < 0) continue;
+    
+    if (s_res > 0 && t_res < 0)
+    { 
+      /* Calculate weight for SPACE character */
+      t_res= my_space_weight(cs);
+      
+      /* compare the first string to spaces */
+      do
+      {
+        if (s_res != t_res)
+          return (s_res - t_res);
+        s_res= scanner_handler->next(&sscanner);
+      } while (s_res > 0);
+      return diff_if_only_endspace_difference ? 1 : 0;
+    }
+    
+    if (s_res < 0 && t_res > 0)
+    {
+      /* Calculate weight for SPACE character */
+      s_res= my_space_weight(cs);
+      
+      /* compare the second string to spaces */
+      do
+      {
+        if (s_res != t_res)
+          return (s_res - t_res);
+        t_res= scanner_handler->next(&tscanner);
+      } while (t_res > 0);
+      return diff_if_only_endspace_difference ? -1 : 0;
+    }
+    
+    return ( s_res - t_res );
+  }
+  return 0;
+}
+
+/*
   Calculates hash value for the given string,
   according to the collation, and ignoring trailing spaces.
   
@@ -22133,6 +22245,63 @@ static void my_hash_sort_uca(CHARSET_INFO *cs,
     MY_HASH_ADD(m1, m2, s_res & 0xFF);
   }
 end:
+  *nr1= m1;
+  *nr2= m2;
+}
+
+static void my_hash_sort_uca_multilevel(CHARSET_INFO *cs,
+                                         my_uca_scanner_handler *scanner_handler,
+                                         const uchar *s, size_t slen,
+                                         ulong *nr1, ulong *nr2)
+{
+  int   s_res;
+  my_uca_scanner scanner;
+  int space_weight= my_space_weight(cs);
+  register ulong m1= *nr1, m2= *nr2;
+  uchar level_num = cs->levels_for_order;
+  
+  for (uchar i = 0; i != level_num; i++)
+  {
+    scanner_handler->init(&scanner, cs, &cs->uca->level[i], s, slen);
+    
+    while ((s_res= scanner_handler->next(&scanner)) >0)
+    {
+      if (s_res == space_weight)
+      {
+        /* Combine all spaces to be able to skip end spaces */
+        uint count= 0;
+        do
+        {
+          count++;
+          if ((s_res= scanner_handler->next(&scanner)) <= 0)
+          {
+            /* Skip strings at end of string */
+            goto end;
+          }
+        }
+        while (s_res == space_weight);
+        
+        /* Add back that has for the space characters */
+        do
+        {
+          /*
+            We can't use MY_HASH_ADD_16() here as we, because of a misstake
+            in the original code, where we added the 16 byte variable the
+            opposite way.  Changing this would cause old partitioned tables
+            to fail.
+          */
+          MY_HASH_ADD(m1, m2, space_weight >> 8);
+          MY_HASH_ADD(m1, m2, space_weight & 0xFF);
+        }
+        while (--count != 0);
+        
+      }
+      /* See comment above why we can't use MY_HASH_ADD_16() */
+      MY_HASH_ADD(m1, m2, s_res >> 8);
+      MY_HASH_ADD(m1, m2, s_res & 0xFF);
+    }
+  end:;
+  }
   *nr1= m1;
   *nr2= m2;
 }
@@ -22211,6 +22380,60 @@ my_strnxfrm_uca(CHARSET_INFO *cs,
         *dst++= s_res & 0xFF;
     }
   }
+  return dst - d0;
+}
+
+/*
+  Extension of my_strnxfrm_uca with now considering multi-level weight in UCA
+*/
+static size_t
+my_strnxfrm_uca_multilevel(CHARSET_INFO *cs, 
+                           my_uca_scanner_handler *scanner_handler,
+                           uchar *dst, size_t dstlen, uint nweights,
+                           const uchar *src, size_t srclen, uint flags)
+{
+  uchar *d0= dst;
+  uchar *de= dst + dstlen;
+  int   s_res;
+  my_uca_scanner scanner;
+  uchar level_num = cs->levels_for_order;
+  
+  for (int i = 0; i != level_num; i++)
+  {
+    
+    scanner_handler->init(&scanner, cs, &cs->uca->level[i], src, srclen);
+    
+    for (; dst < de && nweights &&
+           (s_res= scanner_handler->next(&scanner)) > 0 ; nweights--)
+    {
+      *dst++= s_res >> 8;
+      if (dst < de)
+        *dst++= s_res & 0xFF;
+    }
+  
+    if (dst < de && nweights && (flags & MY_STRXFRM_PAD_WITH_SPACE))
+    {
+      uint space_count= MY_MIN((uint) (de - dst) / 2, nweights);
+      s_res= my_space_weight(cs);
+      for (; space_count ; space_count--)
+      {
+        *dst++= s_res >> 8;
+        *dst++= s_res & 0xFF;
+      }
+    }
+    my_strxfrm_desc_and_reverse(d0, dst, flags, 0);
+    if ((flags & MY_STRXFRM_PAD_TO_MAXLEN) && dst < de)
+    {
+      s_res= my_space_weight(cs);
+      for ( ; dst < de; )
+      {
+        *dst++= s_res >> 8;
+        if (dst < de)
+          *dst++= s_res & 0xFF;
+      }
+    }
+  }
+  
   return dst - d0;
 }
 
@@ -22400,7 +22623,6 @@ int my_wildcmp_uca(CHARSET_INFO *cs,
                              wildstr, wildend,
                              escape, w_one, w_many, 1);
 }
-
 
 /*
   Collation language is implemented according to
@@ -24106,6 +24328,39 @@ static size_t my_strnxfrmlen_any_uca(CHARSET_INFO *cs, size_t len)
   return (len + cs->mbmaxlen - 1) / cs->mbmaxlen * cs->strxfrm_multiply * 2;
 }
 
+static int my_strnncoll_any_uca_multilevel(CHARSET_INFO *cs,
+                                           const uchar *s, size_t slen,
+                                           const uchar *t, size_t tlen,
+                                           my_bool t_is_prefix)
+{
+  return my_strnncoll_uca_multilevel(cs, &my_any_uca_scanner_handler,
+                                     s, slen, t, tlen, t_is_prefix);
+}
+
+static int my_strnncollsp_any_uca_multilevel(CHARSET_INFO *cs,
+                                             const uchar *s, size_t slen,
+                                             const uchar *t, size_t tlen,
+                                             my_bool diff_if_only_endspace_difference)
+{
+  return my_strnncollsp_uca_multilevel(cs, &my_any_uca_scanner_handler,
+                                        s, slen, t, tlen,
+                                        diff_if_only_endspace_difference);
+}   
+
+static void my_hash_sort_any_uca_multilevel(CHARSET_INFO *cs,
+                                            const uchar *s, size_t slen,
+                                            ulong *n1, ulong *n2)
+{
+  my_hash_sort_uca_multilevel(cs, &my_any_uca_scanner_handler, s, slen, n1, n2); 
+}
+
+static size_t my_strnxfrm_any_uca_multilevel(CHARSET_INFO *cs, 
+                                             uchar *dst, size_t dstlen, uint nweights,
+                                             const uchar *src, size_t srclen, uint flags)
+{
+  return my_strnxfrm_uca_multilevel(cs, &my_any_uca_scanner_handler,
+                                    dst, dstlen, nweights, src, srclen, flags);
+}
 
 #ifdef HAVE_CHARSET_ucs2
 /*
@@ -25025,6 +25280,21 @@ MY_COLLATION_HANDLER my_collation_any_uca_handler =
     my_propagate_complex
 };
 
+MY_COLLATION_HANDLER my_collation_any_uca_handler_multilevel =
+{
+    my_coll_init_uca,	/* init */
+    my_strnncoll_any_uca_multilevel,
+    my_strnncollsp_any_uca_multilevel,
+    my_strnxfrm_any_uca_multilevel,
+    my_strnxfrmlen_any_uca,
+    my_like_range_mb,
+    my_wildcmp_uca,
+    NULL,
+    my_instr_mb,
+    my_hash_sort_any_uca_multilevel,
+    my_propagate_complex
+};
+
 /* 
   We consider bytes with code more than 127 as a letter.
   This garantees that word boundaries work fine with regular
@@ -25888,9 +26158,9 @@ struct charset_info_st my_charset_utf8_thai_520_ci =
 	0xFFFF,              /* max_sort_char */
 	' ',                 /* pad char      */
 	0,                   /* escape_with_backslash_is_dangerous */
-	1,                   /* levels_for_order   */
+	2,                   /* levels_for_order   */
 	&my_charset_utf8_handler,
-	&my_collation_any_uca_handler
+	&my_collation_any_uca_handler_multilevel
 };
 
 
