@@ -7895,7 +7895,7 @@ static const uint16 uca520_p00E[]= { /* 0E00 (3 weights per char) */
 0x1FAF,0x0000,0x0000, 0x11D1,0x0000,0x0000, 0x0000,0x0117,0x0000, /* 0E45 */
 0x0000,0x0118,0x0000, 0x0000,0x0119,0x0000, 0x0000,0x011A,0x0000, /* 0E48 */
 0x0000,0x011B,0x0000, 0x0000,0x011C,0x0000, 0x0000,0x011D,0x0000, /* 0E4B */
-0x0000,0x0000,0x0000, 0x0467,0x0000,0x0000, 0x1205,0x0000,0x0000, /* 0E4E */
+0x0000,0x0116,0x0000, 0x0467,0x0000,0x0000, 0x1205,0x0000,0x0000, /* 0E4E */
 0x1206,0x0000,0x0000, 0x1207,0x0000,0x0000, 0x1208,0x0000,0x0000, /* 0E51 */
 0x1209,0x0000,0x0000, 0x120A,0x0000,0x0000, 0x120B,0x0000,0x0000, /* 0E54 */
 0x120C,0x0000,0x0000, 0x120D,0x0000,0x0000, 0x120E,0x0000,0x0000, /* 0E57 */
@@ -24271,6 +24271,68 @@ ex:
   return rc;
 }
 
+static my_bool
+create_tailoring_multilevel(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
+{
+  MY_COLL_RULES rules;
+  MY_UCA_INFO new_uca, *src_uca= NULL;
+  int rc= 0;
+  uchar level_num = cs->levels_for_order;
+
+  *loader->error= '\0';
+
+  if (!cs->tailoring)
+    return 0; /* Ok to add a collation without tailoring */
+
+  memset(&rules, 0, sizeof(rules));
+  rules.loader= loader;
+  rules.uca= cs->uca ? cs->uca : &my_uca_v400; /* For logical positions, etc */
+  memset(&new_uca, 0, sizeof(new_uca));
+
+  /* Parse ICU Collation Customization expression */
+  if ((rc= my_coll_rule_parse(&rules,
+                              cs->tailoring,
+                              cs->tailoring + strlen(cs->tailoring))))
+    goto ex;
+
+  if (rules.version == 520)           /* Unicode-5.2.0 requested */
+  {
+    src_uca= &my_uca_v520;
+    cs->caseinfo= &my_unicase_unicode520;
+  }
+  else if (rules.version == 400)      /* Unicode-4.0.0 requested */
+  {
+    src_uca= &my_uca_v400;
+    cs->caseinfo= &my_unicase_default;
+  }
+  else                                /* No Unicode version specified */
+  {
+    src_uca= cs->uca ? cs->uca : &my_uca_v400;
+    if (!cs->caseinfo)
+      cs->caseinfo= &my_unicase_default;
+  }
+
+  for (uchar i = 0; i != level_num; i++)
+  {
+    if ((rc= init_weight_level(loader, &rules, i,
+                               &new_uca.level[i], &src_uca->level[i])))
+      goto ex;
+  }
+
+  if (!(cs->uca= (MY_UCA_INFO *) (loader->once_alloc)(sizeof(MY_UCA_INFO))))
+  {
+    rc= 1;
+    goto ex;
+  }
+  cs->uca[0]= new_uca;
+
+ex:
+  (loader->free)(rules.rule);
+  if (rc != 0 && loader->error[0])
+    loader->reporter(ERROR_LEVEL, "%s", loader->error);
+  return rc;
+}
+
 
 /*
   Universal CHARSET_INFO compatible wrappers
@@ -24286,6 +24348,16 @@ my_coll_init_uca(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
   if (!cs->caseinfo)
     cs->caseinfo= &my_unicase_default;
   return create_tailoring(cs, loader);
+}
+
+static my_bool
+my_coll_init_uca_multilevel(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
+{
+  cs->pad_char= ' ';
+  cs->ctype= my_charset_utf8_unicode_ci.ctype;
+  if (!cs->caseinfo)
+    cs->caseinfo= &my_unicase_default;
+  return create_tailoring_multilevel(cs, loader);
 }
 
 static int my_strnncoll_any_uca(CHARSET_INFO *cs,
@@ -25282,7 +25354,7 @@ MY_COLLATION_HANDLER my_collation_any_uca_handler =
 
 MY_COLLATION_HANDLER my_collation_any_uca_handler_multilevel =
 {
-    my_coll_init_uca,	/* init */
+    my_coll_init_uca_multilevel, /* init */
     my_strnncoll_any_uca_multilevel,
     my_strnncollsp_any_uca_multilevel,
     my_strnxfrm_any_uca_multilevel,
