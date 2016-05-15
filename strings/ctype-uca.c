@@ -7883,8 +7883,8 @@ static const uint16 uca520_p00E[]= { /* 0E00 (3 weights per char) */
 0x1F90,0x0000,0x0000, 0x1F91,0x0000,0x0000, 0x1F92,0x0000,0x0000, /* 0E21 */
 0x1F93,0x0000,0x0000, 0x1F94,0x0000,0x0000, 0x1F95,0x0000,0x0000, /* 0E24 */
 0x1F96,0x0000,0x0000, 0x1F97,0x0000,0x0000, 0x1F98,0x0000,0x0000, /* 0E27 */
-0x1F99,0x0000,0x0000, 0x1F9A,0x0000,0x0000, 0x1F9B,0x0000,0x0000, /* 0E2A */
-0x1F9C,0x0000,0x0000, 0x1F9D,0x0000,0x0000, 0x1F9E,0x0000,0x0000, /* 0E2D */
+0x1F99,0x0020,0x0000, 0x1F9A,0x0020,0x0000, 0x1F9B,0x0000,0x0000, /* 0E2A */
+0x1F9C,0x0020,0x0000, 0x1F9D,0x0020,0x0000, 0x1F9E,0x0000,0x0000, /* 0E2D */
 0x1F9F,0x0000,0x0000, 0x1FA0,0x0000,0x0000, 0x1FA1,0x0000,0x0000, /* 0E30 */
 0x1FA2,0x0000,0x0000, 0x1FA3,0x0000,0x0000, 0x1FA4,0x0000,0x0000, /* 0E33 */
 0x1FA5,0x0000,0x0000, 0x1FA6,0x0000,0x0000, 0x1FA7,0x0000,0x0000, /* 0E36 */
@@ -20278,12 +20278,13 @@ MY_UCA_INFO my_uca_v520_th =
       },
     },
     {
-      0x10FFFF,      /* maxchar */
+      /* Secondary weight, for tone marks */
+      0x10FFFF,              /* maxchar */
       (uchar *)uca520_length,
       (uint16 **)uca520_weight,
-      {            /* Contractions: */
-         0, /*   nitems */
-         NULL, /*   item */
+      {                     /* Contractions: */
+         0,                 /*   nitems */
+         NULL,              /*   item */
          NULL               /*   flags */
       },
     }
@@ -21317,6 +21318,7 @@ typedef struct my_uca_scanner_st
   const uchar  *send;	/* End of the input string                */
   const MY_UCA_WEIGHT_LEVEL *level;
   uint16 implicit[2];
+  uchar current_level;  /* weight level being scan currently */
   int page;
   int code;
   CHARSET_INFO *cs;
@@ -21873,6 +21875,134 @@ static my_uca_scanner_handler my_any_uca_scanner_handler=
 };
 
 /*
+  The same two functions for any character set with multilevel DUCETweight
+*/
+static void
+my_uca_scanner_init_any_multilevel(my_uca_scanner *scanner,
+                                   CHARSET_INFO *cs,
+                                   const MY_UCA_WEIGHT_LEVEL *level,
+                                   const uchar *str, size_t length)
+{
+  /* Note, no needs to initialize scanner->wbeg */
+  scanner->sbeg= str;
+  scanner->send= str + length;
+  scanner->wbeg= nochar; 
+  scanner->level= level;
+  scanner->cs= cs;
+  scanner->current_level = 0;
+}
+
+static int my_uca_scanner_next_any_multilevel(my_uca_scanner *scanner)
+{
+  /* 
+    Check if the weights for the previous character have been
+    already fully scanned. If yes, then get the next character and 
+    initialize wbeg and wlength to its weight string.
+  */
+
+  if (scanner->wbeg[0])      /* More weights left from the previous step: */
+    return *scanner->wbeg++; /* return the next weight from expansion     */
+
+  do
+  {
+    const uint16 *wpage;
+    my_wc_t wc[MY_UCA_MAX_CONTRACTION];
+    int mblen;
+
+    /* Get next character */
+    if (((mblen= scanner->cs->cset->mb_wc(scanner->cs, wc,
+                                          scanner->sbeg,
+                                          scanner->send)) <= 0))
+    {
+      if (scanner->sbeg >= scanner->send)
+        return -1; /* No more bytes, end of line reached */
+      /*
+        There are some more bytes left. Non-positive mb_len means that
+        we got an incomplete or a bad byte sequence. Consume mbminlen bytes.
+      */
+      if ((scanner->sbeg+= scanner->cs->mbminlen) > scanner->send)
+      {
+        /* For safety purposes don't go beyond the string range. */
+        scanner->sbeg= scanner->send;
+      }
+      /*
+        Treat every complete or incomplete mbminlen unit as a weight which is
+        greater than weight for any possible normal character.
+        0xFFFF is greater than any possible weight in the UCA weight table.
+      */
+      return 0xFFFF;
+    }
+
+    scanner->sbeg+= mblen;
+    if (wc[0] > scanner->level->maxchar)
+    {
+      /* Return 0xFFFD as weight for all characters outside BMP */
+      scanner->wbeg= nochar;
+      return 0xFFFD;
+    }
+
+    if (my_uca_have_contractions_quick(scanner->level))
+    {
+      uint16 *cweight;
+      /*
+        If we have scanned a character which can have previous context,
+        and there were some more characters already before,
+        then reconstruct codepoint of the previous character
+        from "page" and "code" into w[1], and verify that {wc[1], wc[0]}
+        together form a real previous context pair.
+        Note, we support only 2-character long sequences with previous
+        context at the moment. CLDR does not have longer sequences.
+      */
+      if (my_uca_can_be_previous_context_tail(&scanner->level->contractions,
+                                              wc[0]) &&
+          scanner->wbeg != nochar &&     /* if not the very first character */
+          my_uca_can_be_previous_context_head(&scanner->level->contractions,
+                                              (wc[1]= ((scanner->page << 8) +
+                                                        scanner->code))) &&
+          (cweight= my_uca_previous_context_find(scanner, wc[1], wc[0])))
+      {
+        scanner->page= scanner->code= 0; /* Clear for the next character */
+        return *cweight;
+      }
+      else if (my_uca_can_be_contraction_head(&scanner->level->contractions,
+                                              wc[0]))
+      {
+        /* Check if w[0] starts a contraction */
+        if ((cweight= my_uca_scanner_contraction_find(scanner, wc)))
+          return *cweight;
+      }
+    }
+
+    /* Process single character */
+    scanner->page= wc[0] >> 8;
+    scanner->code= wc[0] & 0xFF;
+
+    /* If weight page for w[0] does not exist, then calculate algoritmically */
+    if (!(wpage= scanner->level->weights[scanner->page]))
+      return my_uca_scanner_next_implicit(scanner);
+
+    /* Calculate pointer to w[0]'s weight, using page, offset and weight level */
+    scanner->wbeg= wpage +
+                   scanner->code * scanner->level->lengths[scanner->page] + scanner->current_level;
+    /*
+      This character (which is in second,third,fourth level doesn't have weight in this level,
+      so we add a placeholder instead 
+    */
+    if(!scanner->wbeg[0] && scanner->current_level > 0)
+      /* This should be lowest weight value */
+      return 0x0020;
+  } while (!scanner->wbeg[0]); /* Skip ignorable characters */
+
+  return *scanner->wbeg++;
+}
+
+static my_uca_scanner_handler my_any_uca_scanner_handler_multilevel=
+{
+  my_uca_scanner_init_any_multilevel,
+  my_uca_scanner_next_any_multilevel
+};
+
+/*
   Compares two strings according to the collation
 
   SYNOPSIS:
@@ -21938,6 +22068,9 @@ static int my_strnncoll_uca(CHARSET_INFO *cs,
 
 /*
   Extension of my_strnncoll_uca with now considering multi-level weight in UCA
+  Its function is very similar with my_strnncoll_uca but the main part will be loop many times,
+  depend on cs->levels_for_order's value. When if found the first none match, it will return
+  the different. Otherwise, it will go to the next level.
 */
 static int my_strnncoll_uca_multilevel(CHARSET_INFO *cs, 
                                        my_uca_scanner_handler *scanner_handler,
@@ -21957,7 +22090,7 @@ static int my_strnncoll_uca_multilevel(CHARSET_INFO *cs,
   {
     scanner_handler->init(&sscanner, cs, &cs->uca->level[i], s, slen);
     scanner_handler->init(&tscanner, cs, &cs->uca->level[i], t, tlen);
-  
+    sscanner.current_level = tscanner.current_level = i;
     do
     {
       s_res= scanner_handler->next(&sscanner);
@@ -22107,6 +22240,9 @@ static int my_strnncollsp_uca(CHARSET_INFO *cs,
 
 /*
   Extension of my_strnncollsp_uca with now considering multi-level weight in UCA
+  Its function is very similar with my_strnncoll_uca but the main part will be loop many times,
+  depend on cs->levels_for_order's value. When if found the first none match, it will return
+  the different. Otherwise, it will go to the next level.
 */
 
 static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs, 
@@ -22128,6 +22264,7 @@ static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs,
   {
     scanner_handler->init(&sscanner, cs, &cs->uca->level[i], s, slen);
     scanner_handler->init(&tscanner, cs, &cs->uca->level[i], t, tlen);
+    sscanner.current_level = tscanner.current_level = i;
     
     do
     {
@@ -22249,6 +22386,10 @@ end:
   *nr2= m2;
 }
 
+/*
+  Extension of my_hash_sort_uca, the hash function will be generate for each level,
+  started from the first level.
+*/
 static void my_hash_sort_uca_multilevel(CHARSET_INFO *cs,
                                          my_uca_scanner_handler *scanner_handler,
                                          const uchar *s, size_t slen,
@@ -22263,6 +22404,7 @@ static void my_hash_sort_uca_multilevel(CHARSET_INFO *cs,
   for (uchar i = 0; i != level_num; i++)
   {
     scanner_handler->init(&scanner, cs, &cs->uca->level[i], s, slen);
+    scanner.current_level = i;
     
     while ((s_res= scanner_handler->next(&scanner)) >0)
     {
@@ -22385,6 +22527,8 @@ my_strnxfrm_uca(CHARSET_INFO *cs,
 
 /*
   Extension of my_strnxfrm_uca with now considering multi-level weight in UCA
+  Multiple DUCETweight level is considered by looping through each one.
+  Padding will be applied only at the last level
 */
 static size_t
 my_strnxfrm_uca_multilevel(CHARSET_INFO *cs, 
@@ -22398,10 +22542,11 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
   my_uca_scanner scanner;
   uchar level_num = cs->levels_for_order;
   
-  for (int i = 0; i != level_num; i++)
+  for (int current_level = 0; current_level != level_num; current_level++)
   {
     
-    scanner_handler->init(&scanner, cs, &cs->uca->level[i], src, srclen);
+    scanner_handler->init(&scanner, cs, &cs->uca->level[current_level], src, srclen);
+    scanner.current_level = current_level;
     
     for (; dst < de && nweights &&
            (s_res= scanner_handler->next(&scanner)) > 0 ; nweights--)
@@ -22410,8 +22555,9 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
       if (dst < de)
         *dst++= s_res & 0xFF;
     }
-  
-    if (dst < de && nweights && (flags & MY_STRXFRM_PAD_WITH_SPACE))
+ 
+    /* Only padd at the last weight level */ 
+    if (dst < de && nweights && ((flags & MY_STRXFRM_PAD_WITH_SPACE ) && (current_level == level_num - 1)))
     {
       uint space_count= MY_MIN((uint) (de - dst) / 2, nweights);
       s_res= my_space_weight(cs);
@@ -22421,8 +22567,9 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
         *dst++= s_res & 0xFF;
       }
     }
+    /* Only padd at the last weight level */ 
     my_strxfrm_desc_and_reverse(d0, dst, flags, 0);
-    if ((flags & MY_STRXFRM_PAD_TO_MAXLEN) && dst < de)
+    if (((flags & MY_STRXFRM_PAD_TO_MAXLEN) && (current_level == level_num - 1)) && dst < de)
     {
       s_res= my_space_weight(cs);
       for ( ; dst < de; )
@@ -24271,6 +24418,10 @@ ex:
   return rc;
 }
 
+/*
+  Extension of create_tailoring with multilevel weight. each weight level will be
+  initilized and assigned into respective level array in uca.
+*/
 static my_bool
 create_tailoring_multilevel(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
 {
@@ -24350,6 +24501,11 @@ my_coll_init_uca(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
   return create_tailoring(cs, loader);
 }
 
+/*
+  Universal CHARSET_INFO compatible wrappers
+  for the above internal functions.
+  Should work for any character set with multilevel weight
+*/
 static my_bool
 my_coll_init_uca_multilevel(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
 {
@@ -24405,7 +24561,7 @@ static int my_strnncoll_any_uca_multilevel(CHARSET_INFO *cs,
                                            const uchar *t, size_t tlen,
                                            my_bool t_is_prefix)
 {
-  return my_strnncoll_uca_multilevel(cs, &my_any_uca_scanner_handler,
+  return my_strnncoll_uca_multilevel(cs, &my_any_uca_scanner_handler_multilevel,
                                      s, slen, t, tlen, t_is_prefix);
 }
 
@@ -24414,7 +24570,7 @@ static int my_strnncollsp_any_uca_multilevel(CHARSET_INFO *cs,
                                              const uchar *t, size_t tlen,
                                              my_bool diff_if_only_endspace_difference)
 {
-  return my_strnncollsp_uca_multilevel(cs, &my_any_uca_scanner_handler,
+  return my_strnncollsp_uca_multilevel(cs, &my_any_uca_scanner_handler_multilevel,
                                         s, slen, t, tlen,
                                         diff_if_only_endspace_difference);
 }   
@@ -24423,14 +24579,15 @@ static void my_hash_sort_any_uca_multilevel(CHARSET_INFO *cs,
                                             const uchar *s, size_t slen,
                                             ulong *n1, ulong *n2)
 {
-  my_hash_sort_uca_multilevel(cs, &my_any_uca_scanner_handler, s, slen, n1, n2); 
+  my_hash_sort_uca_multilevel(cs, &my_any_uca_scanner_handler_multilevel,
+                               s, slen, n1, n2); 
 }
 
 static size_t my_strnxfrm_any_uca_multilevel(CHARSET_INFO *cs, 
                                              uchar *dst, size_t dstlen, uint nweights,
                                              const uchar *src, size_t srclen, uint flags)
 {
-  return my_strnxfrm_uca_multilevel(cs, &my_any_uca_scanner_handler,
+  return my_strnxfrm_uca_multilevel(cs, &my_any_uca_scanner_handler_multilevel,
                                     dst, dstlen, nweights, src, srclen, flags);
 }
 
