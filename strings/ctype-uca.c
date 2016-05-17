@@ -28875,7 +28875,7 @@ static int my_strnncoll_uca(CHARSET_INFO *cs,
                             const uchar *t, size_t tlen,
                             my_bool t_is_prefix)
 {
-  return my_strnncoll_uca_onelevel(cs, scanner_handler, s, slen, t, tlen, t_is_prefix);
+  return my_strnncoll_uca_onelevel(cs, scanner_handler, s, slen, t, tlen, 0, t_is_prefix);
 }
 
 static int my_strnncoll_uca_multilevel(CHARSET_INFO *cs, 
@@ -29051,7 +29051,8 @@ static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs,
   int ret;
   for (uint i = 0; i != num_level; i++)
   {
-     ret = my_strnncollsp_uca_onelevel(cs, scanner_handler, s, slen, t, tlen, i, diff_if_only_endspace_difference);
+     ret = my_strnncollsp_uca_onelevel(cs, scanner_handler, s, slen, t, tlen,
+		                               i, diff_if_only_endspace_difference);
      if (ret)
      {
         return ret;
@@ -29153,7 +29154,7 @@ static void my_hash_sort_uca_multilevel(CHARSET_INFO *cs,
   uint num_level = cs->levels_for_order;
   for (uint i = 0; i != num_level; i++)
   {
-    my_hash_sort_uca(cs, scanner_handler, s, slen, nr1, nr2, i);
+    my_hash_sort_uca_onelevel(cs, scanner_handler, s, slen, nr1, nr2, i);
   }
 }
 
@@ -29256,7 +29257,8 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
         *dst++= s_res & 0xFF;
     }
     
-    if (dst < de && nweights && ((flags & MY_STRXFRM_PAD_WITH_SPACE) && (current_level == num_level - 1)))
+    if (dst < de && nweights
+        && ((flags & MY_STRXFRM_PAD_WITH_SPACE) && (current_level == num_level - 1)))
     {
       uint space_count= MY_MIN((uint) (de - dst) / 2, nweights);
       s_res= my_space_weight(cs);
@@ -29267,7 +29269,7 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
       }
     }
     my_strxfrm_desc_and_reverse(d0, dst, flags, 0);
-    if (((flags & MY_STRXFRM_PAD_TO_MAXLEN) && (current_level == num_level -1 )) && dst < de)
+    if (dst < de && ((flags & MY_STRXFRM_PAD_TO_MAXLEN)&& (current_level == num_level -1 )))
     {
       s_res= my_space_weight(cs);
       for ( ; dst < de; )
@@ -31117,7 +31119,8 @@ ex:
 }
 
 static my_bool
-create_tailoring_multilevel(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
+create_tailoring_multilevel(struct charset_info_st *cs,
+                            MY_CHARSET_LOADER *loader)
 {
   uint num_level = cs->levels_for_order;
   MY_COLL_RULES rules;
@@ -31195,7 +31198,8 @@ my_coll_init_uca(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
 }
 
 static my_bool
-my_coll_init_uca_multilevel(struct charset_info_st *cs, MY_CHARSET_LOADER *loader)
+my_coll_init_uca_multilevel(struct charset_info_st *cs,
+                            MY_CHARSET_LOADER *loader)
 {
   cs->pad_char= ' ';
   cs->ctype= my_charset_utf8_unicode_ci.ctype;
