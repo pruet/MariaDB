@@ -27209,7 +27209,7 @@ MY_UCA_INFO my_uca_v520_th =
       }
     },
     {
-      0x10BFF,      /* maxchar */
+      0x100FF,      /* maxchar */
         (uchar *)uca520_length_w2,
         (uint16 **)uca520_weight_w2,
         {            /* Contractions: */
@@ -29283,7 +29283,6 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
   return dst - d0;
 }
 
-
 /*
   This function compares if two characters are the same.
   The sign +1 or -1 does not matter. The only
@@ -29294,9 +29293,23 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
 
 static int my_uca_charcmp(CHARSET_INFO *cs, my_wc_t wc1, my_wc_t wc2)
 {
+  uint num_level = cs->levels_for_order;
+  int ret;
+  for (uint i = 0; i != num_level; i++)
+  {
+    ret = my_uca_charcmp_onelevel(cs, wc1, wc2, i);
+    if (ret) {
+      return ret;
+    }
+  }
+  return 0;
+}
+
+static int my_uca_charcmp_onelevel(CHARSET_INFO *cs, my_wc_t wc1, my_wc_t wc2, uint level)
+{
   size_t length1, length2;
-  const uint16 *weight1= my_char_weight_addr(&cs->uca->level[0], wc1);
-  const uint16 *weight2= my_char_weight_addr(&cs->uca->level[0], wc2);
+  const uint16 *weight1= my_char_weight_addr(&cs->uca->level[level], wc1);
+  const uint16 *weight2= my_char_weight_addr(&cs->uca->level[level], wc2);
   
   if (!weight1 || !weight2)
     return wc1 != wc2;
@@ -29306,8 +29319,8 @@ static int my_uca_charcmp(CHARSET_INFO *cs, my_wc_t wc1, my_wc_t wc2)
     return 1;
 
   /* Thoroughly compare all weights */
-  length1= cs->uca->level[0].lengths[wc1 >> MY_UCA_PSHIFT]; /* W3-TODO */
-  length2= cs->uca->level[0].lengths[wc2 >> MY_UCA_PSHIFT];
+  length1= cs->uca->level[level].lengths[wc1 >> MY_UCA_PSHIFT]; /* W3-TODO */
+  length2= cs->uca->level[level].lengths[wc2 >> MY_UCA_PSHIFT];
   
   if (length1 > length2)
     return memcmp((const void*)weight1, (const void*)weight2, length2*2) ?
