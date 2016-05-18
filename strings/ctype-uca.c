@@ -28875,7 +28875,8 @@ static int my_strnncoll_uca(CHARSET_INFO *cs,
                             const uchar *t, size_t tlen,
                             my_bool t_is_prefix)
 {
-  return my_strnncoll_uca_onelevel(cs, scanner_handler, s, slen, t, tlen, 0, t_is_prefix);
+  return my_strnncoll_uca_onelevel(cs, scanner_handler, s, slen, t, tlen,
+                                   0, t_is_prefix);
 }
 
 static int my_strnncoll_uca_multilevel(CHARSET_INFO *cs, 
@@ -29038,7 +29039,8 @@ static int my_strnncollsp_uca(CHARSET_INFO *cs,
                               const uchar *t, size_t tlen,
                               my_bool diff_if_only_endspace_difference)
 {
-  return my_strnncollsp_uca_onelevel(cs, scanner_handler, s, slen, t, tlen, 0, diff_if_only_endspace_difference);
+  return my_strnncollsp_uca_onelevel(cs, scanner_handler, s, slen, t, tlen,
+                                     0, diff_if_only_endspace_difference);
 }
 
 static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs, 
@@ -29052,7 +29054,7 @@ static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs,
   for (uint i = 0; i != num_level; i++)
   {
      ret = my_strnncollsp_uca_onelevel(cs, scanner_handler, s, slen, t, tlen,
-		                               i, diff_if_only_endspace_difference);
+                                       i, diff_if_only_endspace_difference);
      if (ret)
      {
         return ret;
@@ -29148,8 +29150,8 @@ static void my_hash_sort_uca(CHARSET_INFO *cs,
 
 static void my_hash_sort_uca_multilevel(CHARSET_INFO *cs,
                              my_uca_scanner_handler *scanner_handler,
-			     const uchar *s, size_t slen,
-			     ulong *nr1, ulong *nr2)
+                             const uchar *s, size_t slen,
+                             ulong *nr1, ulong *nr2)
 {
   uint num_level = cs->levels_for_order;
   for (uint i = 0; i != num_level; i++)
@@ -29247,7 +29249,8 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
 
   for (uint current_level = 0; current_level != num_level; current_level++)
   {
-    scanner_handler->init(&scanner, cs, &cs->uca->level[current_level], src, srclen);
+    scanner_handler->init(&scanner, cs, &cs->uca->level[current_level],
+                          src, srclen);
     
     for (; dst < de && nweights &&
            (s_res= scanner_handler->next(&scanner)) > 0 ; nweights--)
@@ -29258,7 +29261,8 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
     }
     
     if (dst < de && nweights
-        && ((flags & MY_STRXFRM_PAD_WITH_SPACE) && (current_level == num_level - 1)))
+        && ((flags & MY_STRXFRM_PAD_WITH_SPACE)
+             && (current_level == num_level - 1)))
     {
       uint space_count= MY_MIN((uint) (de - dst) / 2, nweights);
       s_res= my_space_weight(cs);
@@ -29269,7 +29273,8 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
       }
     }
     my_strxfrm_desc_and_reverse(d0, dst, flags, 0);
-    if (dst < de && ((flags & MY_STRXFRM_PAD_TO_MAXLEN)&& (current_level == num_level -1 )))
+    if (dst < de && ((flags & MY_STRXFRM_PAD_TO_MAXLEN)
+                      && (current_level == num_level -1 )))
     {
       s_res= my_space_weight(cs);
       for ( ; dst < de; )
@@ -29290,20 +29295,6 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
   This fact allows us to use memcmp() safely, on both
   little-endian and big-endian machines.
 */
-
-static int my_uca_charcmp(CHARSET_INFO *cs, my_wc_t wc1, my_wc_t wc2)
-{
-  uint num_level = cs->levels_for_order;
-  int ret;
-  for (uint i = 0; i != num_level; i++)
-  {
-    ret = my_uca_charcmp_onelevel(cs, wc1, wc2, i);
-    if (ret) {
-      return ret;
-    }
-  }
-  return 0;
-}
 
 static int my_uca_charcmp_onelevel(CHARSET_INFO *cs, my_wc_t wc1, my_wc_t wc2, uint level)
 {
@@ -29331,6 +29322,20 @@ static int my_uca_charcmp_onelevel(CHARSET_INFO *cs, my_wc_t wc1, my_wc_t wc2, u
            1 : weight2[length1];
   
   return memcmp((const void*)weight1, (const void*)weight2, length1*2);
+}
+
+static int my_uca_charcmp(CHARSET_INFO *cs, my_wc_t wc1, my_wc_t wc2)
+{
+  uint num_level = cs->levels_for_order;
+  int ret;
+  for (uint i = 0; i != num_level; i++)
+  {
+    ret = my_uca_charcmp_onelevel(cs, wc1, wc2, i);
+    if (ret) {
+      return ret;
+    }
+  }
+  return 0;
 }
 
 /*
@@ -31263,14 +31268,14 @@ static void my_hash_sort_any_uca(CHARSET_INFO *cs,
                                  const uchar *s, size_t slen,
                                  ulong *n1, ulong *n2)
 {
-  my_hash_sort_uca(cs, &my_any_uca_scanner_handler, s, slen, n1, n2); 
+  my_hash_sort_uca(cs, &my_any_uca_scanner_handler, s, slen, n1, n2);
 }
 
 static void my_hash_sort_any_uca_multilevel(CHARSET_INFO *cs,
                                             const uchar *s, size_t slen,
                                             ulong *n1, ulong *n2)
 {
-  my_hash_sort_uca_multilevel(cs, &my_any_uca_scanner_handler, s, slen, n1, n2); 
+  my_hash_sort_uca_multilevel(cs, &my_any_uca_scanner_handler, s, slen, n1, n2);
 }
 
 static size_t my_strnxfrm_any_uca(CHARSET_INFO *cs, 
@@ -31282,8 +31287,9 @@ static size_t my_strnxfrm_any_uca(CHARSET_INFO *cs,
 }
 
 static size_t my_strnxfrm_any_uca_multilevel(CHARSET_INFO *cs, 
-                                             uchar *dst, size_t dstlen, uint nweights,
-                                             const uchar *src, size_t srclen, uint flags)
+                                             uchar *dst, size_t dstlen,
+                                             uint nweights, const uchar *src,
+                                             size_t srclen, uint flags)
 {
   return my_strnxfrm_uca_multilevel(cs, &my_any_uca_scanner_handler,
                                     dst, dstlen, nweights, src, srclen, flags);
