@@ -28902,6 +28902,7 @@ NULL          ,NULL          ,NULL          ,NULL
 };
 
 #define THAI_CONTRACTIONS 231
+#define THAI_CONTRACTIONS_W2 1
 
 MY_CONTRACTION thai_contractions[THAI_CONTRACTIONS]=
 {
@@ -30062,6 +30063,16 @@ MY_CONTRACTION thai_contractions[THAI_CONTRACTIONS]=
   },
 };
 
+MY_CONTRACTION thai_contractions_w2[THAI_CONTRACTIONS_W2]=
+{
+  { /* <THAI CHARACTER SARA AM> */
+    { 0x0E4D, 0x0E32, 0 },
+    { 0x0020, 0 },
+    FALSE
+  },
+  
+};
+
 MY_UCA_INFO my_uca_v520_th=
 {
   {
@@ -30080,9 +30091,9 @@ MY_UCA_INFO my_uca_v520_th=
         (uchar *)uca520_length_w2,
         (uint16 **)uca520_weight_w2,
         {            /* Contractions: */
-          0,                 /*   nitems */
-          NULL,              /*   item */
-          NULL               /*   flags */
+          THAI_CONTRACTIONS_W2, /*   nitems */
+          thai_contractions_w2, /*   item */
+          NULL                  /*   flags */
       }
     },
   },
@@ -35947,12 +35958,12 @@ struct charset_info_st my_charset_utf8_unicode_520_ci=
     &my_collation_any_uca_handler
 };
 
-struct charset_info_st my_charset_utf8_thai_520_ci =
+struct charset_info_st my_charset_utf8_thai_520_w2=
 {
     MY_PAGE2_COLLATION_ID_UTF8+2,0,0,             /* number       */
     MY_CS_UTF8MB3_UCA_FLAGS,/* flags     */
     MY_UTF8MB3,          /* csname       */
-    MY_UTF8MB3 "_thai_520_ci",/* name */
+    MY_UTF8MB3 "_thai_520_w2",/* name */
     "",                  /* comment      */
     "",                  /* tailoring    */
     ctype_utf8,          /* ctype        */
