@@ -32135,10 +32135,12 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
 
   for (current_level= 0; current_level != num_level; current_level++)
   {
-    dst= my_strnxfrm_uca_onelevel(cs, scanner_handler,
-                                  &cs->uca->level[current_level],
-                                  dst, de, nweights / cs->levels_for_order,
-                                  src, srclen, flags);
+    if (!(flags & MY_STRXFRM_LEVEL_ALL) ||
+        (flags & (MY_STRXFRM_LEVEL1 << current_level)))
+      dst= my_strnxfrm_uca_onelevel(cs, scanner_handler,
+                                    &cs->uca->level[current_level],
+                                    dst, de, nweights,
+                                    src, srclen, flags);
   }
 
   if (dst < de && (flags & MY_STRXFRM_PAD_TO_MAXLEN))
@@ -34160,6 +34162,11 @@ static size_t my_strnxfrmlen_any_uca(CHARSET_INFO *cs, size_t len)
   return (len + cs->mbmaxlen - 1) / cs->mbmaxlen * cs->strxfrm_multiply * 2;
 }
 
+static size_t my_strnxfrmlen_any_uca_multilevel(CHARSET_INFO *cs, size_t len)
+{
+  return my_strnxfrmlen_any_uca(cs, len) * cs->levels_for_order;
+}
+
 #ifdef HAVE_CHARSET_ucs2
 /*
   UCS2 optimized CHARSET_INFO compatible wrappers.
@@ -35084,7 +35091,7 @@ MY_COLLATION_HANDLER my_collation_any_uca_handler_multilevel=
     my_strnncoll_any_uca_multilevel,
     my_strnncollsp_any_uca_multilevel,
     my_strnxfrm_any_uca_multilevel,
-    my_strnxfrmlen_any_uca,
+    my_strnxfrmlen_any_uca_multilevel,
     my_like_range_mb,
     my_wildcmp_uca,
     NULL,
