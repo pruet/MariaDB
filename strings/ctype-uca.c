@@ -31955,7 +31955,6 @@ static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs,
     slen	String's length
     n1		First hash parameter
     n2		Second hash parameter
-    level	DUCETweight level
   
   NOTES:
     Scans consequently weights and updates
@@ -31963,22 +31962,28 @@ static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs,
     upper and lower case of the same letter will return the same
     weight sequence, and thus will produce the same hash values
     in n1 and n2.
-  
+
+    This functions is used for one-level and for multi-level collations.
+    We intentionally use only primary level in multi-level collations.
+    This helps to have PARTITION BY KEY put primarily equal records
+    into the same partition. E.g. in utf8_thai_520_ci records that differ
+    only in tone marks go into the same partition.
+
   RETURN
     N/A
 */
 
-static void my_hash_sort_uca_onelevel(CHARSET_INFO *cs,
-                                      my_uca_scanner_handler *scanner_handler,
-                                      const uchar *s, size_t slen,
-                                      ulong *nr1, ulong *nr2, uint level)
+static void my_hash_sort_uca(CHARSET_INFO *cs,
+                             my_uca_scanner_handler *scanner_handler,
+                             const uchar *s, size_t slen,
+                             ulong *nr1, ulong *nr2)
 {
-  int s_res;
+  int   s_res;
   my_uca_scanner scanner;
   int space_weight= my_space_weight(cs);
   register ulong m1= *nr1, m2= *nr2;
 
-  scanner_handler->init(&scanner, cs, &cs->uca->level[level], s, slen);
+  scanner_handler->init(&scanner, cs, &cs->uca->level[0], s, slen);
   
   while ((s_res= scanner_handler->next(&scanner)) >0)
   {
@@ -32021,26 +32026,6 @@ end:
   *nr2= m2;
 }
 
-static void my_hash_sort_uca(CHARSET_INFO *cs,
-                             my_uca_scanner_handler *scanner_handler,
-                             const uchar *s, size_t slen,
-                             ulong *nr1, ulong *nr2)
-{
-  my_hash_sort_uca_onelevel(cs, scanner_handler, s, slen, nr1, nr2, 0);
-}
-
-static void my_hash_sort_uca_multilevel(CHARSET_INFO *cs,
-                                       my_uca_scanner_handler *scanner_handler,
-                                       const uchar *s, size_t slen,
-                                       ulong *nr1, ulong *nr2)
-{
-  uint num_level= cs->levels_for_order;
-  uint i;
-  for (i= 0; i != num_level; i++)
-  {
-    my_hash_sort_uca_onelevel(cs, scanner_handler, s, slen, nr1, nr2, i);
-  }
-}
 
 /*
   For the given string creates its "binary image", suitable
@@ -32072,6 +32057,7 @@ static void my_hash_sort_uca_multilevel(CHARSET_INFO *cs,
   RETURN
     Number of bytes that have been written into the binary image.
 */
+
 
 static size_t
 my_strnxfrm_uca(CHARSET_INFO *cs, 
@@ -34029,6 +34015,7 @@ create_tailoring_multilevel(struct charset_info_st *cs,
   MY_COLL_RULES rules;
   MY_UCA_INFO new_uca, *src_uca= NULL;
   int rc= 0;
+  uint i;
 
   *loader->error= '\0';
 
@@ -34063,7 +34050,6 @@ create_tailoring_multilevel(struct charset_info_st *cs,
       cs->caseinfo= &my_unicase_default;
   }
 
-  uint i;
   for (i= 0; i != num_level; i++)
   {
     if ((rc= init_weight_level(loader, &rules, i,
@@ -34155,14 +34141,6 @@ static void my_hash_sort_any_uca(CHARSET_INFO *cs,
                                  ulong *n1, ulong *n2)
 {
   my_hash_sort_uca(cs, &my_any_uca_scanner_handler, s, slen, n1, n2);
-}
-
-static void my_hash_sort_any_uca_multilevel(CHARSET_INFO *cs,
-                                            const uchar *s, size_t slen,
-                                            ulong *n1, ulong *n2)
-{
-  my_hash_sort_uca_multilevel(cs, &my_any_uca_scanner_handler,
-                              s, slen, n1, n2);
 }
 
 static size_t my_strnxfrm_any_uca(CHARSET_INFO *cs, 
@@ -35118,7 +35096,7 @@ MY_COLLATION_HANDLER my_collation_any_uca_handler_multilevel=
     my_wildcmp_uca,
     NULL,
     my_instr_mb,
-    my_hash_sort_any_uca_multilevel,
+    my_hash_sort_any_uca,
     my_propagate_complex
 };
 
