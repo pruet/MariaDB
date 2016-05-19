@@ -31725,9 +31725,9 @@ static my_uca_scanner_handler my_any_uca_scanner_handler=
 
 static int my_strnncoll_uca_onelevel(CHARSET_INFO *cs, 
                                      my_uca_scanner_handler *scanner_handler,
+                                     const MY_UCA_WEIGHT_LEVEL *level,
                                      const uchar *s, size_t slen,
                                      const uchar *t, size_t tlen,
-                                     uint level,
                                      my_bool t_is_prefix)
 {
   my_uca_scanner sscanner;
@@ -31735,8 +31735,8 @@ static int my_strnncoll_uca_onelevel(CHARSET_INFO *cs,
   int s_res;
   int t_res;
   
-  scanner_handler->init(&sscanner, cs, &cs->uca->level[level], s, slen);
-  scanner_handler->init(&tscanner, cs, &cs->uca->level[level], t, tlen);
+  scanner_handler->init(&sscanner, cs, level, s, slen);
+  scanner_handler->init(&tscanner, cs, level, t, tlen);
   
   do
   {
@@ -31753,8 +31753,8 @@ static int my_strnncoll_uca(CHARSET_INFO *cs,
                             const uchar *t, size_t tlen,
                             my_bool t_is_prefix)
 {
-  return my_strnncoll_uca_onelevel(cs, scanner_handler, s, slen, t, tlen,
-                                   0, t_is_prefix);
+  return my_strnncoll_uca_onelevel(cs, scanner_handler, &cs->uca->level[0],
+                                   s, slen, t, tlen, t_is_prefix);
 }
 
 static int my_strnncoll_uca_multilevel(CHARSET_INFO *cs, 
@@ -31764,25 +31764,24 @@ static int my_strnncoll_uca_multilevel(CHARSET_INFO *cs,
                                        my_bool t_is_prefix)
 {
   uint num_level= cs->levels_for_order;
-  int ret;
   uint i;
   for (i= 0; i != num_level; i++)
   {
-    ret= my_strnncoll_uca_onelevel(cs, scanner_handler, s, slen, t, tlen, i,
-                                   t_is_prefix);
+    int ret= my_strnncoll_uca_onelevel(cs, scanner_handler, &cs->uca->level[i],
+                                       s, slen, t, tlen, t_is_prefix);
     if (ret)
-    {
        return ret;
-    }
   }
   return 0;
 }
 
+
 static inline int
-my_space_weight(CHARSET_INFO *cs) /* W3-TODO */
+my_space_weight(const MY_UCA_WEIGHT_LEVEL *level)
 {
-  return cs->uca->level[0].weights[0][0x20 * cs->uca->level[0].lengths[0]];
+  return level->weights[0][0x20 * level->lengths[0]];
 }
+
 
 /**
   Helper function:
@@ -31859,9 +31858,9 @@ my_char_weight_addr(const MY_UCA_WEIGHT_LEVEL *level, uint wc)
 
 static int my_strnncollsp_uca_onelevel(CHARSET_INFO *cs, 
                                        my_uca_scanner_handler *scanner_handler,
+                                       const MY_UCA_WEIGHT_LEVEL *level,
                                        const uchar *s, size_t slen,
                                        const uchar *t, size_t tlen,
-                                       uint level,
                                        my_bool diff_if_only_endspace_difference)
 {
   my_uca_scanner sscanner, tscanner;
@@ -31871,8 +31870,8 @@ static int my_strnncollsp_uca_onelevel(CHARSET_INFO *cs,
   diff_if_only_endspace_difference= 0;
 #endif
 
-  scanner_handler->init(&sscanner, cs, &cs->uca->level[level], s, slen);
-  scanner_handler->init(&tscanner, cs, &cs->uca->level[level], t, tlen);
+  scanner_handler->init(&sscanner, cs, level, s, slen);
+  scanner_handler->init(&tscanner, cs, level, t, tlen);
   
   do
   {
@@ -31883,7 +31882,7 @@ static int my_strnncollsp_uca_onelevel(CHARSET_INFO *cs,
   if (s_res > 0 && t_res < 0)
   { 
     /* Calculate weight for SPACE character */
-    t_res= my_space_weight(cs);
+    t_res= my_space_weight(level);
       
     /* compare the first string to spaces */
     do
@@ -31898,7 +31897,7 @@ static int my_strnncollsp_uca_onelevel(CHARSET_INFO *cs,
   if (s_res < 0 && t_res > 0)
   {
     /* Calculate weight for SPACE character */
-    s_res= my_space_weight(cs);
+    s_res= my_space_weight(level);
       
     /* compare the second string to spaces */
     do
@@ -31919,8 +31918,9 @@ static int my_strnncollsp_uca(CHARSET_INFO *cs,
                               const uchar *t, size_t tlen,
                               my_bool diff_if_only_endspace_difference)
 {
-  return my_strnncollsp_uca_onelevel(cs, scanner_handler, s, slen, t, tlen,
-                                     0, diff_if_only_endspace_difference);
+  return my_strnncollsp_uca_onelevel(cs, scanner_handler, &cs->uca->level[0],
+                                     s, slen, t, tlen,
+                                     diff_if_only_endspace_difference);
 }
 
 static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs, 
@@ -31930,16 +31930,15 @@ static int my_strnncollsp_uca_multilevel(CHARSET_INFO *cs,
                                        my_bool diff_if_only_endspace_difference)
 {
   uint num_level= cs->levels_for_order;
-  int ret;
   uint i;
   for (i= 0; i != num_level; i++)
   {
-     ret= my_strnncollsp_uca_onelevel(cs, scanner_handler, s, slen, t, tlen,
-                                      i, diff_if_only_endspace_difference);
-     if (ret)
-     {
-        return ret;
-     }
+    int ret= my_strnncollsp_uca_onelevel(cs, scanner_handler,
+                                         &cs->uca->level[i],
+                                         s, slen, t, tlen,
+                                         diff_if_only_endspace_difference);
+    if (ret)
+      return ret;
   }
   return 0;
 }
@@ -31980,7 +31979,7 @@ static void my_hash_sort_uca(CHARSET_INFO *cs,
 {
   int   s_res;
   my_uca_scanner scanner;
-  int space_weight= my_space_weight(cs);
+  int space_weight= my_space_weight(&cs->uca->level[0]);
   register ulong m1= *nr1, m2= *nr2;
 
   scanner_handler->init(&scanner, cs, &cs->uca->level[0], s, slen);
@@ -32027,6 +32026,41 @@ end:
 }
 
 
+static uchar *
+my_strnxfrm_uca_onelevel(CHARSET_INFO *cs,
+                         my_uca_scanner_handler *scanner_handler,
+                         MY_UCA_WEIGHT_LEVEL *level,
+                         uchar *dst, uchar *de, uint nweights,
+                         const uchar *src, size_t srclen, uint flags)
+{
+  my_uca_scanner scanner;
+  uchar *d0= dst;
+  int s_res;
+
+  scanner_handler->init(&scanner, cs, level, src, srclen);
+  for (; dst < de && nweights &&
+         (s_res= scanner_handler->next(&scanner)) > 0 ; nweights--)
+  {
+    *dst++= s_res >> 8;
+    if (dst < de)
+      *dst++= s_res & 0xFF;
+  }
+
+  if (dst < de && nweights && (flags & MY_STRXFRM_PAD_WITH_SPACE))
+  {
+    uint space_count= MY_MIN((uint) (de - dst) / 2, nweights);
+    s_res= my_space_weight(level);
+    for (; space_count ; space_count--)
+    {
+      *dst++= s_res >> 8;
+      *dst++= s_res & 0xFF;
+    }
+  }
+  my_strxfrm_desc_and_reverse(d0, dst, flags, 0);
+  return dst;
+}
+
+
 /*
   For the given string creates its "binary image", suitable
   to be used in binary comparison, i.e. in memcmp(). 
@@ -32067,32 +32101,16 @@ my_strnxfrm_uca(CHARSET_INFO *cs,
 {
   uchar *d0= dst;
   uchar *de= dst + dstlen;
-  int   s_res;
-  my_uca_scanner scanner;
-  scanner_handler->init(&scanner, cs, &cs->uca->level[0], src, srclen);
-  
-  for (; dst < de && nweights &&
-         (s_res= scanner_handler->next(&scanner)) > 0 ; nweights--)
-  {
-    *dst++= s_res >> 8;
-    if (dst < de)
-      *dst++= s_res & 0xFF;
-  }
-  
-  if (dst < de && nweights && (flags & MY_STRXFRM_PAD_WITH_SPACE))
-  {
-    uint space_count= MY_MIN((uint) (de - dst) / 2, nweights);
-    s_res= my_space_weight(cs);
-    for (; space_count ; space_count--)
-    {
-      *dst++= s_res >> 8;
-      *dst++= s_res & 0xFF;
-    }
-  }
-  my_strxfrm_desc_and_reverse(d0, dst, flags, 0);
+
+  dst= my_strnxfrm_uca_onelevel(cs, scanner_handler, &cs->uca->level[0],
+                                dst, de, nweights, src, srclen, flags);
+  /*
+    This can probably be changed to memset(dst, 0, de - dst),
+    like my_strnxfrm_uca_multilevel() does.
+  */
   if ((flags & MY_STRXFRM_PAD_TO_MAXLEN) && dst < de)
   {
-    s_res= my_space_weight(cs);
+    int s_res= my_space_weight(&cs->uca->level[0]);
     for ( ; dst < de; )
     {
       *dst++= s_res >> 8;
@@ -32103,6 +32121,7 @@ my_strnxfrm_uca(CHARSET_INFO *cs,
   return dst - d0;
 }
 
+
 static size_t
 my_strnxfrm_uca_multilevel(CHARSET_INFO *cs, 
                            my_uca_scanner_handler *scanner_handler,
@@ -32112,48 +32131,22 @@ my_strnxfrm_uca_multilevel(CHARSET_INFO *cs,
   uint num_level= cs->levels_for_order;
   uchar *d0= dst;
   uchar *de= dst + dstlen;
-  int s_res;
-  my_uca_scanner scanner;
-
   uint current_level;
+
   for (current_level= 0; current_level != num_level; current_level++)
   {
-    scanner_handler->init(&scanner, cs, &cs->uca->level[current_level],
-                          src, srclen);
-    
-    for (; dst < de && nweights &&
-           (s_res= scanner_handler->next(&scanner)) > 0 ; nweights--)
-    {
-      *dst++= s_res >> 8;
-      if (dst < de)
-        *dst++= s_res & 0xFF;
-    }
-    
-    if (dst < de && nweights
-        && ((flags & MY_STRXFRM_PAD_WITH_SPACE)
-             && (current_level == num_level - 1)))
-    {
-      uint space_count= MY_MIN((uint) (de - dst) / 2, nweights);
-      s_res= my_space_weight(cs);
-      for (; space_count ; space_count--)
-      {
-        *dst++= s_res >> 8;
-        *dst++= s_res & 0xFF;
-      }
-    }
-    my_strxfrm_desc_and_reverse(d0, dst, flags, 0);
-    if (dst < de && ((flags & MY_STRXFRM_PAD_TO_MAXLEN)
-                      && (current_level == num_level -1 )))
-    {
-      s_res= my_space_weight(cs);
-      for ( ; dst < de; )
-      {
-        *dst++= s_res >> 8;
-        if (dst < de)
-          *dst++= s_res & 0xFF;
-      }
-    }
+    dst= my_strnxfrm_uca_onelevel(cs, scanner_handler,
+                                  &cs->uca->level[current_level],
+                                  dst, de, nweights / cs->levels_for_order,
+                                  src, srclen, flags);
   }
+
+  if (dst < de && (flags & MY_STRXFRM_PAD_TO_MAXLEN))
+  {
+    memset(dst, 0, de - dst);
+    dst= de;
+  }
+
   return dst - d0;
 }
 
@@ -32180,7 +32173,7 @@ static int my_uca_charcmp_onelevel(CHARSET_INFO *cs, my_wc_t wc1,
     return 1;
 
   /* Thoroughly compare all weights */
-  length1= cs->uca->level[level].lengths[wc1 >> MY_UCA_PSHIFT]; /* W3-TODO */
+  length1= cs->uca->level[level].lengths[wc1 >> MY_UCA_PSHIFT];
   length2= cs->uca->level[level].lengths[wc2 >> MY_UCA_PSHIFT];
   
   if (length1 > length2)
