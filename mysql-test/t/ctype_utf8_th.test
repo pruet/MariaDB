@@ -8,7 +8,7 @@ DROP TABLE IF EXISTS t1;
 
 SET NAMES utf8;
 
-CREATE TABLE t1 (a VARCHAR(30) CHARACTER SET utf8 COLLATE utf8_thai_520_w2);
+CREATE TABLE t1 (a VARCHAR(30) CHARACTER SET utf8 COLLATE utf8_bin);
 
 INSERT INTO t1 VALUES ('-กระแย่ง');
 INSERT INTO t1 VALUES ('กก');
@@ -107,14 +107,38 @@ INSERT INTO t1 VALUES ('๑๐ ลิตร (10 litre)');
 INSERT INTO t1 VALUES ('๑๐ ลิตร [10 litre]');
 INSERT INTO t1 VALUES ('๑๐ ลิตร {10 litre}');
 
---echo #
---echo # Ascending sort
---echo #
-SELECT a FROM t1 ORDER BY a;
+# Sort the table according to binary 'a'
+# To avoid problems with unpredictable order or 'AA' and 'aa'
+ALTER TABLE t1 ORDER BY a;
+
+ALTER TABLE t1
+  MODIFY a VARCHAR(30) CHARACTER SET utf8 COLLATE utf8_thai_520_w2,
+  ADD id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  ADD KEY a_id (a, id);
 
 --echo #
---echo # Descending sort
+--echo # Ascending sort, using filesort
 --echo #
-SELECT a FROM t1 ORDER BY a DESC;
+EXPLAIN SELECT a FROM t1 ORDER BY a, BINARY a;
+SELECT a FROM t1 ORDER BY a, BINARY a;
 
-DROP TABLE t1; 
+--echo #
+--echo # Descending sort, using filesort
+--echo #
+EXPLAIN SELECT a FROM t1 ORDER BY a DESC, BINARY a DESC;
+SELECT a FROM t1 ORDER BY a DESC, BINARY a DESC;
+
+
+--echo #
+--echo # Ascending sort, using index
+--echo #
+EXPLAIN SELECT a FROM t1 ORDER BY a, id;
+SELECT a FROM t1 ORDER BY a, id;
+
+--echo #
+--echo # Descending sort, using index
+--echo #
+EXPLAIN SELECT a FROM t1 ORDER BY a DESC, id DESC;
+SELECT a FROM t1 ORDER BY a DESC, id DESC;
+
+DROP TABLE t1;
