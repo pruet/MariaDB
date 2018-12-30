@@ -458,6 +458,7 @@ public:
     used_tables_cache= 0; 
     const_item_cache= true;
   }
+  void reset_forced_const() { const_item_cache= false; }
   virtual bool const_during_execution() const { return false; }
   virtual void print(String *str, enum_query_type query_type);
   void fix_num_length_and_dec();
@@ -481,7 +482,7 @@ public:
   }
   virtual void make_unique() { force_copy_fields= TRUE; }
   Item *get_tmp_table_item(THD *thd);
-  virtual Field *create_tmp_field(bool group, TABLE *table);
+  Field *create_tmp_field(bool group, TABLE *table);
   virtual bool collect_outer_ref_processor(uchar *param);
   bool init_sum_func_check(THD *thd);
   bool check_sum_func(THD *thd, Item **ref);
@@ -1084,8 +1085,6 @@ public:
     fixed= true;
   }
   table_map used_tables() const { return (table_map) 1L; }
-  Field *tmp_table_field(TABLE *) { DBUG_ASSERT(0); return NULL; }
-  void set_result_field(Field *) { DBUG_ASSERT(0); }
   void save_in_result_field(bool no_conversions) { DBUG_ASSERT(0); }
 };
 

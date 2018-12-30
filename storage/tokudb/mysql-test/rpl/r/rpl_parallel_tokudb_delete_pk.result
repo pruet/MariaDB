@@ -1,6 +1,8 @@
 include/master-slave.inc
 [connection master]
 drop table if exists t;
+show variables like 'tokudb_rpl_%';
+Variable_name	Value
 create table t (a bigint not null, primary key(a)) engine=tokudb;
 insert into t values (1);
 insert into t values (2),(3);

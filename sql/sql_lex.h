@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2016, MariaDB
+   Copyright (c) 2010, 2018, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -502,7 +502,7 @@ public:
   }
   static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
   { return (void*) alloc_root(mem_root, (uint) size); }
-  static void operator delete(void *ptr,size_t size) { TRASH(ptr, size); }
+  static void operator delete(void *ptr,size_t size) { TRASH_FREE(ptr, size); }
   static void operator delete(void *ptr, MEM_ROOT *mem_root) {}
 
   // Ensures that at least all members used during cleanup() are initialized.
@@ -727,7 +727,13 @@ public:
   Item *prep_having;/* saved HAVING clause for prepared statement processing */
   /* Saved values of the WHERE and HAVING clauses*/
   Item::cond_result cond_value, having_value;
-  /* point on lex in which it was created, used in view subquery detection */
+  /*
+    Point to the LEX in which it was created, used in view subquery detection.
+
+    TODO: make also st_select_lex::parent_stmt_lex (see LEX::stmt_lex)
+    and use st_select_lex::parent_lex & st_select_lex::parent_stmt_lex
+    instead of global (from THD) references where it is possible.
+  */
   LEX *parent_lex;
   enum olap_type olap;
   /* FROM clause - points to the beginning of the TABLE_LIST::next_local list. */
@@ -743,6 +749,7 @@ public:
   Group_list_ptrs        *group_list_ptrs;
 
   List<Item>          item_list;  /* list of fields & expressions */
+  List<Item>          pre_fix; /* above list before fix_fields */
   List<String>        interval_list;
   bool	              is_item_list_lookup;
   /* 
@@ -751,6 +758,11 @@ public:
   */
   List<Item_func_match> *ftfunc_list;
   List<Item_func_match> ftfunc_list_alloc;
+  /*
+    The list of items to which MIN/MAX optimizations of opt_sum_query()
+    have been applied. Used to rollback those optimizations if it's needed.
+  */
+  List<Item_sum> min_max_opt_list;
   JOIN *join; /* after JOIN::prepare it is pointer to corresponding JOIN */
   List<TABLE_LIST> top_join_list; /* join list of the top level          */
   List<TABLE_LIST> *join_list;    /* list for the currently parsed join  */
@@ -892,6 +904,9 @@ public:
 
   /* namp of nesting SELECT visibility (for aggregate functions check) */
   nesting_map name_visibility_map;
+
+  /* it is for correct printing SELECT options */
+  thr_lock_type lock_type;
 
   void init_query();
   void init_select();
@@ -2420,6 +2435,21 @@ struct LEX: public Query_tables_list
   // type information
   char *length,*dec;
   CHARSET_INFO *charset;
+  /*
+    LEX which represents current statement (conventional, SP or PS)
+
+    For example during view parsing THD::lex will point to the views LEX and
+    lex::stmt_lex will point to LEX of the statement where the view will be
+    included
+
+    Currently it is used to have always correct select numbering inside
+    statement (LEX::current_select_number) without storing and restoring a
+    global counter which was THD::select_number.
+
+    TODO: make some unified statement representation (now SP has different)
+    to store such data like LEX::current_select_number.
+  */
+  LEX *stmt_lex;
 
   LEX_STRING name;
   char *help_arg;
@@ -2443,7 +2473,7 @@ struct LEX: public Query_tables_list
   /** SELECT of CREATE VIEW statement */
   LEX_STRING create_view_select;
 
-  uint number_of_selects; // valid only for view
+  uint current_select_number; // valid for statment LEX (not view)
 
   /** Start of 'ON table', in trigger statements.  */
   const char* raw_trg_on_table_name_begin;
@@ -2562,8 +2592,8 @@ public:
   uint profile_options;
   uint grant, grant_tot_col, which_columns;
   enum Foreign_key::fk_match_opt fk_match_option;
-  enum Foreign_key::fk_option fk_update_opt;
-  enum Foreign_key::fk_option fk_delete_opt;
+  enum_fk_option fk_update_opt;
+  enum_fk_option fk_delete_opt;
   uint slave_thd_opt, start_transaction_opt;
   int nest_level;
   /*
@@ -2717,6 +2747,13 @@ public:
   */
   Item *limit_rows_examined;
   ulonglong limit_rows_examined_cnt;
+  /**
+    Holds a set of domain_ids for deletion at FLUSH..DELETE_DOMAIN_ID
+  */
+  DYNAMIC_ARRAY delete_gtid_domain;
+  static const ulong initial_gtid_domain_buffer_size= 16;
+  uint32 gtid_domain_static_buffer[initial_gtid_domain_buffer_size];
+
   inline void set_limit_rows_examined()
   {
     if (limit_rows_examined)

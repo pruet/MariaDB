@@ -1997,8 +1997,50 @@ select 0.0000000001 mod 1;
 select 0.01 mod 1;
 0.01 mod 1
 0.01
+CREATE TABLE t1 (
+`FLD1` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD2` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD3` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD4` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD5` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD6` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD7` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD8` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD9` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD10` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD11` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD12` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD13` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD14` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD15` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD16` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD17` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD18` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD19` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD20` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD21` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD22` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000,
+`FLD23` decimal(7,4) unsigned zerofill NOT NULL DEFAULT 001.0000
+);
+INSERT INTO t1 VALUES (001.0760,000.9500,001.0000,001.0000,001.0000,
+001.0000,001.0000,001.0000,001.0000,001.0000,001.0000,000.5949,001.0194,
+001.0000,001.0000,001.0000,001.0000,001.0000,001.0000,000.9220,001.1890,001.2130,327.2690);
+select FLD1*FLD2*FLD3*FLD4*FLD5*FLD6*FLD7*FLD8*FLD9*FLD10*FLD11*FLD12*FLD13*FLD14*FLD15*FLD16*FLD17*FLD18*FLD19*FLD20*FLD21*FLD22*FLD23 as calc1 from t1;
+calc1
+269.775757576440530322187032000000
+select FLD23*FLD2*FLD1*FLD4*FLD5*FLD11*FLD12*FLD13*FLD3*FLD15*FLD16*FLD17*FLD18*FLD19*FLD20*FLD21*FLD22*FLD14*FLD6*FLD7*FLD8*FLD9*FLD10 as calc2 from t1;
+calc2
+269.775757576440530322187032000000
+DROP TABLE t1;
+CREATE TABLE t1 AS SELECT 1.0 * 2.000;
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `1.0 * 2.000` decimal(6,4) NOT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+DROP TABLE t1;
 #
-# Start of 10.0 tests
+# End of 5.5 tests
 #
 #
 # MDEV-6950 Bad results with joins comparing DATE and INT/ENUM/VARCHAR columns
@@ -2151,5 +2193,134 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	SIMPLE	t1	ref	a	a	6	const	1	Using where; Using index; Using filesort
 DROP TABLE t1;
 #
+# MDEV-8502 DECIMAL accepts out of range DEFAULT values
+#
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT 10000);
+ERROR 42000: Invalid default value for 'a'
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT 10000.0);
+ERROR 42000: Invalid default value for 'a'
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT 10000e0);
+ERROR 42000: Invalid default value for 'a'
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT '10000.0');
+ERROR 42000: Invalid default value for 'a'
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT '10000.1');
+ERROR 42000: Invalid default value for 'a'
+#
+# MDEV-10277 Redundant NOTE when inserting '0.00001 ' into a DECIMAL(2,1) column
+#
+CREATE TABLE t1 (a DECIMAL(2,1));
+INSERT INTO t1 VALUES ('0.00001 ');
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+INSERT INTO t1 VALUES ('1e-10000 ');
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+INSERT INTO t1 VALUES ('0.1 ');
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+INSERT INTO t1 VALUES ('0.111 ');
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+SELECT * FROM t1;
+a
+0.0
+0.0
+0.1
+0.1
+DROP TABLE t1;
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT '1e-10000');
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` decimal(2,1) DEFAULT '0.0'
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+DROP TABLE t1;
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT '0.1 ');
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` decimal(2,1) DEFAULT '0.1'
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+DROP TABLE t1;
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT '0.10001 ');
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` decimal(2,1) DEFAULT '0.1'
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+DROP TABLE t1;
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT '0.10001');
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` decimal(2,1) DEFAULT '0.1'
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+DROP TABLE t1;
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT 0.10001);
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` decimal(2,1) DEFAULT '0.1'
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+DROP TABLE t1;
+CREATE TABLE t1 (a DECIMAL(2,1) DEFAULT 0.10001e0);
+Warnings:
+Note	1265	Data truncated for column 'a' at row 1
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` decimal(2,1) DEFAULT '0.1'
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+DROP TABLE t1;
+#
 # End of 10.1 tests
 #
+#
+# Bug#18408499 UNSIGNED BIGINT HIGH VALUES 
+#              WRONG NUMERICAL COMPARISON RESULTS
+#
+CREATE TABLE t1(value DECIMAL(24,0) NOT NULL);
+INSERT INTO t1(value) 
+VALUES('100000000000000000000001'),
+('100000000000000000000002'), 
+('100000000000000000000003');
+SELECT * FROM t1 WHERE value = '100000000000000000000002';
+value
+100000000000000000000002
+SELECT * FROM t1 WHERE '100000000000000000000002' = value;
+value
+100000000000000000000002
+SELECT * FROM t1 WHERE value + 0 = '100000000000000000000002';
+value
+100000000000000000000002
+SELECT * FROM t1 WHERE value = 100000000000000000000002;
+value
+100000000000000000000002
+SELECT * FROM t1 WHERE value + 0 = 100000000000000000000002;
+value
+100000000000000000000002
+PREPARE stmt FROM 'SELECT * FROM t1 WHERE value = ?';
+set @a="100000000000000000000002";
+EXECUTE stmt using @a;
+value
+100000000000000000000002
+set @a=100000000000000000000002;
+EXECUTE stmt using @a;
+value
+100000000000000000000002
+DEALLOCATE PREPARE stmt;
+ALTER TABLE t1 ADD INDEX value (value);
+SELECT * FROM t1 WHERE value = '100000000000000000000002';
+value
+100000000000000000000002
+DROP TABLE t1;

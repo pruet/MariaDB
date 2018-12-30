@@ -1,8 +1,8 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2015, MariaDB Corporation.
+Copyright (c) 2013, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -507,7 +507,8 @@ dict_table_try_drop_aborted(
 		ut_ad(table->id == table_id);
 	}
 
-	if (table && table->n_ref_count == ref_count && table->drop_aborted) {
+	if (table && table->n_ref_count == ref_count && table->drop_aborted
+	    && !UT_LIST_GET_FIRST(table->locks)) {
 		/* Silence a debug assertion in row_merge_drop_indexes(). */
 		ut_d(table->n_ref_count++);
 		row_merge_drop_indexes(trx, table, TRUE);
@@ -570,15 +571,14 @@ dict_table_close(
 	ut_ad(mutex_own(&dict_sys->mutex));
 	ut_a(table->n_ref_count > 0);
 
-	--table->n_ref_count;
+	const bool last_handle = !--table->n_ref_count;
 
 	/* Force persistent stats re-read upon next open of the table
 	so that FLUSH TABLE can be used to forcibly fetch stats from disk
 	if they have been manually modified. We reset table->stat_initialized
 	only if table reference count is 0 because we do not want too frequent
 	stats re-reads (e.g. in other cases than FLUSH TABLE). */
-	if (strchr(table->name, '/') != NULL
-	    && table->n_ref_count == 0
+	if (last_handle && strchr(table->name, '/') != NULL
 	    && dict_stats_is_persistent_enabled(table)) {
 
 		dict_stats_deinit(table);
@@ -598,11 +598,8 @@ dict_table_close(
 
 	if (!dict_locked) {
 		table_id_t	table_id	= table->id;
-		ibool		drop_aborted;
-
-		drop_aborted = try_drop
+		const bool	drop_aborted	= last_handle && try_drop
 			&& table->drop_aborted
-			&& table->n_ref_count == 1
 			&& dict_table_get_first_index(table);
 
 		mutex_exit(&dict_sys->mutex);
@@ -642,40 +639,6 @@ dict_table_get_col_name(
 	return(s);
 }
 
-/**********************************************************************//**
-Returns a column's name.
-@return column name. NOTE: not guaranteed to stay valid if table is
-modified in any way (columns added, etc.). */
-UNIV_INTERN
-const char*
-dict_table_get_col_name_for_mysql(
-/*==============================*/
-	const dict_table_t*	table,	/*!< in: table */
-	const char*		col_name)/*! in: MySQL table column name */
-{
-	ulint		i;
-	const char*	s;
-
-	ut_ad(table);
-	ut_ad(col_name);
-	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
-
-	s = table->col_names;
-	if (s) {
-		/* If we have many virtual columns MySQL key_part->fieldnr
-		could be larger than number of columns in InnoDB table
-		when creating new indexes. */
-		for (i = 0; i < table->n_def; i++) {
-
-			if (!innobase_strcasecmp(s, col_name)) {
-				break; /* Found */
-			}
-			s += strlen(s) + 1;
-		}
-	}
-
-	return(s);
-}
 #ifndef UNIV_HOTBACKUP
 /** Allocate and init the autoinc latch of a given table.
 This function must not be called concurrently on the same table object.
@@ -888,6 +851,12 @@ dict_index_get_nth_col_or_prefix_pos(
 
 	ut_ad(index);
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
+	ut_ad((inc_prefix && !prefix_col_pos) || (!inc_prefix));
+
+	if (!prefix_col_pos) {
+		prefix_col_pos = &prefixed_pos_dummy;
+	}
+	*prefix_col_pos = ULINT_UNDEFINED;
 
 	if (!prefix_col_pos) {
 		prefix_col_pos = &prefixed_pos_dummy;
@@ -1185,12 +1154,29 @@ dict_table_open_on_name(
 
 	if (table != NULL) {
 
-		/* If table is encrypted return table */
+		/* If table is encrypted or corrupted */
 		if (ignore_err == DICT_ERR_IGNORE_NONE
-			&& table->is_encrypted) {
+		    && !table->is_readable()) {
 			/* Make life easy for drop table. */
 			if (table->can_be_evicted) {
 				dict_table_move_from_lru_to_non_lru(table);
+			}
+
+			if (table->corrupted) {
+
+				if (!dict_locked) {
+					mutex_exit(&dict_sys->mutex);
+				}
+
+				char		buf[MAX_FULL_NAME_LEN];
+				ut_format_name(table->name, TRUE, buf, sizeof(buf));
+
+				ib_logf(IB_LOG_LEVEL_ERROR,
+					"Table %s is corrupted. Please "
+					"drop the table and recreate.",
+					buf);
+
+				return(NULL);
 			}
 
 			if (table->can_be_evicted) {
@@ -1204,28 +1190,6 @@ dict_table_open_on_name(
 			}
 
 			return (table);
-		}
-		/* If table is corrupted, return NULL */
-		else if (ignore_err == DICT_ERR_IGNORE_NONE
-		    && table->corrupted) {
-
-			/* Make life easy for drop table. */
-			if (table->can_be_evicted) {
-				dict_table_move_from_lru_to_non_lru(table);
-			}
-
-			if (!dict_locked) {
-				mutex_exit(&dict_sys->mutex);
-			}
-
-			ut_print_timestamp(stderr);
-
-			fprintf(stderr, "  InnoDB: table ");
-			ut_print_name(stderr, NULL, TRUE, table->name);
-			fprintf(stderr, "is corrupted. Please drop the table "
-				"and recreate\n");
-
-			return(NULL);
 		}
 
 		if (table->can_be_evicted) {
@@ -1394,9 +1358,6 @@ dict_table_add_to_cache(
 	dict_table_autoinc_restore(table);
 
 	ut_ad(dict_lru_validate());
-
-	dict_sys->size += mem_heap_get_size(table->heap)
-		+ strlen(table->name) + 1;
 }
 
 /**********************************************************************//**
@@ -1643,6 +1604,7 @@ struct dict_foreign_remove_partial
 		if (table != NULL) {
 			table->referenced_set.erase(foreign);
 		}
+		dict_foreign_free(foreign);
 	}
 };
 
@@ -1718,7 +1680,7 @@ dict_table_rename_in_cache(
 			filepath = fil_make_ibd_name(table->name, false);
 		}
 
-		fil_delete_tablespace(table->space, BUF_REMOVE_ALL_NO_WRITE);
+		fil_delete_tablespace(table->space);
 
 		/* Delete any temp file hanging around. */
 		if (os_file_status(filepath, &exists, &ftype)
@@ -1809,9 +1771,6 @@ dict_table_rename_in_cache(
 	/* Add table to hash table of tables */
 	HASH_INSERT(dict_table_t, name_hash, dict_sys->table_hash, fold,
 		    table);
-
-	dict_sys->size += strlen(new_name) - strlen(old_name);
-	ut_a(dict_sys->size > 0);
 
 	/* Update the table_name field in indexes */
 	for (index = dict_table_get_first_index(table);
@@ -2099,7 +2058,6 @@ dict_table_remove_from_cache_low(
 {
 	dict_foreign_t*	foreign;
 	dict_index_t*	index;
-	ulint		size;
 
 	ut_ad(table);
 	ut_ad(dict_lru_validate());
@@ -2121,6 +2079,30 @@ dict_table_remove_from_cache_low(
 		foreign = *it;
 		foreign->referenced_table = NULL;
 		foreign->referenced_index = NULL;
+	}
+
+	/* The check for dropped index should happen before we release
+	   all the indexes */
+
+	if (lru_evict && table->drop_aborted) {
+		/* When evicting the table definition,
+		drop the orphan indexes from the data dictionary
+		and free the index pages. */
+		trx_t* trx = trx_allocate_for_background();
+
+		ut_ad(mutex_own(&dict_sys->mutex));
+#ifdef UNIV_SYNC_DEBUG
+		ut_ad(rw_lock_own(&dict_operation_lock, RW_LOCK_EX));
+#endif /* UNIV_SYNC_DEBUG */
+		/* Mimic row_mysql_lock_data_dictionary(). */
+		trx->dict_operation_lock_mode = RW_X_LATCH;
+
+		trx_set_dict_operation(trx, TRX_DICT_OP_INDEX);
+		row_merge_drop_indexes_dict(trx, table->id);
+
+		trx_commit_for_mysql(trx);
+		trx->dict_operation_lock_mode = 0;
+		trx_free_for_background(trx);
 	}
 
 	/* Remove the indexes from the cache */
@@ -2154,36 +2136,6 @@ dict_table_remove_from_cache_low(
 	if (lru_evict) {
 		dict_table_autoinc_store(table);
 	}
-
-	if (lru_evict && table->drop_aborted) {
-		/* Do as dict_table_try_drop_aborted() does. */
-
-		trx_t* trx = trx_allocate_for_background();
-
-		ut_ad(mutex_own(&dict_sys->mutex));
-#ifdef UNIV_SYNC_DEBUG
-		ut_ad(rw_lock_own(&dict_operation_lock, RW_LOCK_EX));
-#endif /* UNIV_SYNC_DEBUG */
-		/* Mimic row_mysql_lock_data_dictionary(). */
-		trx->dict_operation_lock_mode = RW_X_LATCH;
-
-		trx_set_dict_operation(trx, TRX_DICT_OP_INDEX);
-
-		/* Silence a debug assertion in row_merge_drop_indexes(). */
-		ut_d(table->n_ref_count++);
-		row_merge_drop_indexes(trx, table, TRUE);
-		ut_d(table->n_ref_count--);
-		ut_ad(table->n_ref_count == 0);
-		trx_commit_for_mysql(trx);
-		trx->dict_operation_lock_mode = 0;
-		trx_free_for_background(trx);
-	}
-
-	size = mem_heap_get_size(table->heap) + strlen(table->name) + 1;
-
-	ut_ad(dict_sys->size >= size);
-
-	dict_sys->size -= size;
 
 	dict_mem_table_free(table);
 }
@@ -2428,9 +2380,13 @@ dict_index_too_big_for_tree(
 		rec_max_size = 2;
 	} else {
 		/* The maximum allowed record size is half a B-tree
-		page.  No additional sparse page directory entry will
-		be generated for the first few user records. */
-		page_rec_max = page_get_free_space_of_empty(comp) / 2;
+		page(16k for 64k page size).  No additional sparse
+		page directory entry will be generated for the first
+		few user records. */
+		page_rec_max = (comp || UNIV_PAGE_SIZE < UNIV_PAGE_SIZE_MAX)
+			? page_get_free_space_of_empty(comp) / 2
+			: REDUNDANT_REC_MAX_DATA_SIZE;
+
 		page_ptr_max = page_rec_max;
 		/* Each record has a header. */
 		rec_max_size = comp
@@ -2514,7 +2470,6 @@ add_field_size:
 
 		/* Check the size limit on leaf pages. */
 		if (UNIV_UNLIKELY(rec_max_size >= page_rec_max)) {
-
 			return(TRUE);
 		}
 
@@ -2727,8 +2682,6 @@ undo_size_ok:
 		       dict_index_is_ibuf(index)
 		       ? SYNC_IBUF_INDEX_TREE : SYNC_INDEX_TREE);
 
-	dict_sys->size += mem_heap_get_size(new_index->heap);
-
 	dict_mem_index_free(index);
 
 	return(DB_SUCCESS);
@@ -2745,7 +2698,6 @@ dict_index_remove_from_cache_low(
 	ibool		lru_evict)	/*!< in: TRUE if index being evicted
 					to make room in the table LRU list */
 {
-	ulint		size;
 	ulint		retries = 0;
 	btr_search_t*	info;
 
@@ -2777,48 +2729,18 @@ dict_index_remove_from_cache_low(
 	zero. See also: dict_table_can_be_evicted() */
 
 	do {
-		ulint ref_count = btr_search_info_get_ref_count(info,
-								index);
-
-		if (ref_count == 0) {
+		if (!btr_search_info_get_ref_count(info, index)
+		    || !buf_LRU_drop_page_hash_for_tablespace(table)) {
 			break;
 		}
 
-		/* Sleep for 10ms before trying again. */
-		os_thread_sleep(10000);
-		++retries;
-
-		if (retries % 500 == 0) {
-			/* No luck after 5 seconds of wait. */
-			fprintf(stderr, "InnoDB: Error: Waited for"
-				" %lu secs for hash index"
-				" ref_count (%lu) to drop"
-				" to 0.\n"
-				"index: \"%s\""
-				" table: \"%s\"\n",
-				retries/100,
-				ref_count,
-				index->name,
-				table->name);
-		}
-
-		/* To avoid a hang here we commit suicide if the
-		ref_count doesn't drop to zero in 600 seconds. */
-		if (retries >= 60000) {
-			ut_error;
-		}
+		ut_a(++retries < 10000);
 	} while (srv_shutdown_state == SRV_SHUTDOWN_NONE || !lru_evict);
 
 	rw_lock_free(&index->lock);
 
 	/* Remove the index from the list of indexes of the table */
 	UT_LIST_REMOVE(indexes, table->indexes, index);
-
-	size = mem_heap_get_size(index->heap);
-
-	ut_ad(dict_sys->size >= size);
-
-	dict_sys->size -= size;
 
 	dict_mem_index_free(index);
 }
@@ -3467,6 +3389,7 @@ dict_foreign_find_index(
 		if (types_idx != index
 		    && !(index->type & DICT_FTS)
 		    && !index->to_be_dropped
+		    && !dict_index_is_online_ddl(index)
 		    && dict_foreign_qualify_index(
 			    table, col_names, columns, n_cols,
 			    index, types_idx,
@@ -3597,8 +3520,7 @@ dict_foreign_add_to_cache(
 	}
 
 	if (for_in_cache) {
-		/* Free the foreign object */
-		mem_heap_free(foreign->heap);
+		dict_foreign_free(foreign);
 	} else {
 		for_in_cache = foreign;
 	}
@@ -3622,7 +3544,7 @@ dict_foreign_add_to_cache(
 				" the ones in table.");
 
 			if (for_in_cache == foreign) {
-				mem_heap_free(foreign->heap);
+				dict_foreign_free(foreign);
 			}
 
 			return(DB_CANNOT_ADD_CONSTRAINT);
@@ -3678,7 +3600,7 @@ dict_foreign_add_to_cache(
 							be one */
 				}
 
-				mem_heap_free(foreign->heap);
+				dict_foreign_free(foreign);
 			}
 
 			return(DB_CANNOT_ADD_CONSTRAINT);
@@ -6183,9 +6105,27 @@ dict_set_corrupted_by_space(
 
 	/* mark the table->corrupted bit only, since the caller
 	could be too deep in the stack for SYS_INDEXES update */
-	table->corrupted = TRUE;
+	table->corrupted = true;
+	table->file_unreadable = true;
 
 	return(TRUE);
+}
+
+
+/** Flags a table with specified space_id encrypted in the data dictionary
+cache
+@param[in]	space_id	Tablespace id */
+UNIV_INTERN
+void
+dict_set_encrypted_by_space(ulint	space_id)
+{
+	dict_table_t*   table;
+
+	table = dict_find_table_by_space(space_id);
+
+	if (table) {
+		table->file_unreadable = true;
+	}
 }
 
 /**********************************************************************//**
@@ -6214,7 +6154,6 @@ dict_set_corrupted(
 		row_mysql_lock_data_dictionary(trx);
 	}
 
-	ut_ad(index);
 	ut_ad(mutex_own(&dict_sys->mutex));
 	ut_ad(!dict_table_is_comp(dict_sys->sys_tables));
 	ut_ad(!dict_table_is_comp(dict_sys->sys_indexes));
@@ -6309,7 +6248,7 @@ dict_set_corrupted_index_cache_only(
 	dict_index_t*	index,		/*!< in/out: index */
 	dict_table_t*	table)		/*!< in/out: table */
 {
-	ut_ad(index);
+	ut_ad(index != NULL);
 	ut_ad(mutex_own(&dict_sys->mutex));
 	ut_ad(!dict_table_is_comp(dict_sys->sys_tables));
 	ut_ad(!dict_table_is_comp(dict_sys->sys_indexes));
@@ -6317,56 +6256,15 @@ dict_set_corrupted_index_cache_only(
 	/* Mark the table as corrupted only if the clustered index
 	is corrupted */
 	if (dict_index_is_clust(index)) {
-		dict_table_t*	corrupt_table;
+		ut_ad((index->table != NULL) || (table != NULL)
+		      || index->table  == table);
 
-		corrupt_table = table ? table : index->table;
-		ut_ad(!index->table || !table || index->table  == table);
-
-		if (corrupt_table) {
-			corrupt_table->corrupted = TRUE;
-		}
+		table->corrupted = TRUE;
 	}
 
 	index->type |= DICT_CORRUPT;
 }
 
-/*************************************************************************
-set is_corrupt flag by space_id*/
-
-void
-dict_table_set_corrupt_by_space(
-/*============================*/
-	ulint	space_id,
-	ibool	need_mutex)
-{
-	dict_table_t*	table;
-	ibool		found = FALSE;
-
-	ut_a(space_id != 0 && space_id < SRV_LOG_SPACE_FIRST_ID);
-
-	if (need_mutex)
-		mutex_enter(&(dict_sys->mutex));
-
-	table = UT_LIST_GET_FIRST(dict_sys->table_LRU);
-
-	while (table) {
-		if (table->space == space_id) {
-			table->is_corrupt = TRUE;
-			found = TRUE;
-		}
-
-		table = UT_LIST_GET_NEXT(table_LRU, table);
-	}
-
-	if (need_mutex)
-		mutex_exit(&(dict_sys->mutex));
-
-	if (!found) {
-		fprintf(stderr, "InnoDB: space to be marked as "
-			"crashed was not found for id " ULINTPF ".\n",
-			space_id);
-	}
-}
 #endif /* !UNIV_HOTBACKUP */
 
 /**********************************************************************//**
@@ -6437,11 +6335,6 @@ dict_table_get_index_on_name(
 	const char*	name)	/*!< in: name of the index to find */
 {
 	dict_index_t*	index;
-
-	/* If name is NULL, just return */
-	if (!name) {
-		return(NULL);
-	}
 
 	index = dict_table_get_first_index(table);
 
@@ -6693,7 +6586,8 @@ dict_table_schema_check(
 		}
 	}
 
-	if (table->ibd_file_missing) {
+	if (!table->is_readable() &&
+	    fil_space_get(table->space) == NULL) {
 		/* missing tablespace */
 
 		ut_snprintf(errstr, errstr_sz,
@@ -7350,3 +7244,38 @@ dict_tf_to_row_format_string(
 	return(0);
 }
 #endif /* !UNIV_HOTBACKUP */
+
+/** Calculate the used memory occupied by the data dictionary
+table and index objects.
+@return number of bytes occupied. */
+UNIV_INTERN
+ulint
+dict_sys_get_size()
+{
+	ulint size = 0;
+
+	ut_ad(dict_sys);
+
+	mutex_enter(&dict_sys->mutex);
+
+	for(ulint i = 0; i < hash_get_n_cells(dict_sys->table_hash); i++) {
+		dict_table_t* table;
+
+		for (table = static_cast<dict_table_t*>(HASH_GET_FIRST(dict_sys->table_hash,i));
+		     table != NULL;
+		     table = static_cast<dict_table_t*>(HASH_GET_NEXT(name_hash, table))) {
+			dict_index_t* index;
+			size += mem_heap_get_size(table->heap) + strlen(table->name) +1;
+
+			for(index = dict_table_get_first_index(table);
+			    index != NULL;
+			    index = dict_table_get_next_index(index)) {
+				size += mem_heap_get_size(index->heap);
+			}
+		}
+	}
+
+	mutex_exit(&dict_sys->mutex);
+
+	return (size);
+}

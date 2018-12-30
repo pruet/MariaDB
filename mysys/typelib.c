@@ -45,18 +45,6 @@ int find_type_with_warning(const char *x, TYPELIB *typelib, const char *option)
 }
 
 
-int find_type_or_exit(const char *x, TYPELIB *typelib, const char *option)
-{
-  int res;
-  if ((res= find_type_with_warning(x, typelib, option)) <= 0)
-  {
-    sf_leaking_memory= 1; /* no memory leak reports here */
-    exit(1);
-  }
-  return res;
-}
-
-
 /**
   Search after a string in a list of strings. Endspace in x is not compared.
 
@@ -182,7 +170,7 @@ const char *get_type(TYPELIB *typelib, uint nr)
 
 
 /**
-  Create an integer value to represent the supplied comma-seperated
+  Create an integer value to represent the supplied comma-separated
   string where each string in the TYPELIB denotes a bit position.
 
   @param x      string to decompose

@@ -1,4 +1,5 @@
-/* Copyright (c) 2007, 2013, Oracle and/or its affiliates.
+/* Copyright (c) 2007, 2018, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2018, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -120,16 +121,25 @@ Old_rows_log_event::do_apply_event(Old_rows_log_event *ev, rpl_group_info *rgi)
     /*
       When the open and locking succeeded, we check all tables to
       ensure that they still have the correct type.
-
-      We can use a down cast here since we know that every table added
-      to the tables_to_lock is a RPL_TABLE_LIST.
     */
 
     {
-      RPL_TABLE_LIST *ptr= rgi->tables_to_lock;
-      for (uint i= 0 ; ptr&& (i< rgi->tables_to_lock_count); 
-           ptr= static_cast<RPL_TABLE_LIST*>(ptr->next_global), i++)
+      TABLE_LIST *table_list_ptr= rgi->tables_to_lock;
+      for (uint i=0 ; table_list_ptr&& (i< rgi->tables_to_lock_count);
+           table_list_ptr= table_list_ptr->next_global, i++)
       {
+        /*
+          Please see comment in log_event.cc-Rows_log_event::do_apply_event()
+          function for the explanation of the below if condition
+        */
+        if (table_list_ptr->parent_l)
+          continue;
+        /*
+          We can use a down cast here since we know that every table added
+          to the tables_to_lock is a RPL_TABLE_LIST(or child table which is
+          skipped above).
+        */
+        RPL_TABLE_LIST *ptr=static_cast<RPL_TABLE_LIST*>(table_list_ptr);
         DBUG_ASSERT(ptr->m_tabledef_valid);
         TABLE *conv_table;
         if (!ptr->m_tabledef.compatible_with(thd, rgi, ptr->table, &conv_table))
@@ -162,7 +172,15 @@ Old_rows_log_event::do_apply_event(Old_rows_log_event *ev, rpl_group_info *rgi)
      */
     TABLE_LIST *ptr= rgi->tables_to_lock;
     for (uint i=0; ptr && (i < rgi->tables_to_lock_count); ptr= ptr->next_global, i++)
+    {
+      /*
+        Please see comment in log_event.cc-Rows_log_event::do_apply_event()
+        function for the explanation of the below if condition
+       */
+      if (ptr->parent_l)
+        continue;
       rgi->m_table_map.set_table(ptr->table_id, ptr->table);
+    }
 #ifdef HAVE_QUERY_CACHE
     query_cache.invalidate_locked_for_write(thd, rgi->tables_to_lock);
 #endif
@@ -1214,6 +1232,13 @@ Old_rows_log_event::Old_rows_log_event(const char *buf, uint event_len,
   DBUG_PRINT("debug", ("Reading from %p", ptr_after_width));
   m_width = net_field_length(&ptr_after_width);
   DBUG_PRINT("debug", ("m_width=%lu", m_width));
+  /* Avoid reading out of buffer */
+  if (ptr_after_width + m_width > (uchar *)buf + event_len)
+  {
+    m_cols.bitmap= NULL;
+    DBUG_VOID_RETURN;
+  }
+
   /* if my_bitmap_init fails, catched in is_valid() */
   if (likely(!my_bitmap_init(&m_cols,
                           m_width <= sizeof(m_bitbuf)*8 ? m_bitbuf : NULL,
@@ -1420,16 +1445,25 @@ int Old_rows_log_event::do_apply_event(rpl_group_info *rgi)
     /*
       When the open and locking succeeded, we check all tables to
       ensure that they still have the correct type.
-
-      We can use a down cast here since we know that every table added
-      to the tables_to_lock is a RPL_TABLE_LIST.
     */
 
     {
-      RPL_TABLE_LIST *ptr= rgi->tables_to_lock;
-      for (uint i= 0 ; ptr&& (i< rgi->tables_to_lock_count);
-           ptr= static_cast<RPL_TABLE_LIST*>(ptr->next_global), i++)
+      TABLE_LIST *table_list_ptr= rgi->tables_to_lock;
+      for (uint i=0; table_list_ptr&& (i< rgi->tables_to_lock_count);
+           table_list_ptr= static_cast<RPL_TABLE_LIST*>(table_list_ptr->next_global), i++)
       {
+        /*
+          Please see comment in log_event.cc-Rows_log_event::do_apply_event()
+          function for the explanation of the below if condition
+        */
+        if (table_list_ptr->parent_l)
+          continue;
+        /*
+          We can use a down cast here since we know that every table added
+          to the tables_to_lock is a RPL_TABLE_LIST (or child table which is
+          skipped above).
+        */
+        RPL_TABLE_LIST *ptr=static_cast<RPL_TABLE_LIST*>(table_list_ptr);
         TABLE *conv_table;
         if (ptr->m_tabledef.compatible_with(thd, rgi, ptr->table, &conv_table))
         {
@@ -1558,8 +1592,7 @@ int Old_rows_log_event::do_apply_event(rpl_group_info *rgi)
       default:
 	rli->report(ERROR_LEVEL, thd->net.last_errno, NULL,
                     "Error in %s event: row application failed. %s",
-                    get_type_str(),
-                    thd->net.last_error ? thd->net.last_error : "");
+                    get_type_str(), thd->net.last_error);
        thd->is_slave_error= 1;
 	break;
       }
@@ -1598,8 +1631,7 @@ int Old_rows_log_event::do_apply_event(rpl_group_info *rgi)
                 "Error in %s event: error during transaction execution "
                 "on table %s.%s. %s",
                 get_type_str(), table->s->db.str,
-                table->s->table_name.str,
-                thd->net.last_error ? thd->net.last_error : "");
+                table->s->table_name.str, thd->net.last_error);
 
     /*
       If one day we honour --skip-slave-errors in row-based replication, and
@@ -1720,8 +1752,8 @@ int
 Old_rows_log_event::do_update_pos(rpl_group_info *rgi)
 {
   Relay_log_info *rli= rgi->rli;
-  DBUG_ENTER("Old_rows_log_event::do_update_pos");
   int error= 0;
+  DBUG_ENTER("Old_rows_log_event::do_update_pos");
 
   DBUG_PRINT("info", ("flags: %s",
                       get_flags(STMT_END_F) ? "STMT_END_F " : ""));
@@ -1733,7 +1765,7 @@ Old_rows_log_event::do_update_pos(rpl_group_info *rgi)
       Step the group log position if we are not in a transaction,
       otherwise increase the event log position.
      */
-    rli->stmt_done(log_pos, thd, rgi);
+    error= rli->stmt_done(log_pos, thd, rgi);
     /*
       Clear any errors in thd->net.last_err*. It is not known if this is
       needed or not. It is believed that any errors that may exist in

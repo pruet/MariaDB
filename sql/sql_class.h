@@ -342,8 +342,6 @@ class Foreign_key: public Key {
 public:
   enum fk_match_opt { FK_MATCH_UNDEF, FK_MATCH_FULL,
 		      FK_MATCH_PARTIAL, FK_MATCH_SIMPLE};
-  enum fk_option { FK_OPTION_UNDEF, FK_OPTION_RESTRICT, FK_OPTION_CASCADE,
-		   FK_OPTION_SET_NULL, FK_OPTION_NO_ACTION, FK_OPTION_DEFAULT};
 
   LEX_STRING ref_db;
   LEX_STRING ref_table;
@@ -482,7 +480,6 @@ enum killed_state
   KILL_SERVER_HARD= 15
 };
 
-extern int killed_errno(killed_state killed);
 #define killed_mask_hard(killed) ((killed_state) ((killed) & ~KILL_HARD_BIT))
 
 enum killed_type
@@ -540,6 +537,7 @@ typedef struct system_variables
   ulonglong sortbuff_size;
   ulonglong group_concat_max_len;
   ulonglong default_regex_flags;
+  ulonglong max_mem_used;
 
   /**
      Place holders to store Multi-source variables in sys_var.cc during
@@ -713,9 +711,11 @@ typedef struct system_status_var
   ulong ha_read_key_count;
   ulong ha_read_next_count;
   ulong ha_read_prev_count;
+  ulong ha_read_retry_count;
   ulong ha_read_rnd_count;
   ulong ha_read_rnd_next_count;
   ulong ha_read_rnd_deleted_count;
+
   /*
     This number doesn't include calls to the default implementation and
     calls made by range access. The intent is to count only calls made by
@@ -749,6 +749,8 @@ typedef struct system_status_var
   ulong select_range_count_;
   ulong select_range_check_count_;
   ulong select_scan_count_;
+  ulong update_scan_count;
+  ulong delete_scan_count;
   ulong executed_triggers;
   ulong long_query_count;
   ulong filesort_merge_passes_;
@@ -1173,6 +1175,29 @@ typedef struct st_xid_state {
   /* Error reported by the Resource Manager (RM) to the Transaction Manager. */
   uint rm_error;
   XID_cache_element *xid_cache_element;
+
+  /**
+    Check that XA transaction has an uncommitted work. Report an error
+    to the user in case when there is an uncommitted work for XA transaction.
+
+    @return  result of check
+      @retval  false  XA transaction is NOT in state IDLE, PREPARED
+                      or ROLLBACK_ONLY.
+      @retval  true   XA transaction is in state IDLE or PREPARED
+                      or ROLLBACK_ONLY.
+  */
+
+  bool check_has_uncommitted_xa() const
+  {
+    if (xa_state == XA_IDLE ||
+        xa_state == XA_PREPARED ||
+        xa_state == XA_ROLLBACK_ONLY)
+    {
+      my_error(ER_XAER_RMFAIL, MYF(0), xa_state_names[xa_state]);
+      return true;
+    }
+    return false;
+  }
 } XID_STATE;
 
 void xid_cache_init(void);
@@ -1258,7 +1283,8 @@ enum enum_locked_tables_mode
   LTM_NONE= 0,
   LTM_LOCK_TABLES,
   LTM_PRELOCKED,
-  LTM_PRELOCKED_UNDER_LOCK_TABLES
+  LTM_PRELOCKED_UNDER_LOCK_TABLES,
+  LTM_always_last
 };
 
 
@@ -1445,7 +1471,8 @@ enum enum_thread_type
   SYSTEM_THREAD_EVENT_SCHEDULER= 8,
   SYSTEM_THREAD_EVENT_WORKER= 16,
   SYSTEM_THREAD_BINLOG_BACKGROUND= 32,
-  SYSTEM_THREAD_SLAVE_INIT= 64
+  SYSTEM_THREAD_SLAVE_INIT= 64,
+  SYSTEM_THREAD_SLAVE_BACKGROUND= 128
 };
 
 inline char const *
@@ -1543,6 +1570,29 @@ public:
 
 
 /**
+  Implements the trivial error handler which counts errors as they happen.
+*/
+
+class Counting_error_handler : public Internal_error_handler
+{
+public:
+  int errors;
+  bool handle_condition(THD *thd,
+                        uint sql_errno,
+                        const char* sqlstate,
+                        Sql_condition::enum_warning_level level,
+                        const char* msg,
+                        Sql_condition ** cond_hdl)
+  {
+    if (level == Sql_condition::WARN_LEVEL_ERROR)
+      errors++;
+    return false;
+  }
+  Counting_error_handler() : errors(0) {}
+};
+
+
+/**
   This class is an internal error handler implementation for
   DROP TABLE statements. The thing is that there may be warnings during
   execution of these statements, which should not be exposed to the user.
@@ -1630,7 +1680,7 @@ public:
   void unlink_all_closed_tables(THD *thd,
                                 MYSQL_LOCK *lock,
                                 size_t reopen_count);
-  bool reopen_tables(THD *thd);
+  bool reopen_tables(THD *thd, bool need_reopen);
   bool restore_lock(THD *thd, TABLE_LIST *dst_table_list, TABLE *table,
                     MYSQL_LOCK *lock);
   void add_back_last_deleted_lock(TABLE_LIST *dst_table_list);
@@ -1917,7 +1967,7 @@ public:
     rpl_sql_thread_info *rpl_sql_info;
   } system_thread_info;
 
-  void reset_for_next_command();
+  void reset_for_next_command(bool do_clear_errors= 1);
   /*
     Constant for THD::where initialization in the beginning of every query.
 
@@ -1973,6 +2023,8 @@ public:
     Is locked when THD is deleted.
   */
   mysql_mutex_t LOCK_thd_data;
+  /* Protect kill information */
+  mysql_mutex_t LOCK_thd_kill;
 
   /* all prepared statements and cursors of this connection */
   Statement_map stmt_map;
@@ -2608,7 +2660,7 @@ public:
   void check_limit_rows_examined()
   {
     if (++accessed_rows_and_keys > lex->limit_rows_examined_cnt)
-      killed= ABORT_QUERY;
+      set_killed(ABORT_QUERY);
   }
 
   USER_CONN *user_connect;
@@ -2659,7 +2711,6 @@ public:
   uint	     tmp_table, global_disable_checkpoint;
   uint	     server_status,open_options;
   enum enum_thread_type system_thread;
-  uint       select_number;             //number of select (used for EXPLAIN)
   /*
     Current or next transaction isolation level.
     When a connection is established, the value is taken from
@@ -2708,6 +2759,16 @@ public:
     especially the "broadcast" part.
   */
   killed_state volatile killed;
+
+  /*
+    The following is used if one wants to have a specific error number and
+    text for the kill
+  */
+  struct err_info
+  {
+    int no;
+    const char msg[256];
+  } *killed_err;
 
   /* See also thd_killed() */
   inline bool check_killed()
@@ -2877,6 +2938,7 @@ public:
     query_id_t first_query_id;
   } binlog_evt_union;
 
+  mysql_cond_t              COND_wsrep_thd;
   /**
     Internal parser state.
     Note that since the parser is not re-entrant, we keep only one parser
@@ -3082,12 +3144,12 @@ public:
     set_start_time();
     start_utime= utime_after_lock= microsecond_interval_timer();
   }
-  inline void	set_time(my_hrtime_t t)
+  inline void set_time(my_hrtime_t t)
   {
     user_time= t;
     set_time();
   }
-  inline void	set_time(my_time_t t, ulong sec_part)
+  inline void set_time(my_time_t t, ulong sec_part)
   {
     my_hrtime_t hrtime= { hrtime_from_time(t) + sec_part };
     set_time(hrtime);
@@ -3273,18 +3335,18 @@ public:
     @todo: To silence an error, one should use Internal_error_handler
     mechanism. Issuing an error that can be possibly later "cleared" is not
     compatible with other installed error handlers and audit plugins.
-    In future this function will be removed.
   */
-  inline void clear_error()
+  inline void clear_error(bool clear_diagnostics= 0)
   {
     DBUG_ENTER("clear_error");
-    if (get_stmt_da()->is_error())
+    if (get_stmt_da()->is_error() || clear_diagnostics)
       get_stmt_da()->reset_diagnostics_area();
     is_slave_error= 0;
     if (killed == KILL_BAD_DATA)
-      killed= NOT_KILLED; // KILL_BAD_DATA can be reset w/o a mutex
+      reset_killed();
     DBUG_VOID_RETURN;
   }
+
 #ifndef EMBEDDED_LIBRARY
   inline bool vio_ok() const { return net.vio != 0; }
   /** Return FALSE if connection to client is broken. */
@@ -3358,10 +3420,14 @@ public:
 
   void change_item_tree(Item **place, Item *new_value)
   {
+    DBUG_ENTER("THD::change_item_tree");
+    DBUG_PRINT("enter", ("Register: %p (%p) <- %p",
+                       *place, place, new_value));
     /* TODO: check for OOM condition here */
     if (!stmt_arena->is_conventional())
       nocheck_register_item_tree_change(place, *place, mem_root);
     *place= new_value;
+    DBUG_VOID_RETURN;
   }
   /**
     Make change in item tree after checking whether it needs registering
@@ -3394,10 +3460,54 @@ public:
     state after execution of a non-prepared SQL statement.
   */
   void end_statement();
-  inline int killed_errno() const
+
+  /*
+    Mark thread to be killed, with optional error number and string.
+    string is not released, so it has to be allocted on thd mem_root
+    or be a global string
+
+    Ensure that we don't replace a kill with a lesser one. For example
+    if user has done 'kill_connection' we shouldn't replace it with
+    KILL_QUERY.
+  */
+  inline void set_killed(killed_state killed_arg,
+                         int killed_errno_arg= 0,
+                         const char *killed_err_msg_arg= 0)
   {
-    return ::killed_errno(killed);
+    mysql_mutex_lock(&LOCK_thd_kill);
+    set_killed_no_mutex(killed_arg, killed_errno_arg, killed_err_msg_arg);
+    mysql_mutex_unlock(&LOCK_thd_kill);
   }
+  /*
+    This is only used by THD::awake where we need to keep the lock mutex
+    locked over some time.
+    It's ok to have this inline, as in most cases killed_errno_arg will
+    be a constant 0 and most of the function will disappear.
+  */
+  inline void set_killed_no_mutex(killed_state killed_arg,
+                                  int killed_errno_arg= 0,
+                                  const char *killed_err_msg_arg= 0)
+  {
+    if (killed <= killed_arg)
+    {
+      killed= killed_arg;
+      if (killed_errno_arg)
+      {
+        /*
+          If alloc fails, we only remember the killed flag.
+          The worst things that can happen is that we get
+          a suboptimal error message.
+        */
+        if ((killed_err= (err_info*) alloc(sizeof(*killed_err))))
+        {
+          killed_err->no= killed_errno_arg;
+          ::strmake((char*) killed_err->msg, killed_err_msg_arg,
+                    sizeof(killed_err->msg)-1);
+        }
+      }
+    }
+  }
+  int killed_errno();
   inline void reset_killed()
   {
     /*
@@ -3406,9 +3516,10 @@ public:
     */
     if (killed != NOT_KILLED)
     {
-      mysql_mutex_lock(&LOCK_thd_data);
+      mysql_mutex_lock(&LOCK_thd_kill);
       killed= NOT_KILLED;
-      mysql_mutex_unlock(&LOCK_thd_data);
+      killed_err= 0;
+      mysql_mutex_unlock(&LOCK_thd_kill);
     }
   }
   inline void reset_kill_query()
@@ -3419,11 +3530,14 @@ public:
       mysys_var->abort= 0;
     }
   }
-  inline void send_kill_message() const
+  inline void send_kill_message()
   {
+    mysql_mutex_lock(&LOCK_thd_kill);
     int err= killed_errno();
     if (err)
-      my_message(err, ER_THD(this, err), MYF(0));
+      my_message(err, killed_err ? killed_err->msg : ER_THD(this, err),
+                 MYF(0));
+    mysql_mutex_unlock(&LOCK_thd_kill);
   }
   /* return TRUE if we will abort query if we make a warning now */
   inline bool really_abort_on_warning()
@@ -3445,6 +3559,10 @@ public:
   {
     *format= (enum_binlog_format) variables.binlog_format;
     *current_format= current_stmt_binlog_format;
+  }
+  inline enum_binlog_format get_current_stmt_binlog_format()
+  {
+    return current_stmt_binlog_format;
   }
   inline void set_binlog_format(enum_binlog_format format,
                                 enum_binlog_format current_format)
@@ -3830,27 +3948,7 @@ public:
     }
   }
 
-private:
-  /* 
-    This reference points to the table arena when the expression
-    for a virtual column is being evaluated
-  */ 
-  Query_arena *arena_for_cached_items;
-
 public:
-  void reset_arena_for_cached_items(Query_arena *new_arena)
-  {
-    arena_for_cached_items= new_arena;
-  }
-  Query_arena *switch_to_arena_for_cached_items(Query_arena *backup)
-  {
-    if (!arena_for_cached_items)
-      return 0;
-    set_n_backup_active_arena(arena_for_cached_items, backup);
-    return backup;
-  }
-
-
   void clear_wakeup_ready() { wakeup_ready= false; }
   /*
     Sleep waiting for others to wake us up with signal_wakeup_ready().
@@ -3940,7 +4038,7 @@ private:
 
   /* Protect against add/delete of temporary tables in parallel replication */
   void rgi_lock_temporary_tables();
-  void rgi_unlock_temporary_tables();
+  void rgi_unlock_temporary_tables(bool clear);
   bool rgi_have_temporary_tables();
 public:
   /*
@@ -3964,15 +4062,15 @@ public:
     if (rgi_slave)
       rgi_lock_temporary_tables();
   }
-  inline void unlock_temporary_tables()
+  inline void unlock_temporary_tables(bool clear)
   {
     if (rgi_slave)
-      rgi_unlock_temporary_tables();
+      rgi_unlock_temporary_tables(clear);
   }    
   inline bool have_temporary_tables()
   {
     return (temporary_tables ||
-            (rgi_slave && rgi_have_temporary_tables()));
+            (rgi_slave && unlikely(rgi_have_temporary_tables())));
   }
 
   LF_PINS *tdc_hash_pins;
@@ -3995,7 +4093,6 @@ public:
   query_id_t                wsrep_last_query_id;
   enum wsrep_query_state    wsrep_query_state;
   enum wsrep_conflict_state wsrep_conflict_state;
-  mysql_mutex_t             LOCK_wsrep_thd;
   wsrep_trx_meta_t          wsrep_trx_meta;
   uint32                    wsrep_rand;
   Relay_log_info            *wsrep_rli;
@@ -4025,6 +4122,9 @@ public:
   */
   bool                      wsrep_ignore_table;
   wsrep_gtid_t              wsrep_sync_wait_gtid;
+  ulong                     wsrep_affected_rows;
+  bool                      wsrep_replicate_GTID;
+  bool                      wsrep_skip_wsrep_GTID;
 #endif /* WITH_WSREP */
 
   /* Handling of timeouts for commands */
@@ -4059,6 +4159,16 @@ public:
   void restore_set_statement_var()
   {
     main_lex.restore_set_statement_var();
+  }
+  /* Copy relevant `stmt` transaction flags to `all` transaction. */
+  void merge_unsafe_rollback_flags()
+  {
+    if (transaction.stmt.modified_non_trans_table)
+      transaction.all.modified_non_trans_table= TRUE;
+    transaction.all.m_unsafe_rollback_flags|=
+      (transaction.stmt.m_unsafe_rollback_flags &
+       (THD_TRANS::DID_WAIT | THD_TRANS::CREATED_TEMP_TABLE |
+        THD_TRANS::DROPPED_TEMP_TABLE | THD_TRANS::DID_DDL));
   }
 };
 
@@ -4295,7 +4405,7 @@ public:
     select_result(thd_arg), suppress_my_ok(false)
   {
     DBUG_ENTER("select_result_interceptor::select_result_interceptor");
-    DBUG_PRINT("enter", ("this 0x%lx", (ulong) this));
+    DBUG_PRINT("enter", ("this %p", this));
     DBUG_VOID_RETURN;
   }              /* Remove gcc warning */
   uint field_count(List<Item> &fields) const { return 0; }
@@ -4603,6 +4713,11 @@ public:
       save_copy_field= copy_field= NULL;
       save_copy_field_end= copy_field_end= NULL;
     }
+  }
+  void free_copy_field_data()
+  {
+    for (Copy_field *ptr= copy_field ; ptr != copy_field_end ; ptr++)
+      ptr->tmp.free();
   }
 };
 
@@ -5042,7 +5157,7 @@ public:
   {
     DBUG_ENTER("unique_add");
     DBUG_PRINT("info", ("tree %u - %lu", tree.elements_in_tree, max_elements));
-    if (!(tree.flag & TREE_ONLY_DUPS) && 
+    if (!(tree.flag & TREE_ONLY_DUPS) &&
         tree.elements_in_tree >= max_elements && flush())
       DBUG_RETURN(1);
     DBUG_RETURN(!tree_insert(&tree, ptr, 0, tree.custom_arg));
@@ -5413,8 +5528,6 @@ inline int handler::ha_ft_read(uchar *buf)
 inline int handler::ha_rnd_pos_by_record(uchar *buf)
 {
   int error= rnd_pos_by_record(buf);
-  if (!error)
-    update_rows_read();
   table->status=error ? STATUS_NOT_FOUND: 0;
   return error;
 }

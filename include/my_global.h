@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2001, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2013, Monty Program Ab.
+   Copyright (c) 2009, 2017, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -439,9 +439,8 @@ extern "C" int madvise(void *addr, size_t len, int behav);
 #define SIGNAL_HANDLER_RESET_ON_DELIVERY
 #endif
 
-#ifndef STDERR_FILENO
-#define STDERR_FILENO fileno(stderr)
-#endif
+/* don't assume that STDERR_FILENO is 2, mysqld can freopen */
+#undef STDERR_FILENO
 
 #ifndef SO_EXT
 #ifdef _WIN32
@@ -594,8 +593,15 @@ typedef SOCKET_SIZE_TYPE size_socket;
 #ifndef O_CLOEXEC
 #define O_CLOEXEC       0
 #endif
+#ifdef __GLIBC__
+#define STR_O_CLOEXEC "e"
+#else
+#define STR_O_CLOEXEC ""
+#endif
 #ifndef SOCK_CLOEXEC
 #define SOCK_CLOEXEC    0
+#else
+#define HAVE_SOCK_CLOEXEC
 #endif
 
 /* additional file share flags for win32 */
@@ -880,8 +886,7 @@ typedef long long	my_ptrdiff_t;
   and related routines are refactored.
 */
 
-#define my_offsetof(TYPE, MEMBER) \
-        ((size_t)((char *)&(((TYPE *)0x10)->MEMBER) - (char*)0x10))
+#define my_offsetof(TYPE, MEMBER) PTR_BYTE_DIFF(&((TYPE *)0x10)->MEMBER, 0x10)
 
 #define NullS		(char *) 0
 
@@ -1077,10 +1082,9 @@ typedef ulong		myf;	/* Type of MyFlags in my_funcs */
 static inline char *dlerror(void)
 {
   static char win_errormsg[2048];
-  if(FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM,
-                   0, GetLastError(), 0, win_errormsg, 2048, NULL))
-    return win_errormsg;
-  return "";
+  FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM,
+    0, GetLastError(), 0, win_errormsg, 2048, NULL);
+  return win_errormsg;
 }
 #define HAVE_DLOPEN 1
 #define HAVE_DLERROR 1
@@ -1094,11 +1098,19 @@ static inline char *dlerror(void)
 #ifndef HAVE_DLERROR
 #define dlerror() ""
 #endif
+#ifndef HAVE_DLADDR
+#define dladdr(A, B) 0
+/* Dummy definition in case we're missing dladdr() */
+typedef struct { const char *dli_fname, dli_fbase; } Dl_info;
+#endif
 #else
 #define dlerror() "No support for dynamic loading (static build?)"
 #define dlopen(A,B) 0
 #define dlsym(A,B) 0
 #define dlclose(A) 0
+#define dladdr(A, B) 0
+/* Dummy definition in case we're missing dladdr() */
+typedef struct { const char *dli_fname, dli_fbase; } Dl_info;
 #endif
 
 /*

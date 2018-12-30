@@ -10,13 +10,14 @@ Build-Depends: bison,
                dh-apparmor,
                dpatch,
                libaio-dev,
+               libarchive-dev,
                libboost-dev,
                libjudy-dev,
                libkrb5-dev,
                libncurses5-dev (>= 5.0-6~),
                libpam0g-dev,
                libreadline-gplv2-dev,
-               libssl-dev,
+               ${LIBSSL},
                lsb-release,
                perl (>= 5.6.0),
                po-debconf,
@@ -26,8 +27,8 @@ Build-Depends: bison,
                libjemalloc-dev (>= 3.0.0~) [linux-any]
 Standards-Version: 3.8.2
 Homepage: http://mariadb.org/
-Vcs-Git: https://github.com/MariaDB/server.git
 Vcs-Browser: https://github.com/MariaDB/server/
+Vcs-Git: https://github.com/MariaDB/server.git
 
 Package: libmariadbclient18
 Architecture: any
@@ -315,7 +316,7 @@ Depends: bsdutils,
          galera-3 (>=25.3),
          gawk,
          grep,
-         iproute,
+         iproute | iproute2,
          libdbi-perl,
          lsb-base (>= 3.0-10),
          lsof,
@@ -404,10 +405,10 @@ Description: MariaDB database regression test suite (metapackage for the latest 
 
 Package: mariadb-connect-engine-10.1
 Architecture: any
-Depends: libxml2, mariadb-server-10.1, unixODBC
+Depends: libxml2, mariadb-server-10.1, unixodbc
 Build-Depends: libxml2-dev,
                mariadb-server-10.1,
-               unixODBC-dev,
+               unixodbc-dev,
                ${misc:Depends},
                ${shlibs:Depends}
 Description: Connect storage engine for MariaDB
@@ -443,3 +444,12 @@ Section: database
 Architecture: any
 Depends: libgssapi-krb5-2, mariadb-client-10.1
 Description: GSSAPI authentication plugin for MariaDB client
+
+
+Package: mariadb-backup-10.1
+Section: database
+Architecture: any
+Depends: mariadb-client-core-10.1 (= ${binary:Version}),
+         ${misc:Depends},
+         ${shlibs:Depends}
+Description: Backup tool for MariaDB server

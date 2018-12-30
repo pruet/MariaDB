@@ -1,7 +1,7 @@
 /************* Array C++ Functions Source Code File (.CPP) *************/
 /*  Name: ARRAY.CPP  Version 2.3                                       */
 /*                                                                     */
-/*  (C) Copyright to the author Olivier BERTRAND          2005-2015    */
+/*  (C) Copyright to the author Olivier BERTRAND          2005-2017    */
 /*                                                                     */
 /*  This file contains the XOBJECT derived class ARRAY functions.      */
 /*  ARRAY is used for elaborate type of processing, such as sorting    */
@@ -82,7 +82,7 @@ PARRAY MakeValueArray(PGLOBAL g, PPARM pp)
   if ((valtyp = pp->Type) != TYPE_STRING)
     len = 1;
 
- 	if (trace)
+ 	if (trace(1))
  		htrc("valtyp=%d len=%d\n", valtyp, len);
   		
   /*********************************************************************/
@@ -141,7 +141,7 @@ PARRAY MakeValueArray(PGLOBAL g, PPARM pp)
 /*  ARRAY public constructor.                                          */
 /***********************************************************************/
 ARRAY::ARRAY(PGLOBAL g, int type, int size, int length, int prec)
-     : CSORT(FALSE)
+     : CSORT(false)
   {
   Nval = 0;
   Ndif = 0;
@@ -155,6 +155,7 @@ ARRAY::ARRAY(PGLOBAL g, int type, int size, int length, int prec)
   switch (type) {
     case TYPE_STRING:
       Len = length;
+      /* fall through */
     case TYPE_SHORT:
     case TYPE_INT:
     case TYPE_DOUBLE:
@@ -188,14 +189,14 @@ ARRAY::ARRAY(PGLOBAL g, int type, int size, int length, int prec)
   else if (type != TYPE_PCHAR)
     Value = AllocateValue(g, type, Len, prec);
 
-  Constant = TRUE;
+  Constant = true;
   } // end of ARRAY constructor
 
 #if 0
 /***********************************************************************/
 /*  ARRAY public constructor from a QUERY.                             */
 /***********************************************************************/
-ARRAY::ARRAY(PGLOBAL g, PQUERY qryp) : CSORT(FALSE)
+ARRAY::ARRAY(PGLOBAL g, PQUERY qryp) : CSORT(false)
   {
   Type = qryp->GetColType(0);
   Nval = qryp->GetNblin();
@@ -206,7 +207,7 @@ ARRAY::ARRAY(PGLOBAL g, PQUERY qryp) : CSORT(FALSE)
   Xsize = -1;
   Len = qryp->GetColLength(0);
   X = Inf = Sup = 0;
-  Correlated = FALSE;
+  Correlated = false;
 
   switch (Type) {
     case TYPE_STRING:
@@ -229,13 +230,13 @@ ARRAY::ARRAY(PGLOBAL g, PQUERY qryp) : CSORT(FALSE)
     // The error message was built by ???
     Type = TYPE_ERROR;
 
-  Constant = TRUE;
+  Constant = true;
   } // end of ARRAY constructor
 
 /***********************************************************************/
 /*  ARRAY constructor from a TYPE_LIST subarray.                       */
 /***********************************************************************/
-ARRAY::ARRAY(PGLOBAL g, PARRAY par, int k) : CSORT(FALSE)
+ARRAY::ARRAY(PGLOBAL g, PARRAY par, int k) : CSORT(false)
   {
   int     prec;
   LSTBLK *lp;
@@ -260,7 +261,7 @@ ARRAY::ARRAY(PGLOBAL g, PARRAY par, int k) : CSORT(FALSE)
   Len = (Type == TYPE_STRING) ? Vblp->GetVlen() : 0;
   prec = (Type == TYPE_FLOAT) ? 2 : 0;
   Value = AllocateValue(g, Type, Len, prec, NULL);
-  Constant = TRUE;
+  Constant = true;
   } // end of ARRAY constructor
 
 /***********************************************************************/
@@ -283,16 +284,16 @@ bool ARRAY::AddValue(PGLOBAL g, PSZ strp)
   {
   if (Type != TYPE_STRING) {
     sprintf(g->Message, MSG(ADD_BAD_TYPE), GetTypeName(Type), "CHAR");
-    return TRUE;
+    return true;
     } // endif Type
 
-  if (trace)
+  if (trace(1))
     htrc(" adding string(%d): '%s'\n", Nval, strp);
 
 //Value->SetValue_psz(strp);
 //Vblp->SetValue(valp, Nval++);
   Vblp->SetValue(strp, Nval++);
-  return FALSE;
+  return false;
   } // end of AddValue
 
 /***********************************************************************/
@@ -302,14 +303,14 @@ bool ARRAY::AddValue(PGLOBAL g, void *p)
   {
   if (Type != TYPE_PCHAR) {
     sprintf(g->Message, MSG(ADD_BAD_TYPE), GetTypeName(Type), "PCHAR");
-    return TRUE;
+    return true;
     } // endif Type
 
-  if (trace)
+  if (trace(1))
     htrc(" adding pointer(%d): %p\n", Nval, p);
 
   Vblp->SetValue((PSZ)p, Nval++);
-  return FALSE;
+  return false;
   } // end of AddValue
 
 /***********************************************************************/
@@ -319,16 +320,16 @@ bool ARRAY::AddValue(PGLOBAL g, short n)
   {
   if (Type != TYPE_SHORT) {
     sprintf(g->Message, MSG(ADD_BAD_TYPE), GetTypeName(Type), "SHORT");
-    return TRUE;
+    return true;
     } // endif Type
 
-  if (trace)
+  if (trace(1))
     htrc(" adding SHORT(%d): %hd\n", Nval, n);
 
 //Value->SetValue(n);
 //Vblp->SetValue(valp, Nval++);
   Vblp->SetValue(n, Nval++);
-  return FALSE;
+  return false;
   } // end of AddValue
 
 /***********************************************************************/
@@ -338,16 +339,16 @@ bool ARRAY::AddValue(PGLOBAL g, int n)
   {
   if (Type != TYPE_INT) {
     sprintf(g->Message, MSG(ADD_BAD_TYPE), GetTypeName(Type), "INTEGER");
-    return TRUE;
+    return true;
     } // endif Type
 
-  if (trace)
+  if (trace(1))
     htrc(" adding int(%d): %d\n", Nval, n);
 
 //Value->SetValue(n);
 //Vblp->SetValue(valp, Nval++);
   Vblp->SetValue(n, Nval++);
-  return FALSE;
+  return false;
   } // end of AddValue
 
 /***********************************************************************/
@@ -357,15 +358,15 @@ bool ARRAY::AddValue(PGLOBAL g, double d)
   {
   if (Type != TYPE_DOUBLE) {
     sprintf(g->Message, MSG(ADD_BAD_TYPE), GetTypeName(Type), "DOUBLE");
-    return TRUE;
+    return true;
     } // endif Type
 
-  if (trace)
+  if (trace(1))
     htrc(" adding float(%d): %lf\n", Nval, d);
 
   Value->SetValue(d);
   Vblp->SetValue(Value, Nval++);
-  return FALSE;
+  return false;
   } // end of AddValue
 
 /***********************************************************************/
@@ -376,15 +377,15 @@ bool ARRAY::AddValue(PGLOBAL g, PXOB xp)
   if (Type != xp->GetResultType()) {
     sprintf(g->Message, MSG(ADD_BAD_TYPE),
             GetTypeName(xp->GetResultType()), GetTypeName(Type));
-    return TRUE;
+    return true;
     } // endif Type
 
-  if (trace)
+  if (trace(1))
     htrc(" adding (%d) from xp=%p\n", Nval, xp);
 
 //AddValue(xp->GetValue());
   Vblp->SetValue(xp->GetValue(), Nval++);
-  return FALSE;
+  return false;
   } // end of AddValue
 
 /***********************************************************************/
@@ -395,14 +396,14 @@ bool ARRAY::AddValue(PGLOBAL g, PVAL vp)
   if (Type != vp->GetType()) {
     sprintf(g->Message, MSG(ADD_BAD_TYPE),
             GetTypeName(vp->GetType()), GetTypeName(Type));
-    return TRUE;
+    return true;
     } // endif Type
 
-  if (trace)
+  if (trace(1))
     htrc(" adding (%d) from vp=%p\n", Nval, vp);
 
   Vblp->SetValue(vp, Nval++);
-  return FALSE;
+  return false;
   } // end of AddValue
 
 /***********************************************************************/
@@ -423,12 +424,12 @@ bool ARRAY::GetSubValue(PGLOBAL g, PVAL valp, int *kp)
 
   if (Type != TYPE_LIST) {
     sprintf(g->Message, MSG(NO_SUB_VAL), Type);
-    return TRUE;
+    return true;
     } // endif Type
 
   vblp = ((LSTBLK*)Vblp)->Mbvk[kp[0]]->Vblk;
   valp->SetValue_pvblk(vblp, kp[1]);
-  return FALSE;
+  return false;
   } // end of GetSubValue
 #endif // 0
 
@@ -476,11 +477,11 @@ bool ARRAY::Find(PVAL valp)
     else if (n > 0)
       Inf = X;
     else
-      return TRUE;
+      return true;
 
     } // endwhile
 
-  return FALSE;
+  return false;
   } // end of Find
 
 /***********************************************************************/
@@ -504,9 +505,9 @@ bool ARRAY::FilTest(PGLOBAL g, PVAL valp, OPVAL opc, int opm)
   int top = Nval - 1;
 
   if (top < 0)              // Array is empty
-    // Return TRUE for ALL because it means that there are no item that
+    // Return true for ALL because it means that there are no item that
     // does not verify the condition, which is true indeed.
-    // Return FALSE for ANY because TRUE means that there is at least
+    // Return false for ANY because true means that there is at least
     // one item that verifies the condition, which is false.
     return opm == 2;
 
@@ -518,8 +519,8 @@ bool ARRAY::FilTest(PGLOBAL g, PVAL valp, OPVAL opc, int opm)
       vp = valp;
 
   } else if (opc != OP_EXIST) {
-    sprintf(g->Message, MSG(MISSING_ARG), opc);
-    longjmp(g->jumper[g->jump_level], TYPE_ARRAY);
+		sprintf(g->Message, MSG(MISSING_ARG), opc);
+		throw (int)TYPE_ARRAY;
   } else    // OP_EXIST
     return Nval > 0;
 
@@ -528,9 +529,9 @@ bool ARRAY::FilTest(PGLOBAL g, PVAL valp, OPVAL opc, int opm)
   else if (opc == OP_NE && opm == 2)
     return !Find(vp);
   else if (opc == OP_EQ && opm == 2)
-    return (Ndif == 1) ? !(Vcompare(vp, 0) & bt) : FALSE;
+    return (Ndif == 1) ? !(Vcompare(vp, 0) & bt) : false;
   else if (opc == OP_NE && opm == 1)
-    return (Ndif == 1) ? !(Vcompare(vp, 0) & bt) : TRUE;
+    return (Ndif == 1) ? !(Vcompare(vp, 0) & bt) : true;
 
   if (Type != TYPE_LIST) {
     if (opc == OP_GT || opc == OP_GE)
@@ -544,15 +545,15 @@ bool ARRAY::FilTest(PGLOBAL g, PVAL valp, OPVAL opc, int opm)
   if (opm == 2) {
     for (i = 0; i < Nval; i++)
       if (Vcompare(vp, i) & bt)
-        return FALSE;
+        return false;
 
-    return TRUE;
+    return true;
   } else { // opm == 1
     for (i = 0; i < Nval; i++)
       if (!(Vcompare(vp, i) & bt))
-        return TRUE;
+        return true;
 
-    return FALSE;
+    return false;
   } // endif opm
 
   } // end of FilTest
@@ -566,7 +567,7 @@ bool ARRAY::CanBeShort(void)
   int* To_Val = (int*)Valblk->GetMemp();
 
   if (Type != TYPE_INT || !Ndif)
-    return FALSE;
+    return false;
 
   // Because the array is sorted, this is true if all the array
   // int values are in the range of SHORT values
@@ -582,7 +583,7 @@ bool ARRAY::CanBeShort(void)
 int ARRAY::Convert(PGLOBAL g, int k, PVAL vp)
   {
   int   i, prec = 0;
-  bool  b = FALSE;
+  bool  b = false;
   PMBV  ovblk = Valblk;
   PVBLK ovblp = Vblp;
 
@@ -592,6 +593,7 @@ int ARRAY::Convert(PGLOBAL g, int k, PVAL vp)
   switch (Type) {
     case TYPE_DOUBLE:
       prec = 2;
+      /* fall through */
     case TYPE_SHORT:
     case TYPE_INT:
     case TYPE_DATE:
@@ -619,7 +621,7 @@ int ARRAY::Convert(PGLOBAL g, int k, PVAL vp)
     if (((DTVAL*)Value)->SetFormat(g, vp))
       return TYPE_ERROR;
     else
-      b = TRUE;  // Sort the new array on date internal values
+      b = true;  // Sort the new array on date internal values
 
   /*********************************************************************/
   /*  Do the actual conversion.                                        */
@@ -681,15 +683,15 @@ void ARRAY::SetPrecision(PGLOBAL g, int p)
   {
   if (Vblp == NULL) {
     strcpy(g->Message, MSG(PREC_VBLP_NULL));
-    longjmp(g->jumper[g->jump_level], TYPE_ARRAY);
+		throw (int)TYPE_ARRAY;
     } // endif Vblp
 
   bool was = Vblp->IsCi();
 
   if (was && !p) {
     strcpy(g->Message, MSG(BAD_SET_CASE));
-    longjmp(g->jumper[g->jump_level], TYPE_ARRAY);
-    } // endif Vblp
+		throw (int)TYPE_ARRAY;
+	} // endif Vblp
 
   if (was || !p)
     return;
@@ -699,14 +701,14 @@ void ARRAY::SetPrecision(PGLOBAL g, int p)
   if (!was && Type == TYPE_STRING)
     // Must be resorted to eliminate duplicate strings
     if (Sort(g))
-      longjmp(g->jumper[g->jump_level], TYPE_ARRAY);
+			throw (int)TYPE_ARRAY;
 
   } // end of SetPrecision
 
 /***********************************************************************/
 /*  Sort and eliminate distinct values from an array.                  */
 /*  Note: this is done by making a sorted index on distinct values.    */
-/*  Returns FALSE if Ok or TRUE in case of error.                      */
+/*  Returns false if Ok or true in case of error.                      */
 /***********************************************************************/
 bool ARRAY::Sort(PGLOBAL g)
   {
@@ -789,14 +791,14 @@ bool ARRAY::Sort(PGLOBAL g)
 
   Bot = -1;                // For non optimized search
   Top = Ndif;              //   Find searches the whole array.
-  return FALSE;
+  return false;
 
  error:
   Nval = Ndif = 0;
   Valblk->Free();
   PlgDBfree(Index);
   PlgDBfree(Offset);
-  return TRUE;
+  return true;
   } // end of Sort
 
 /***********************************************************************/
@@ -839,9 +841,9 @@ void *ARRAY::GetSortIndex(PGLOBAL g)
 
 /***********************************************************************/
 /*  Block filter testing for IN operator on Column/Array operands.     */
-/*  Here we call Find that returns TRUE if the value is in the array   */
+/*  Here we call Find that returns true if the value is in the array   */
 /*  with X equal to the index of the found value in the array, or      */
-/*  FALSE if the value is not in the array with Inf and Sup being the  */
+/*  false if the value is not in the array with Inf and Sup being the  */
 /*  indexes of the array values that are immediately below and over    */
 /*  the not found value. This enables to restrict the array to the     */
 /*  values that are between the min and max block values and to return */
@@ -854,9 +856,9 @@ int ARRAY::BlockTest(PGLOBAL, int opc, int opm,
   bool bin, bax, pin, pax, veq, all = (opm == 2);
 
   if (Ndif == 0)              // Array is empty
-    // Return TRUE for ALL because it means that there are no item that
+    // Return true for ALL because it means that there are no item that
     // does not verify the condition, which is true indeed.
-    // Return FALSE for ANY because TRUE means that there is at least
+    // Return false for ANY because true means that there is at least
     // one item that verifies the condition, which is false.
     return (all) ? 2 : -2;
   else if (opc == OP_EQ && all && Ndif > 1)
@@ -864,7 +866,7 @@ int ARRAY::BlockTest(PGLOBAL, int opc, int opm,
   else if (opc == OP_NE && !all && Ndif > 1)
     return 2;
 //  else if (Ndif == 1)
-//    all = FALSE;
+//    all = false;
 
   // veq is true when all values in the block are equal
   switch (Type) {
@@ -874,7 +876,7 @@ int ARRAY::BlockTest(PGLOBAL, int opc, int opm,
     case TYPE_SHORT:  veq = *(short*)minp == *(short*)maxp;    break;
     case TYPE_INT:    veq = *(int*)minp == *(int*)maxp;        break;
     case TYPE_DOUBLE: veq = *(double*)minp == *(double*)maxp;  break;
-    default: veq = FALSE;   // Error ?
+    default: veq = false;   // Error ?
     } // endswitch type
 
   if (!s)
@@ -898,7 +900,7 @@ int ARRAY::BlockTest(PGLOBAL, int opc, int opm,
       case OP_GT: return -1;             break;
       } // endswitch opc
 
-    pax = (opc == OP_GE) ? (X < Ndif - 1) : TRUE;
+    pax = (opc == OP_GE) ? (X < Ndif - 1) : true;
   } else if (Inf == Bot) {
     // Max value is smaller than min list value
     return (opc == OP_LT || opc == OP_LE || opc == OP_NE) ? 1 : -1;
@@ -924,7 +926,7 @@ int ARRAY::BlockTest(PGLOBAL, int opc, int opm,
       case OP_LT: return (s) ? -2 : -1;  break;
       } // endswitch opc
 
-    pin = (opc == OP_LE) ? (X > 0) : TRUE;
+    pin = (opc == OP_LE) ? (X > 0) : true;
   } else if (Sup == Ndif) {
     // Min value is greater than max list value
     if (opc == OP_GT || opc == OP_GE || opc == OP_NE)
@@ -956,7 +958,7 @@ int ARRAY::BlockTest(PGLOBAL, int opc, int opm,
   // the only possible overlaps between the array and the block are:
   // Array:    +-------+      +-------+       +-------+      +-----+
   // Block:  +-----+            +---+            +------+   +--------+
-  // TRUE:        pax          pin pax          pin
+  // true:        pax          pin pax          pin
   if (all) switch (opc) {
     case OP_GT:
     case OP_GE: return (pax) ? -1 : 0; break;
@@ -973,22 +975,22 @@ int ARRAY::BlockTest(PGLOBAL, int opc, int opm,
 PSZ ARRAY::MakeArrayList(PGLOBAL g)
   {
   char   *p, *tp;
-  int    i;
+  int     i;
   size_t  z, len = 2;
 
   if (Type == TYPE_LIST)
-    return "(?" "?" "?)";             // To be implemented
+    return (PSZ)("(?" "?" "?)");             // To be implemented
 
   z = MY_MAX(24, GetTypeSize(Type, Len) + 4);
   tp = (char*)PlugSubAlloc(g, NULL, z);
 
   for (i = 0; i < Nval; i++) {
     Value->SetValue_pvblk(Vblp, i);
-    Value->Print(g, tp, z);
+    Value->Prints(g, tp, z);
     len += strlen(tp);
     } // enfor i
 
-  if (trace)
+  if (trace(1))
     htrc("Arraylist: len=%d\n", len);
 
   p = (char *)PlugSubAlloc(g, NULL, len);
@@ -996,12 +998,12 @@ PSZ ARRAY::MakeArrayList(PGLOBAL g)
 
   for (i = 0; i < Nval;) {
     Value->SetValue_pvblk(Vblp, i);
-    Value->Print(g, tp, z);
+    Value->Prints(g, tp, z);
     strcat(p, tp);
     strcat(p, (++i == Nval) ? ")" : ",");
     } // enfor i
 
-  if (trace)
+  if (trace(1))
     htrc("Arraylist: newlen=%d\n", strlen(p));
 
   return p;
@@ -1010,7 +1012,7 @@ PSZ ARRAY::MakeArrayList(PGLOBAL g)
 /***********************************************************************/
 /*  Make file output of ARRAY  contents.                               */
 /***********************************************************************/
-void ARRAY::Print(PGLOBAL g, FILE *f, uint n)
+void ARRAY::Printf(PGLOBAL g, FILE *f, uint n)
   {
   char m[64];
   int  lim = MY_MIN(Nval,10);
@@ -1027,32 +1029,32 @@ void ARRAY::Print(PGLOBAL g, FILE *f, uint n)
     if (Vblp)
       for (int i = 0; i < lim; i++) {
         Value->SetValue_pvblk(Vblp, i);
-        Value->Print(g, f, n+4);
+        Value->Printf(g, f, n+4);
         } // endfor i
 
   } else
     fprintf(f, "%sVALLST: numval=%d\n", m, Nval);
 
-  } // end of Print
+  } // end of Printf
 
 /***********************************************************************/
 /*  Make string output of ARRAY  contents.                             */
 /***********************************************************************/
-void ARRAY::Print(PGLOBAL, char *ps, uint z)
+void ARRAY::Prints(PGLOBAL, char *ps, uint z)
   {
   if (z < 16)
     return;
 
   sprintf(ps, "ARRAY: type=%d\n", Type);
   // More to be implemented later
-  } // end of Print
+  } // end of Prints
 
 /* -------------------------- Class MULAR ---------------------------- */
 
 /***********************************************************************/
 /*  MULAR public constructor.                                          */
 /***********************************************************************/
-MULAR::MULAR(PGLOBAL g, int n) : CSORT(FALSE)
+MULAR::MULAR(PGLOBAL g, int n) : CSORT(false)
   {
   Narray = n;
   Pars = (PARRAY*)PlugSubAlloc(g, NULL, n * sizeof(PARRAY));
@@ -1075,7 +1077,7 @@ int MULAR::Qcompare(int *i1, int *i2)
 /***********************************************************************/
 /*  Sort and eliminate distinct values from multiple arrays.           */
 /*  Note: this is done by making a sorted index on distinct values.    */
-/*  Returns FALSE if Ok or TRUE in case of error.                      */
+/*  Returns false if Ok or true in case of error.                      */
 /***********************************************************************/
 bool MULAR::Sort(PGLOBAL g)
   {
@@ -1087,7 +1089,7 @@ bool MULAR::Sort(PGLOBAL g)
   for (n = 1; n < Narray; n++)
     if (Pars[n]->Nval != nval) {
       strcpy(g->Message, MSG(BAD_ARRAY_VAL));
-      return TRUE;
+      return true;
       } // endif nval
 
   // Prepare non conservative sort with offet values
@@ -1161,10 +1163,10 @@ bool MULAR::Sort(PGLOBAL g)
     Pars[n]->Top = ndif;      //   Find searches the whole array.
     } // endfor n
 
-  return FALSE;
+  return false;
 
  error:
   PlgDBfree(Index);
   PlgDBfree(Offset);
-  return TRUE;
+  return true;
   } // end of Sort

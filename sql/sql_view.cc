@@ -428,6 +428,16 @@ bool mysql_create_view(THD *thd, TABLE_LIST *views,
 
   lex->link_first_table_back(view, link_to_local);
   view->open_type= OT_BASE_ONLY;
+  WSREP_TO_ISOLATION_BEGIN(WSREP_MYSQL_DB, NULL, NULL);
+
+  /*
+    ignore lock specs for CREATE statement
+  */
+  if (lex->current_select->lock_type != TL_READ_DEFAULT)
+  {
+    lex->current_select->set_lock_for_tables(TL_READ_DEFAULT);
+    view->mdl_request.set_type(MDL_EXCLUSIVE);
+  }
 
   if (open_temporary_tables(thd, lex->query_tables) ||
       open_and_lock_tables(thd, lex->query_tables, TRUE, 0))
@@ -680,6 +690,10 @@ bool mysql_create_view(THD *thd, TABLE_LIST *views,
   my_ok(thd);
   lex->link_first_table_back(view, link_to_local);
   DBUG_RETURN(0);
+
+
+WSREP_ERROR_LABEL:
+  res= TRUE;
 
 err:
   THD_STAGE_INFO(thd, stage_end);
@@ -1172,8 +1186,6 @@ bool mysql_make_view(THD *thd, TABLE_SHARE *share, TABLE_LIST *table,
     */
     mysql_derived_reinit(thd, NULL, table);
 
-    thd->select_number+= table->view->number_of_selects;
-
     DEBUG_SYNC(thd, "after_cached_view_opened");
     DBUG_RETURN(0);
   }
@@ -1302,6 +1314,7 @@ bool mysql_make_view(THD *thd, TABLE_SHARE *share, TABLE_LIST *table,
 
     now Lex placed in statement memory
   */
+
   table->view= lex= thd->lex= (LEX*) new(thd->mem_root) st_lex_local;
   if (!table->view)
   {
@@ -1327,8 +1340,9 @@ bool mysql_make_view(THD *thd, TABLE_SHARE *share, TABLE_LIST *table,
       goto end;
 
     lex_start(thd);
+    lex->stmt_lex= old_lex;
     view_select= &lex->select_lex;
-    view_select->select_number= ++thd->select_number;
+    view_select->select_number= ++thd->lex->stmt_lex->current_select_number;
 
     ulonglong saved_mode= thd->variables.sql_mode;
     /* switch off modes which can prevent normal parsing of VIEW
@@ -1361,9 +1375,6 @@ bool mysql_make_view(THD *thd, TABLE_SHARE *share, TABLE_LIST *table,
     /* Parse the query. */
 
     parse_status= parse_sql(thd, & parser_state, table->view_creation_ctx);
-
-    lex->number_of_selects=
-      (thd->select_number - view_select->select_number) + 1;
 
     /* Restore environment. */
 
@@ -1523,8 +1534,7 @@ bool mysql_make_view(THD *thd, TABLE_SHARE *share, TABLE_LIST *table,
       for (tbl= view_main_select_tables; tbl; tbl= tbl->next_local)
       {
         tbl->lock_type= table->lock_type;
-        tbl->mdl_request.set_type((tbl->lock_type >= TL_WRITE_ALLOW_WRITE) ?
-                                  MDL_SHARED_WRITE : MDL_SHARED_READ);
+        tbl->mdl_request.set_type(table->mdl_request.type);
       }
       /*
         If the view is mergeable, we might want to

@@ -1,4 +1,5 @@
-/* Copyright (c) 2000, 2010, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2016, Oracle and/or its affiliates.
+   Copyright (c) 2010, 2016, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -29,8 +30,8 @@
   3) if key_size is given to init_tree then each node will continue the
      key and calls to insert_key may increase length of key.
      if key_size > sizeof(pointer) and key_size is a multiple of 8 (double
-     allign) then key will be put on a 8 alligned adress. Else
-     the key will be on adress (element+1). This is transparent for user
+     align) then key will be put on a 8 aligned address. Else
+     the key will be on address (element+1). This is transparent for user
      compare and search functions uses a pointer to given key-argument.
 
   - If you use a free function for tree-elements and you are freeing

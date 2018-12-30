@@ -19,8 +19,11 @@
 #include "wsrep_priv.h"
 #include "wsrep_mysqld.h"
 
-unsigned int wsrep_check_ip (const char* addr, bool *is_ipv6);
+unsigned int wsrep_check_ip (const char* const addr, bool *is_ipv6);
 size_t wsrep_guess_ip (char* buf, size_t buf_len);
+
+/* returns the length of the host part of the address string */
+size_t wsrep_host_len(const char* addr, size_t addr_len);
 
 namespace wsp {
 
@@ -155,6 +158,7 @@ private:
   }
 
   bool parse_port(const char *port) {
+    errno= 0;                                   /* Reset the errno */
     m_port= strtol(port, NULL, 10);
     if (errno == EINVAL || errno == ERANGE)
     {

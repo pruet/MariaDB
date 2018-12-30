@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2016, MariaDB
+   Copyright (c) 2009, 2017, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -125,6 +125,12 @@ bool get_lookup_field_values(THD *, COND *, TABLE_LIST *, LOOKUP_FIELD_VALUES *)
 /***************************************************************************
 ** List all table types supported
 ***************************************************************************/
+
+
+static bool is_show_command(THD *thd)
+{
+  return sql_command_flags[thd->lex->sql_command] & CF_STATUS_COMMAND;
+}
 
 static int make_version_string(char *buf, int buf_length, uint version)
 {
@@ -265,7 +271,7 @@ int fill_plugins(THD *thd, TABLE_LIST *tables, COND *cond)
   TABLE *table= tables->table;
 
   if (plugin_foreach_with_mask(thd, show_plugins, MYSQL_ANY_PLUGIN,
-                               ~PLUGIN_IS_FREED, table))
+                               ~(PLUGIN_IS_FREED | PLUGIN_IS_DYING), table))
     DBUG_RETURN(1);
 
   DBUG_RETURN(0);
@@ -816,18 +822,36 @@ ignore_db_dirs_process_additions()
   for (i= 0; i < ignore_db_dirs_array.elements; i++)
   {
     get_dynamic(&ignore_db_dirs_array, (uchar *) &dir, i);
-    if (my_hash_insert(&ignore_db_dirs_hash, (uchar *) dir))
-      return true;
-    ptr= strnmov(ptr, dir->str, dir->length);
-    if (i + 1 < ignore_db_dirs_array.elements)
-      ptr= strmov(ptr, ",");
+    if (my_hash_insert(&ignore_db_dirs_hash, (uchar *)dir))
+    {
+      /* ignore duplicates from the config file */
+      if (my_hash_search(&ignore_db_dirs_hash, (uchar *)dir->str, dir->length))
+      {
+        sql_print_warning("Duplicate ignore-db-dir directory name '%.*s' "
+                          "found in the config file(s). Ignoring the duplicate.",
+                          (int) dir->length, dir->str);
+        my_free(dir);
+        goto continue_loop;
+      }
 
+      return true;
+    }
+    ptr= strnmov(ptr, dir->str, dir->length);
+    *(ptr++)= ',';
+
+continue_loop:
     /*
       Set the transferred array element to NULL to avoid double free
       in case of error.
     */
     dir= NULL;
     set_dynamic(&ignore_db_dirs_array, (uchar *) &dir, i);
+  }
+
+  if (ptr > opt_ignore_db_dirs)
+  {
+    ptr--;
+    DBUG_ASSERT(*ptr == ',');
   }
 
   /* make sure the string is terminated */
@@ -955,13 +979,20 @@ find_files(THD *thd, Dynamic_array<LEX_STRING*> *files, LEX_STRING *db,
       if (tl.add_file(file->name))
         goto err;
     }
-    tl.sort();
   }
   else
   {
     if (ha_discover_table_names(thd, db, dirp, &tl, false))
       goto err;
   }
+#if MYSQL_VERSION_ID < 100300
+  /* incomplete optimization, but a less drastic change in GA version */
+  if (!thd->lex->select_lex.order_list.elements &&
+      !thd->lex->select_lex.group_list.elements)
+#else
+  if (is_show_command(thd))
+#endif
+    tl.sort();
 
   DBUG_PRINT("info",("found: %zu files", files->elements()));
   my_dirend(dirp);
@@ -1061,6 +1092,7 @@ public:
         is_handled= FALSE;
         break;
       }
+      /* fall through */
     case ER_COLUMNACCESS_DENIED_ERROR:
     case ER_VIEW_NO_EXPLAIN: /* Error was anonymized, ignore all the same. */
     case ER_PROCACCESS_DENIED_ERROR:
@@ -1304,8 +1336,13 @@ bool mysqld_show_create_db(THD *thd, LEX_STRING *dbname,
   if (test_all_bits(sctx->master_access, DB_ACLS))
     db_access=DB_ACLS;
   else
-    db_access= (acl_get(sctx->host, sctx->ip, sctx->priv_user, dbname->str, 0) |
-		sctx->master_access);
+  {
+    db_access= acl_get(sctx->host, sctx->ip, sctx->priv_user, dbname->str, 0) |
+               sctx->master_access;
+    if (sctx->priv_role[0])
+      db_access|= acl_get("", "", sctx->priv_role, dbname->str, 0);
+  }
+
   if (!(db_access & DB_ACLS) && check_grant_db(thd,dbname->str))
   {
     status_var_increment(thd->status_var.access_denied_errors);
@@ -2352,7 +2389,7 @@ static int show_create_view(THD *thd, TABLE_LIST *table, String *buff)
     We can't just use table->query, because our SQL_MODE may trigger
     a different syntax, like when ANSI_QUOTES is defined.
   */
-  table->view->unit.print(buff, enum_query_type(QT_ORDINARY |
+  table->view->unit.print(buff, enum_query_type(QT_VIEW_INTERNAL |
                                                 QT_ITEM_ORIGINAL_FUNC_NULLIF));
 
   if (table->with_check != VIEW_CHECK_NONE)
@@ -2377,7 +2414,7 @@ public:
   { return alloc_root(mem_root, size); }
   static void operator delete(void *ptr __attribute__((unused)),
                               size_t size __attribute__((unused)))
-  { TRASH(ptr, size); }
+  { TRASH_FREE(ptr, size); }
 
   ulong thread_id;
   uint32 os_thread_id;
@@ -2400,16 +2437,16 @@ static const char *thread_state_info(THD *tmp)
     else
       return "Reading from net";
   }
-  else
+#else
+  if (tmp->get_command() == COM_SLEEP)
+    return "";
 #endif
-  {
-    if (tmp->proc_info)
-      return tmp->proc_info;
-    else if (tmp->mysys_var && tmp->mysys_var->current_cond)
-      return "Waiting on cond";
-    else
-      return NULL;
-  }
+  if (tmp->proc_info)
+    return tmp->proc_info;
+  else if (tmp->mysys_var && tmp->mysys_var->current_cond)
+    return "Waiting on cond";
+  else
+    return NULL;
 }
 
 void mysqld_list_processes(THD *thd,const char *user, bool verbose)
@@ -3203,7 +3240,7 @@ static bool show_status_array(THD *thd, const char *wild,
 
   for (; variables->name; variables++)
   {
-    bool wild_checked;
+    bool wild_checked= 0;
     strnmov(prefix_end, variables->name, len);
     name_buffer[sizeof(name_buffer)-1]=0;       /* Safety */
 
@@ -3446,6 +3483,13 @@ extern ST_SCHEMA_TABLE schema_tables[];
 bool schema_table_store_record(THD *thd, TABLE *table)
 {
   int error;
+
+  if (thd->killed)
+  {
+    thd->send_kill_message();
+    return 1;
+  }
+
   if ((error= table->file->ha_write_tmp_row(table->record[0])))
   {
     TMP_TABLE_PARAM *param= table->pos_in_table_list->schema_table_param;
@@ -3616,6 +3660,15 @@ bool uses_only_table_name_fields(Item *item, TABLE_LIST *table)
         return 0;
     }
   }
+  else if (item->type() == Item::ROW_ITEM)
+  {
+    Item_row *item_row= static_cast<Item_row*>(item);
+    for (uint i= 0; i < item_row->cols(); i++)
+    {
+      if (!uses_only_table_name_fields(item_row->element_index(i), table))
+        return 0;
+    }
+  }
   else if (item->type() == Item::FIELD_ITEM)
   {
     Item_field *item_field= (Item_field*)item;
@@ -3634,6 +3687,11 @@ bool uses_only_table_name_fields(Item *item, TABLE_LIST *table)
                                (uchar *) item_field->field_name,
                                strlen(item_field->field_name), 0)))
       return 0;
+  }
+  else if (item->type() == Item::EXPR_CACHE_ITEM)
+  {
+    Item_cache_wrapper *tmp= static_cast<Item_cache_wrapper*>(item);
+    return uses_only_table_name_fields(tmp->get_orig_item(), table);
   }
   else if (item->type() == Item::REF_ITEM)
     return uses_only_table_name_fields(item->real_item(), table);
@@ -4027,7 +4085,7 @@ make_table_name_list(THD *thd, Dynamic_array<LEX_STRING*> *table_names,
     */
     if (res == FIND_FILES_DIR)
     {
-      if (sql_command_flags[lex->sql_command] & CF_STATUS_COMMAND)
+      if (is_show_command(thd))
         return 1;
       thd->clear_error();
       return 2;
@@ -4035,6 +4093,22 @@ make_table_name_list(THD *thd, Dynamic_array<LEX_STRING*> *table_names,
     return 1;
   }
   return 0;
+}
+
+
+static void get_table_engine_for_i_s(THD *thd, char *buf, TABLE_LIST *tl,
+                                     LEX_STRING *db, LEX_STRING *table)
+{
+  LEX_STRING engine_name= { buf, 0 };
+
+  if (thd->get_stmt_da()->sql_errno() == ER_UNKNOWN_STORAGE_ENGINE)
+  {
+    char path[FN_REFLEN];
+    build_table_filename(path, sizeof(path) - 1,
+                         db->str, table->str, reg_ext, 0);
+    if (dd_frm_type(thd, path, &engine_name) == FRMTYPE_TABLE)
+      tl->option= engine_name.str;
+  }
 }
 
 
@@ -4108,9 +4182,9 @@ fill_schema_table_by_open(THD *thd, bool is_show_fields_or_keys,
 
   /*
     Since make_table_list() might change database and table name passed
-    to it we create copies of orig_db_name and orig_table_name here.
-    These copies are used for make_table_list() while unaltered values
-    are passed to process_table() functions.
+    to it (if lower_case_table_names) we create copies of orig_db_name and
+    orig_table_name here.  These copies are used for make_table_list()
+    while unaltered values are passed to process_table() functions.
   */
   if (!thd->make_lex_string(&db_name,
                             orig_db_name->str, orig_db_name->length) ||
@@ -4197,6 +4271,10 @@ fill_schema_table_by_open(THD *thd, bool is_show_fields_or_keys,
   }
   else
   {
+    char buf[NAME_CHAR_LEN + 1];
+    if (thd->is_error())
+      get_table_engine_for_i_s(thd, buf, table_list, &db_name, &table_name);
+
     result= schema_table->process_table(thd, table_list,
                                         table, result,
                                         orig_db_name,
@@ -4412,15 +4490,13 @@ try_acquire_high_prio_shared_mdl_lock(THD *thd, TABLE_LIST *table,
                               open_tables function for this table
 */
 
-static int fill_schema_table_from_frm(THD *thd, TABLE_LIST *tables,
+static int fill_schema_table_from_frm(THD *thd, TABLE *table,
                                       ST_SCHEMA_TABLE *schema_table,
                                       LEX_STRING *db_name,
                                       LEX_STRING *table_name,
-                                      enum enum_schema_tables schema_table_idx,
                                       Open_tables_backup *open_tables_state_backup,
                                       bool can_deadlock)
 {
-  TABLE *table= tables->table;
   TABLE_SHARE *share;
   TABLE tbl;
   TABLE_LIST table_list;
@@ -4502,7 +4578,19 @@ static int fill_schema_table_from_frm(THD *thd, TABLE_LIST *tables,
   share= tdc_acquire_share_shortlived(thd, &table_list, GTS_TABLE | GTS_VIEW);
   if (!share)
   {
-    res= 0;
+    if (thd->get_stmt_da()->sql_errno() == ER_NO_SUCH_TABLE ||
+        thd->get_stmt_da()->sql_errno() == ER_WRONG_OBJECT)
+    {
+      res= 0;
+    }
+    else
+    {
+      char buf[NAME_CHAR_LEN + 1];
+      get_table_engine_for_i_s(thd, buf, &table_list, db_name, table_name);
+
+      res= schema_table->process_table(thd, &table_list, table,
+                                       true, db_name, table_name);
+    }
     goto end;
   }
 
@@ -4778,9 +4866,8 @@ int get_all_tables(THD *thd, TABLE_LIST *tables, COND *cond)
             if (!(table_open_method & ~OPEN_FRM_ONLY) &&
                 db_name != &INFORMATION_SCHEMA_NAME)
             {
-              if (!fill_schema_table_from_frm(thd, tables, schema_table,
+              if (!fill_schema_table_from_frm(thd, table, schema_table,
                                               db_name, table_name,
-                                              schema_table_idx,
                                               &open_tables_state_backup,
                                               can_deadlock))
                 continue;
@@ -4874,8 +4961,10 @@ int fill_schema_schemata(THD *thd, TABLE_LIST *tables, COND *cond)
     }
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
     if (sctx->master_access & (DB_ACLS | SHOW_DB_ACL) ||
-	acl_get(sctx->host, sctx->ip, sctx->priv_user, db_name->str, 0) ||
-	!check_grant_db(thd, db_name->str))
+        acl_get(sctx->host, sctx->ip, sctx->priv_user, db_name->str, false) ||
+        (sctx->priv_role[0] ?
+             acl_get("", "", sctx->priv_role, db_name->str, false) : 0) ||
+        !check_grant_db(thd, db_name->str))
 #endif
     {
       load_db_opt_by_name(thd, db_name->str, &create);
@@ -4914,6 +5003,11 @@ static int get_schema_tables_record(THD *thd, TABLE_LIST *tables,
     else
       table->field[3]->store(STRING_WITH_LEN("BASE TABLE"), cs);
 
+    if (tables->option)
+    {
+      table->field[4]->store(tables->option, strlen(tables->option), cs);
+      table->field[4]->set_notnull();
+    }
     goto err;
   }
 
@@ -5526,7 +5620,8 @@ int fill_schema_engines(THD *thd, TABLE_LIST *tables, COND *cond)
   DBUG_ENTER("fill_schema_engines");
   if (plugin_foreach_with_mask(thd, iter_schema_engines,
                                MYSQL_STORAGE_ENGINE_PLUGIN,
-                               ~PLUGIN_IS_FREED, tables->table))
+                               ~(PLUGIN_IS_FREED | PLUGIN_IS_DYING),
+                               tables->table))
     DBUG_RETURN(1);
   DBUG_RETURN(0);
 }
@@ -5811,13 +5906,13 @@ bool store_schema_proc(THD *thd, TABLE *table, TABLE *proc_table,
                                 val_int() == TYPE_ENUM_PROCEDURE))
     return 0;
 
-  if ((lex->sql_command == SQLCOM_SHOW_STATUS_PROC &&
+  if (!is_show_command(thd) ||
+      (lex->sql_command == SQLCOM_SHOW_STATUS_PROC &&
       proc_table->field[MYSQL_PROC_MYSQL_TYPE]->val_int() ==
       TYPE_ENUM_PROCEDURE) ||
       (lex->sql_command == SQLCOM_SHOW_STATUS_FUNC &&
       proc_table->field[MYSQL_PROC_MYSQL_TYPE]->val_int() ==
-      TYPE_ENUM_FUNCTION) ||
-      (sql_command_flags[lex->sql_command] & CF_STATUS_COMMAND) == 0)
+      TYPE_ENUM_FUNCTION))
   {
     restore_record(table, s->default_values);
     if (!wild || !wild[0] || !wild_case_compare(system_charset_info,
@@ -5949,6 +6044,10 @@ int fill_schema_proc(THD *thd, TABLE_LIST *tables, COND *cond)
     DBUG_RETURN(1);
   }
 
+  /* Disable padding temporarily so it doesn't break the query */
+  ulonglong sql_mode_was = thd->variables.sql_mode;
+  thd->variables.sql_mode &= ~MODE_PAD_CHAR_TO_FULL_LENGTH;
+
   if (proc_table->file->ha_index_init(0, 1))
   {
     res= 1;
@@ -5984,6 +6083,7 @@ err:
     (void) proc_table->file->ha_index_end();
 
   close_system_tables(thd, &open_tables_state_backup);
+  thd->variables.sql_mode = sql_mode_was;
   DBUG_RETURN(res);
 }
 
@@ -7191,6 +7291,17 @@ int fill_variables(THD *thd, TABLE_LIST *tables, COND *cond)
   COND *partial_cond= make_cond_for_info_schema(thd, cond, tables);
 
   mysql_rwlock_rdlock(&LOCK_system_variables_hash);
+
+  /*
+    Avoid recursive LOCK_system_variables_hash acquisition in
+    intern_sys_var_ptr() by pre-syncing dynamic session variables.
+  */
+  if (scope == OPT_SESSION &&
+      (!thd->variables.dynamic_variables_ptr ||
+       global_system_variables.dynamic_variables_head >
+       thd->variables.dynamic_variables_head))
+    sync_dynamic_session_variables(thd, true);
+
   res= show_status_array(thd, wild, enumerate_sys_vars(thd, sorted_vars, scope),
                          scope, NULL, "", tables->table,
                          upper_case_names, partial_cond);
@@ -7277,6 +7388,7 @@ get_referential_constraints_record(THD *thd, TABLE_LIST *tables,
                                    LEX_STRING *db_name, LEX_STRING *table_name)
 {
   CHARSET_INFO *cs= system_charset_info;
+  LEX_CSTRING *s;
   DBUG_ENTER("get_referential_constraints_record");
 
   if (res)
@@ -7321,10 +7433,10 @@ get_referential_constraints_record(THD *thd, TABLE_LIST *tables,
       else
         table->field[5]->set_null();
       table->field[6]->store(STRING_WITH_LEN("NONE"), cs);
-      table->field[7]->store(f_key_info->update_method->str,
-                             f_key_info->update_method->length, cs);
-      table->field[8]->store(f_key_info->delete_method->str,
-                             f_key_info->delete_method->length, cs);
+      s= fk_option_name(f_key_info->update_method);
+      table->field[7]->store(s->str, s->length, cs);
+      s= fk_option_name(f_key_info->delete_method);
+      table->field[8]->store(s->str, s->length, cs);
       if (schema_table_store_record(thd, table))
         DBUG_RETURN(1);
     }
@@ -7555,7 +7667,7 @@ TABLE *create_schema_table(THD *thd, TABLE_LIST *table_list)
   tmp_table_param->field_count= field_count;
   tmp_table_param->schema_table= 1;
   SELECT_LEX *select_lex= thd->lex->current_select;
-  bool keep_row_order= sql_command_flags[thd->lex->sql_command] & CF_STATUS_COMMAND;
+  bool keep_row_order= is_show_command(thd);
   if (!(table= create_tmp_table(thd, tmp_table_param,
                                 field_list, (ORDER*) 0, 0, 0, 
                                 (select_lex->options | thd->variables.option_bits |
@@ -9659,3 +9771,88 @@ static void get_cs_converted_string_value(THD *thd,
   return;
 }
 #endif
+
+/**
+  Dumps a text description of a thread, its security context
+  (user, host) and the current query.
+
+  @param thd thread context
+  @param buffer pointer to preferred result buffer
+  @param length length of buffer
+  @param max_query_len how many chars of query to copy (0 for all)
+
+  @return Pointer to string
+*/
+
+extern "C"
+char *thd_get_error_context_description(THD *thd, char *buffer,
+                                        unsigned int length,
+                                        unsigned int max_query_len)
+{
+  String str(buffer, length, &my_charset_latin1);
+  const Security_context *sctx= &thd->main_security_ctx;
+  char header[256];
+  int len;
+
+  mysql_mutex_lock(&LOCK_thread_count);
+
+  len= my_snprintf(header, sizeof(header),
+                   "MySQL thread id %lu, OS thread handle 0x%lx, query id %lu",
+                   thd->thread_id, (ulong) thd->real_id, (ulong) thd->query_id);
+  str.length(0);
+  str.append(header, len);
+
+  if (sctx->host)
+  {
+    str.append(' ');
+    str.append(sctx->host);
+  }
+
+  if (sctx->ip)
+  {
+    str.append(' ');
+    str.append(sctx->ip);
+  }
+
+  if (sctx->user)
+  {
+    str.append(' ');
+    str.append(sctx->user);
+  }
+
+  /* Don't wait if LOCK_thd_data is used as this could cause a deadlock */
+  if (!mysql_mutex_trylock(&thd->LOCK_thd_data))
+  {
+    if (const char *info= thread_state_info(thd))
+    {
+      str.append(' ');
+      str.append(info);
+    }
+
+    if (thd->query())
+    {
+      if (max_query_len < 1)
+        len= thd->query_length();
+      else
+        len= MY_MIN(thd->query_length(), max_query_len);
+      str.append('\n');
+      str.append(thd->query(), len);
+    }
+    mysql_mutex_unlock(&thd->LOCK_thd_data);
+  }
+  mysql_mutex_unlock(&LOCK_thread_count);
+
+  if (str.c_ptr_safe() == buffer)
+    return buffer;
+
+  /*
+    We have to copy the new string to the destination buffer because the string
+    was reallocated to a larger buffer to be able to fit.
+  */
+  DBUG_ASSERT(buffer != NULL);
+  length= MY_MIN(str.length(), length-1);
+  memcpy(buffer, str.c_ptr_quick(), length);
+  /* Make sure that the new string is null terminated */
+  buffer[length]= '\0';
+  return buffer;
+}

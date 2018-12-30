@@ -925,6 +925,7 @@ write_keys(Sort_param *param,  Filesort_info *fs_info, uint count,
   /* check we won't have more buffpeks than we can possibly keep in memory */
   if (my_b_tell(buffpek_pointers) + sizeof(BUFFPEK) > (ulonglong)UINT_MAX)
     goto err;
+  bzero(&buffpek, sizeof(buffpek));
   buffpek.file_pos= my_b_tell(tempfile);
   if ((ha_rows) count > param->max_rows)
     count=(uint) param->max_rows;               /* purecov: inspected */
@@ -997,7 +998,8 @@ static void make_sortkey(register Sort_param *param,
         if (maybe_null)
           *to++=1;
         char *tmp_buffer= param->tmp_buffer ? param->tmp_buffer : (char*)to;
-        String tmp(tmp_buffer, param->sort_length, cs);
+        String tmp(tmp_buffer, param->tmp_buffer ? param->sort_length :
+                                                   sort_field->length, cs);
         String *res= item->str_result(&tmp);
         if (!res)
         {
@@ -1639,7 +1641,7 @@ int merge_buffers(Sort_param *param, IO_CACHE *from_file,
       if (!(error= (int) read_to_buffer(from_file, buffpek,
                                         rec_length)))
       {
-        queue_remove(&queue,0);
+        (void) queue_remove_top(&queue);
         reuse_freed_buff(&queue, buffpek, rec_length);
       }
       else if (error == -1)

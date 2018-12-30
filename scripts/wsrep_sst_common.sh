@@ -20,18 +20,55 @@ set -u
 
 WSREP_SST_OPT_BYPASS=0
 WSREP_SST_OPT_BINLOG=""
-WSREP_SST_OPT_CONF_SUFFIX=""
+WSREP_SST_OPT_BINLOG_INDEX=""
 WSREP_SST_OPT_DATA=""
 WSREP_SST_OPT_AUTH=${WSREP_SST_OPT_AUTH:-}
 WSREP_SST_OPT_USER=${WSREP_SST_OPT_USER:-}
 WSREP_SST_OPT_PSWD=${WSREP_SST_OPT_PSWD:-}
 WSREP_SST_OPT_DEFAULT=""
 WSREP_SST_OPT_EXTRA_DEFAULT=""
+WSREP_SST_OPT_SUFFIX_DEFAULT=""
+WSREP_SST_OPT_SUFFIX_VALUE=""
+INNODB_DATA_HOME_DIR_ARG=""
 
 while [ $# -gt 0 ]; do
 case "$1" in
     '--address')
         readonly WSREP_SST_OPT_ADDR="$2"
+        #
+        # Break address string into host:port/path parts
+        #
+        case "${WSREP_SST_OPT_ADDR}" in
+        \[*)
+            # IPv6
+            addr_no_bracket=${WSREP_SST_OPT_ADDR#\[}
+            readonly WSREP_SST_OPT_HOST_UNESCAPED=${addr_no_bracket%%\]*}
+            readonly WSREP_SST_OPT_HOST="[${WSREP_SST_OPT_HOST_UNESCAPED}]"
+            ;;
+        *)
+            readonly WSREP_SST_OPT_HOST=${WSREP_SST_OPT_ADDR%%[:/]*}
+            readonly WSREP_SST_OPT_HOST_UNESCAPED=$WSREP_SST_OPT_HOST
+            ;;
+        esac
+        remain=${WSREP_SST_OPT_ADDR#${WSREP_SST_OPT_HOST}}
+        remain=${remain#:}
+        readonly WSREP_SST_OPT_ADDR_PORT=${remain%%/*}
+        remain=${remain#*/}
+        readonly WSREP_SST_OPT_MODULE=${remain%%/*}
+        readonly WSREP_SST_OPT_PATH=${WSREP_SST_OPT_ADDR#*/}
+        remain=${WSREP_SST_OPT_PATH#*/}
+        if [ "$remain" != "${WSREP_SST_OPT_PATH}" ]; then
+            readonly WSREP_SST_OPT_LSN=${remain%%/*}
+            remain=${remain#*/}
+            if [ "$remain" != "${WSREP_SST_OPT_LSN}" ]; then
+                readonly WSREP_SST_OPT_SST_VER=${remain%%/*}
+            else
+                readonly WSREP_SST_OPT_SST_VER=""
+            fi
+        else
+            readonly WSREP_SST_OPT_LSN=""
+            readonly WSREP_SST_OPT_SST_VER=""
+        fi
         shift
         ;;
     '--bypass')
@@ -39,6 +76,10 @@ case "$1" in
         ;;
     '--datadir')
         readonly WSREP_SST_OPT_DATA="$2"
+        shift
+        ;;
+    '--innodb-data-home-dir')
+        readonly INNODB_DATA_HOME_DIR_ARG="$2"
         shift
         ;;
     '--defaults-file')
@@ -50,7 +91,8 @@ case "$1" in
         shift
         ;;
     '--defaults-group-suffix')
-        WSREP_SST_OPT_CONF_SUFFIX="$2"
+        readonly WSREP_SST_OPT_SUFFIX_DEFAULT="$1=$2"
+        readonly WSREP_SST_OPT_SUFFIX_VALUE="$2"
         shift
         ;;
     '--host')
@@ -93,6 +135,10 @@ case "$1" in
         WSREP_SST_OPT_BINLOG="$2"
         shift
         ;;
+    '--binlog-index')
+	WSREP_SST_OPT_BINLOG_INDEX="$2"
+	shift
+	;;
     '--gtid-domain-id')
         readonly WSREP_SST_OPT_GTID_DOMAIN_ID="$2"
         shift
@@ -106,7 +152,18 @@ shift
 done
 readonly WSREP_SST_OPT_BYPASS
 readonly WSREP_SST_OPT_BINLOG
-readonly WSREP_SST_OPT_CONF_SUFFIX
+readonly WSREP_SST_OPT_BINLOG_INDEX
+
+if [ -n "${WSREP_SST_OPT_ADDR_PORT:-}" ]; then
+  if [ -n "${WSREP_SST_OPT_PORT:-}" ]; then
+    if [ "$WSREP_SST_OPT_PORT" != "$WSREP_SST_OPT_ADDR_PORT" ]; then
+      echo "WSREP_SST: [ERROR] port in --port=$WSREP_SST_OPT_PORT differs from port in --address=$WSREP_SST_OPT_ADDR" >&2
+      exit 2
+    fi
+  else
+    readonly WSREP_SST_OPT_PORT="$WSREP_SST_OPT_ADDR_PORT"
+  fi
+fi
 
 # try to use my_print_defaults, mysql and mysqldump that come with the sources
 # (for MTR suite)
@@ -134,19 +191,18 @@ else
     MY_PRINT_DEFAULTS=$(which my_print_defaults)
 fi
 
-readonly WSREP_SST_OPT_CONF="$WSREP_SST_OPT_DEFAULT $WSREP_SST_OPT_EXTRA_DEFAULT"
-MY_PRINT_DEFAULTS="$MY_PRINT_DEFAULTS $WSREP_SST_OPT_CONF"
+readonly WSREP_SST_OPT_CONF="$WSREP_SST_OPT_DEFAULT $WSREP_SST_OPT_EXTRA_DEFAULT $WSREP_SST_OPT_SUFFIX_DEFAULT"
+readonly MY_PRINT_DEFAULTS="$MY_PRINT_DEFAULTS $WSREP_SST_OPT_CONF"
+
 wsrep_auth_not_set()
 {
     [ -z "$WSREP_SST_OPT_AUTH" -o "$WSREP_SST_OPT_AUTH" = "(null)" ]
 }
 
-# For Bug:1200727
-if $MY_PRINT_DEFAULTS sst | grep -q "wsrep_sst_auth"
-then
-    if wsrep_auth_not_set
-    then
-        WSREP_SST_OPT_AUTH=$($MY_PRINT_DEFAULTS sst | grep -- "--wsrep_sst_auth" | cut -d= -f2)
+# State Snapshot Transfer authentication password was displayed in the ps output. Bug fixed #1200727.
+if $MY_PRINT_DEFAULTS sst | grep -q "wsrep_sst_auth"; then
+    if wsrep_auth_not_set; then
+            WSREP_SST_OPT_AUTH=$($MY_PRINT_DEFAULTS sst | grep -- "--wsrep_sst_auth" | cut -d= -f2)
     fi
 fi
 readonly WSREP_SST_OPT_AUTH
@@ -181,6 +237,11 @@ wsrep_log_error()
     wsrep_log "[ERROR] $*"
 }
 
+wsrep_log_warning()
+{
+    wsrep_log "[WARNING] $*"
+}
+
 wsrep_log_info()
 {
     wsrep_log "[INFO] $*"
@@ -188,7 +249,7 @@ wsrep_log_info()
 
 wsrep_cleanup_progress_file()
 {
-    [ -n "$SST_PROGRESS_FILE" ] && rm -f "$SST_PROGRESS_FILE" 2>/dev/null
+    [ -n "${SST_PROGRESS_FILE:-}" ] && rm -f "$SST_PROGRESS_FILE" 2>/dev/null || true
 }
 
 wsrep_check_program()
@@ -213,4 +274,31 @@ wsrep_check_programs()
     done
 
     return $ret
+}
+
+#
+# user can specify xtrabackup specific settings that will be used during sst
+# process like encryption, etc.....
+# parse such configuration option. (group for xb settings is [sst] in my.cnf
+#
+# 1st param: group (config file section like sst) or my_print_defaults argument (like --mysqld)
+# 2nd param: var : name of the variable in the section, e.g. server-id
+# 3rd param: - : default value for the param
+parse_cnf()
+{
+    local group=$1
+    local var=$2
+    local reval=""
+
+    # normalize the variable names specified in cnf file (user can use _ or - for example log-bin or log_bin)
+    # then search for needed variable
+    # finally get the variable value (if variables has been specified multiple time use the last value only)
+
+    reval=$($MY_PRINT_DEFAULTS "${group}" | awk -v var="${var}" 'BEGIN { OFS=FS="=" } { gsub(/_/,"-",$1); if ( $1=="--"var) lastval=substr($0,length($1)+2) } END { print lastval}')
+
+    # use default if we haven't found a value
+    if [ -z "$reval" ]; then
+        [ -n "$3" ] && reval=$3
+    fi
+    echo $reval
 }

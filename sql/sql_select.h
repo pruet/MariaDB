@@ -557,6 +557,8 @@ typedef struct st_join_table {
             !(used_sjm_lookup_tables & ~emb_sj_nest->sj_inner_tables));
   }
 
+  bool keyuse_is_valid_for_access_in_chosen_plan(JOIN *join, KEYUSE *keyuse);
+
   void remove_redundant_bnl_scan_conds();
 
   void save_explain_data(Explain_table_access *eta, table_map prefix_tables, 
@@ -1042,6 +1044,11 @@ public:
     to materialize and access by lookups
   */
   table_map sjm_lookup_tables;
+  /** 
+    Bitmap of semijoin tables that the chosen plan decided
+    to materialize to scan the results of materialization
+  */
+  table_map sjm_scan_tables;
   /*
     Constant tables for which we have found a row (as opposed to those for
     which we didn't).
@@ -1071,6 +1078,10 @@ public:
     (if sql_calc_found_rows is used, LIMIT is ignored)
   */
   ha_rows select_limit;
+  /*
+    Number of duplicate rows found in UNION.
+  */
+  ha_rows duplicate_rows;
   /**
     Used to fetch no more than given amount of rows per one
     fetch operation of server side cursor.
@@ -1290,7 +1301,8 @@ public:
   enum join_optimization_state { NOT_OPTIMIZED=0,
                                  OPTIMIZATION_IN_PROGRESS=1,
                                  OPTIMIZATION_DONE=2};
-  bool optimized; ///< flag to avoid double optimization in EXPLAIN
+  // state of JOIN optimization
+  enum join_optimization_state optimization_state;
   bool initialized; ///< flag to avoid double init_execution calls
 
   Explain_select *explain;
@@ -1346,7 +1358,7 @@ public:
     sort_and_group= 0;
     first_record= 0;
     do_send_rows= 1;
-    send_records= 0;
+    duplicate_rows= send_records= 0;
     found_records= 0;
     fetch_limit= HA_POS_ERROR;
     join_examined_rows= 0;
@@ -1378,7 +1390,7 @@ public:
     ref_pointer_array= items0= items1= items2= items3= 0;
     ref_pointer_array_size= 0;
     zero_result_cause= 0;
-    optimized= 0;
+    optimization_state= JOIN::NOT_OPTIMIZED;
     have_query_plan= QEP_NOT_PRESENT_YET;
     initialized= 0;
     cleaned= 0;
@@ -1410,6 +1422,7 @@ public:
     pre_sort_join_tab= NULL;
     emb_sjm_nest= NULL;
     sjm_lookup_tables= 0;
+    sjm_scan_tables= 0;
 
     /* 
       The following is needed because JOIN::cleanup(true) may be called for 
@@ -1821,10 +1834,12 @@ bool error_if_full_join(JOIN *join);
 int report_error(TABLE *table, int error);
 int safe_index_read(JOIN_TAB *tab);
 int get_quick_record(SQL_SELECT *select);
-SORT_FIELD * make_unireg_sortorder(THD *thd, ORDER *order, uint *length,
+SORT_FIELD *make_unireg_sortorder(THD *thd, JOIN *join,
+                                  table_map first_table_map,
+                                  ORDER *order, uint *length,
                                   SORT_FIELD *sortorder);
 int setup_order(THD *thd, Item **ref_pointer_array, TABLE_LIST *tables,
-		List<Item> &fields, List <Item> &all_fields, ORDER *order);
+                List<Item> &fields, List <Item> &all_fields, ORDER *order);
 int setup_group(THD *thd, Item **ref_pointer_array, TABLE_LIST *tables,
 		List<Item> &fields, List<Item> &all_fields, ORDER *order,
 		bool *hidden_group_fields);

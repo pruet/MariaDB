@@ -1,8 +1,8 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
-Copyright (c) 2013, 2016, MariaDB Corporation.
+Copyright (c) 2013, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -164,7 +164,7 @@ DEFAULT=0, ON = 1, OFF = 2
 		        + DICT_TF_WIDTH_PAGE_ENCRYPTION_KEY)
 
 /** A mask of all the known/used bits in table flags */
-#define DICT_TF_BIT_MASK	(~(~0 << DICT_TF_BITS))
+#define DICT_TF_BIT_MASK	(~(~0U << DICT_TF_BITS))
 
 /** Zero relative shift position of the COMPACT field */
 #define DICT_TF_POS_COMPACT		0
@@ -199,39 +199,39 @@ DEFAULT=0, ON = 1, OFF = 2
 
 /** Bit mask of the COMPACT field */
 #define DICT_TF_MASK_COMPACT				\
-		((~(~0 << DICT_TF_WIDTH_COMPACT))	\
+		((~(~0U << DICT_TF_WIDTH_COMPACT))	\
 		<< DICT_TF_POS_COMPACT)
 /** Bit mask of the ZIP_SSIZE field */
 #define DICT_TF_MASK_ZIP_SSIZE				\
-		((~(~0 << DICT_TF_WIDTH_ZIP_SSIZE))	\
+		((~(~0U << DICT_TF_WIDTH_ZIP_SSIZE))	\
 		<< DICT_TF_POS_ZIP_SSIZE)
 /** Bit mask of the ATOMIC_BLOBS field */
 #define DICT_TF_MASK_ATOMIC_BLOBS			\
-		((~(~0 << DICT_TF_WIDTH_ATOMIC_BLOBS))	\
+		((~(~0U << DICT_TF_WIDTH_ATOMIC_BLOBS))	\
 		<< DICT_TF_POS_ATOMIC_BLOBS)
 /** Bit mask of the DATA_DIR field */
 #define DICT_TF_MASK_DATA_DIR				\
-		((~(~0 << DICT_TF_WIDTH_DATA_DIR))	\
+		((~(~0U << DICT_TF_WIDTH_DATA_DIR))	\
 		<< DICT_TF_POS_DATA_DIR)
 /** Bit mask of the PAGE_COMPRESSION field */
 #define DICT_TF_MASK_PAGE_COMPRESSION			\
-		((~(~0 << DICT_TF_WIDTH_PAGE_COMPRESSION)) \
+		((~(~0U << DICT_TF_WIDTH_PAGE_COMPRESSION)) \
 		<< DICT_TF_POS_PAGE_COMPRESSION)
 /** Bit mask of the PAGE_COMPRESSION_LEVEL field */
 #define DICT_TF_MASK_PAGE_COMPRESSION_LEVEL		\
-		((~(~0 << DICT_TF_WIDTH_PAGE_COMPRESSION_LEVEL)) \
+		((~(~0U << DICT_TF_WIDTH_PAGE_COMPRESSION_LEVEL)) \
 		<< DICT_TF_POS_PAGE_COMPRESSION_LEVEL)
 /** Bit mask of the ATOMIC_WRITES field */
 #define DICT_TF_MASK_ATOMIC_WRITES		\
-		((~(~0 << DICT_TF_WIDTH_ATOMIC_WRITES)) \
+		((~(~0U << DICT_TF_WIDTH_ATOMIC_WRITES)) \
 		<< DICT_TF_POS_ATOMIC_WRITES)
 /** Bit mask of the PAGE_ENCRYPTION field */
 #define DICT_TF_MASK_PAGE_ENCRYPTION			\
-		((~(~0L << DICT_TF_WIDTH_PAGE_ENCRYPTION))	\
+		((~(~0U << DICT_TF_WIDTH_PAGE_ENCRYPTION))	\
 		<< DICT_TF_POS_PAGE_ENCRYPTION)
 /** Bit mask of the PAGE_ENCRYPTION_KEY field */
 #define DICT_TF_MASK_PAGE_ENCRYPTION_KEY		\
-		((~(~0L << DICT_TF_WIDTH_PAGE_ENCRYPTION_KEY)) \
+		((~(~0U << DICT_TF_WIDTH_PAGE_ENCRYPTION_KEY)) \
 		<< DICT_TF_POS_PAGE_ENCRYPTION_KEY)
 
 /** Return the value of the COMPACT field */
@@ -246,7 +246,7 @@ DEFAULT=0, ON = 1, OFF = 2
 #define DICT_TF_HAS_ATOMIC_BLOBS(flags)			\
 		((flags & DICT_TF_MASK_ATOMIC_BLOBS)	\
 		>> DICT_TF_POS_ATOMIC_BLOBS)
-/** Return the value of the ATOMIC_BLOBS field */
+/** Return the value of the DATA_DIR field */
 #define DICT_TF_HAS_DATA_DIR(flags)			\
 		((flags & DICT_TF_MASK_DATA_DIR)	\
 		>> DICT_TF_POS_DATA_DIR)
@@ -291,7 +291,7 @@ for unknown bits in order to protect backward incompatibility. */
 /* @{ */
 /** Total number of bits in table->flags2. */
 #define DICT_TF2_BITS			7
-#define DICT_TF2_BIT_MASK		~(~0 << DICT_TF2_BITS)
+#define DICT_TF2_BIT_MASK		~(~0U << DICT_TF2_BITS)
 
 /** TEMPORARY; TRUE for tables from CREATE TEMPORARY TABLE. */
 #define DICT_TF2_TEMPORARY		1
@@ -379,7 +379,7 @@ dict_mem_table_add_col(
 	ulint		mtype,	/*!< in: main datatype */
 	ulint		prtype,	/*!< in: precise type */
 	ulint		len)	/*!< in: precision */
-	__attribute__((nonnull(1)));
+	MY_ATTRIBUTE((nonnull(1)));
 /**********************************************************************//**
 Renames a column of a table in the data dictionary cache. */
 UNIV_INTERN
@@ -390,7 +390,7 @@ dict_mem_table_col_rename(
 	unsigned	nth_col,/*!< in: column index */
 	const char*	from,	/*!< in: old column name */
 	const char*	to)	/*!< in: new column name */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /**********************************************************************//**
 This function populates a dict_col_t memory structure with
 supplied information. */
@@ -538,11 +538,10 @@ struct dict_col_t{
 					the string, MySQL uses 1 or 2
 					bytes to store the string length) */
 
-	unsigned	mbminmaxlen:5;	/*!< minimum and maximum length of a
-					character, in bytes;
-					DATA_MBMINMAXLEN(mbminlen,mbmaxlen);
-					mbminlen=DATA_MBMINLEN(mbminmaxlen);
-					mbmaxlen=DATA_MBMINLEN(mbminmaxlen) */
+	unsigned	mbminlen:3;	/*!< minimum length of a
+					character, in bytes */
+	unsigned	mbmaxlen:3;	/*!< maximum length of a
+					character, in bytes */
 	/*----------------------*/
 	/* End of definitions copied from dtype_t */
 	/* @} */
@@ -606,6 +605,9 @@ struct dict_field_t{
 	unsigned	fixed_len:10;	/*!< 0 or the fixed length of the
 					column if smaller than
 					DICT_ANTELOPE_MAX_INDEX_COL_LEN */
+
+	/** Zero-initialize all fields */
+	dict_field_t() : col(NULL), name(NULL), prefix_len(0), fixed_len(0) {}
 };
 
 /**********************************************************************//**
@@ -720,6 +722,8 @@ struct dict_index_t{
 				dict_sys->mutex. Other changes are
 				protected by index->lock. */
 	dict_field_t*	fields;	/*!< array of field descriptions */
+	bool            index_fts_syncing;/*!< Whether the fts index is
+					still syncing in the background */
 #ifndef UNIV_HOTBACKUP
 	UT_LIST_NODE_T(dict_index_t)
 			indexes;/*!< list of indexes of the table */
@@ -795,6 +799,9 @@ struct dict_index_t{
 				to first_blob_page_no; protected by
 				blobs_mutex; @see btr_blob_dbg_t */
 #endif /* UNIV_BLOB_DEBUG */
+
+	bool is_readable() const;
+
 #ifdef UNIV_DEBUG
 	ulint		magic_n;/*!< magic number */
 /** Value of dict_index_t::magic_n */
@@ -1045,8 +1052,6 @@ struct dict_table_t{
 	table_id_t	id;	/*!< id of the table */
 	mem_heap_t*	heap;	/*!< memory heap */
 	char*		name;	/*!< table name */
-	void*		thd;		/*!< thd */
-	fil_space_crypt_t *crypt_data; /*!< crypt data if present */
 	const char*	dir_path_of_temp_table;/*!< NULL or the directory path
 				where a TEMPORARY table that was explicitly
 				created by a user should be placed if
@@ -1060,11 +1065,13 @@ struct dict_table_t{
 				table is placed */
 	unsigned	flags:DICT_TF_BITS;	/*!< DICT_TF_... */
 	unsigned	flags2:DICT_TF2_BITS;	/*!< DICT_TF2_... */
-	unsigned	ibd_file_missing:1;
-				/*!< TRUE if this is in a single-table
-				tablespace and the .ibd file is missing; then
-				we must return in ha_innodb.cc an error if the
-				user tries to query such an orphaned table */
+	unsigned	file_unreadable:1;
+				/*!< true if this is in a single-table
+				tablespace and the .ibd file is missing
+				or page decryption failed and page is
+				corrupted; then we must return in
+				ha_innodb.cc an error if the
+				user tries to query such table */
 	unsigned	cached:1;/*!< TRUE if the table object has been added
 				to the dictionary cache */
 	unsigned	to_be_dropped:1;
@@ -1362,9 +1369,18 @@ struct dict_table_t{
 	UT_LIST_BASE_NODE_T(lock_t)
 			locks;	/*!< list of locks on the table; protected
 				by lock_sys->mutex */
-	ibool		is_corrupt;
-	ibool		is_encrypted;
+
 #endif /* !UNIV_HOTBACKUP */
+
+	/* Returns true if this is a single-table tablespace
+	and the .ibd file is missing or page decryption failed
+	and/or page is corrupted.
+	@return true if table is readable
+	@retval false if table is not readable */
+	inline bool is_readable() const
+	{
+		return(UNIV_LIKELY(!file_unreadable));
+	}
 
 #ifdef UNIV_DEBUG
 	ulint		magic_n;/*!< magic number */
@@ -1372,6 +1388,16 @@ struct dict_table_t{
 # define DICT_TABLE_MAGIC_N	76333786
 #endif /* UNIV_DEBUG */
 };
+
+/* Returns true if this is a single-table tablespace
+and the .ibd file is missing or page decryption failed
+and/or page is corrupted.
+@return true if table is readable
+@retval false if table is not readable */
+inline bool dict_index_t::is_readable() const
+{
+	return(UNIV_LIKELY(!table->file_unreadable));
+}
 
 /** A function object to add the foreign key constraint to the referenced set
 of the referenced table, if it exists in the dictionary cache. */

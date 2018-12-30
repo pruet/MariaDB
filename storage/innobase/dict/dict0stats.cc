@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2009, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2009, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2015, 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -708,7 +709,10 @@ void
 dict_stats_copy(
 /*============*/
 	dict_table_t*		dst,	/*!< in/out: destination table */
-	const dict_table_t*	src)	/*!< in: source table */
+	const dict_table_t*	src,	/*!< in: source table */
+	bool reset_ignored_indexes)	/*!< in: if true, set ignored indexes
+                                             to have the same statistics as if 
+                                             the table was empty */
 {
 	dst->stats_last_recalc = src->stats_last_recalc;
 	dst->stat_n_rows = src->stat_n_rows;
@@ -727,7 +731,16 @@ dict_stats_copy(
 	      && (src_idx = dict_table_get_next_index(src_idx)))) {
 
 		if (dict_stats_should_ignore_index(dst_idx)) {
-			continue;
+			if (reset_ignored_indexes) {
+				/* Reset index statistics for all ignored indexes,
+				unless they are FT indexes (these have no statistics)*/
+				if (dst_idx->type & DICT_FTS) {
+					continue;
+				}
+				dict_stats_empty_index(dst_idx, true);
+			} else {
+				continue;
+			}
 		}
 
 		ut_ad(!dict_index_is_univ(dst_idx));
@@ -827,7 +840,7 @@ dict_stats_snapshot_create(
 
 	t = dict_stats_table_clone_create(table);
 
-	dict_stats_copy(t, table);
+	dict_stats_copy(t, table, false);
 
 	t->stat_persistent = table->stat_persistent;
 	t->stats_auto_recalc = table->stats_auto_recalc;
@@ -908,7 +921,11 @@ dict_stats_update_transient_for_index(
 
 		index->stat_n_leaf_pages = size;
 
-		btr_estimate_number_of_different_key_vals(index);
+		/* Do not continue if table decryption has failed or
+		table is already marked as corrupted. */
+		if (index->is_readable()) {
+			btr_estimate_number_of_different_key_vals(index);
+		}
 	}
 }
 
@@ -962,8 +979,9 @@ dict_stats_update_transient(
 			continue;
 		}
 
-		/* Do not continue if table decryption has failed. */
-		if (index->table->is_encrypted) {
+		/* Do not continue if table decryption has failed or
+		table is already marked as corrupted. */
+		if (!index->is_readable()) {
 			break;
 		}
 
@@ -1149,8 +1167,10 @@ dict_stats_analyze_index_level(
 		them away) which brings non-determinism. We skip only
 		leaf-level delete marks because delete marks on
 		non-leaf level do not make sense. */
-		if (level == 0 &&
-		    rec_get_deleted_flag(
+
+		if (level == 0
+		    && !srv_stats_include_delete_marked
+		    && rec_get_deleted_flag(
 			    rec,
 			    page_is_comp(btr_pcur_get_page(&pcur)))) {
 
@@ -1335,8 +1355,12 @@ enum page_scan_method_t {
 				the given page and count the number of
 				distinct ones, also ignore delete marked
 				records */
-	QUIT_ON_FIRST_NON_BORING/* quit when the first record that differs
+	QUIT_ON_FIRST_NON_BORING,/* quit when the first record that differs
 				from its right neighbor is found */
+	COUNT_ALL_NON_BORING_INCLUDE_DEL_MARKED/* scan all records on
+				the given page and count the number of
+				distinct ones, include delete marked
+				records */
 };
 /* @} */
 
@@ -1559,7 +1583,7 @@ dict_stats_analyze_index_below_cur(
 
 		page = buf_block_get_frame(block);
 
-		if (btr_page_get_level(page, mtr) == 0) {
+		if (page_is_leaf(page)) {
 			/* leaf level */
 			break;
 		}
@@ -1603,7 +1627,7 @@ dict_stats_analyze_index_below_cur(
 	}
 
 	/* make sure we got a leaf page as a result from the above loop */
-	ut_ad(btr_page_get_level(page, &mtr) == 0);
+	ut_ad(page_is_leaf(page));
 
 	/* scan the leaf page and find the number of distinct keys,
 	when looking only at the first n_prefix columns; also estimate
@@ -1612,6 +1636,8 @@ dict_stats_analyze_index_below_cur(
 
 	offsets_rec = dict_stats_scan_page(
 		&rec, offsets1, offsets2, index, page, n_prefix,
+		srv_stats_include_delete_marked ?
+		COUNT_ALL_NON_BORING_INCLUDE_DEL_MARKED:
 		COUNT_ALL_NON_BORING_AND_SKIP_DEL_MARKED, n_diff,
 		n_external_pages);
 
@@ -2418,6 +2444,62 @@ dict_stats_save_index_stat(
 	return(ret);
 }
 
+/** Report error if statistic update for a table failed because
+.ibd file is missing, table decryption failed or table is corrupted.
+@param[in,out]	table	Table
+@param[in]	defragment	true if statistics is for defragment
+@return DB_DECRYPTION_FAILED, DB_TABLESPACE_DELETED or DB_CORRUPTION
+@retval DB_DECRYPTION_FAILED if decryption of the table failed
+@retval DB_TABLESPACE_DELETED if .ibd file is missing
+@retval DB_CORRUPTION if table is marked as corrupted */
+static
+dberr_t
+dict_stats_report_error(
+	dict_table_t*	table,
+	bool		defragment = false)
+{
+	char		buf[3 * NAME_LEN];
+	dberr_t		err;
+
+	innobase_format_name(buf, sizeof buf,
+			     table->name,
+			     true);
+
+	FilSpace space(table->space);
+
+	if (space()) {
+		if (table->corrupted) {
+			ib_logf(IB_LOG_LEVEL_INFO,
+				"Cannot save%s statistics because "
+				" table %s in file %s is corrupted.",
+				defragment ? " defragment" : " ",
+				buf, space()->chain.start->name);
+			err = DB_CORRUPTION;
+		} else {
+			ib_logf(IB_LOG_LEVEL_INFO,
+				"Cannot save%s statistics because "
+				" table %s in file %s can't be decrypted.",
+				defragment ? " defragment" : " ",
+				buf, space()->chain.start->name);
+			err = DB_DECRYPTION_FAILED;
+		}
+	} else {
+		ib_logf(IB_LOG_LEVEL_INFO,
+			"Cannot save%s statistics for "
+			" table %s  because .ibd file is missing."
+			" For help, please "
+			"refer to " REFMAN "innodb-troubleshooting.html.",
+			defragment ? " defragment" : " ",
+			buf);
+		err = DB_TABLESPACE_DELETED;
+	}
+
+	dict_stats_empty_table(table, defragment);
+
+	return (err);
+}
+
+
 /** Save the table's statistics into the persistent statistics storage.
 @param[in] table_orig	table whose stats to save
 @param[in] only_for_index if this is non-NULL, then stats for indexes
@@ -2437,6 +2519,11 @@ dict_stats_save(
 	dict_table_t*	table;
 	char		db_utf8[MAX_DB_UTF8_LEN];
 	char		table_utf8[MAX_TABLE_UTF8_LEN];
+
+	if (table_orig->is_readable()) {
+	} else {
+		return (dict_stats_report_error(table_orig));
+	}
 
 	table = dict_stats_snapshot_create(table_orig);
 
@@ -3173,15 +3260,8 @@ dict_stats_update(
 
 	ut_ad(!mutex_own(&dict_sys->mutex));
 
-	if (table->ibd_file_missing) {
-		ut_print_timestamp(stderr);
-		fprintf(stderr,
-			" InnoDB: cannot calculate statistics for table %s "
-			"because the .ibd file is missing. For help, please "
-			"refer to " REFMAN "innodb-troubleshooting.html\n",
-			ut_format_name(table->name, TRUE, buf, sizeof(buf)));
-		dict_stats_empty_table(table, true);
-		return(DB_TABLESPACE_DELETED);
+	if (!table->is_readable()) {
+		return (dict_stats_report_error(table));
 	} else if (srv_force_recovery >= SRV_FORCE_NO_IBUF_MERGE) {
 		/* If we have set a high innodb_force_recovery level, do
 		not calculate statistics, as a badly corrupted index can
@@ -3319,13 +3399,10 @@ dict_stats_update(
 
 			dict_table_stats_lock(table, RW_X_LATCH);
 
-			/* Initialize all stats to dummy values before
-			copying because dict_stats_table_clone_create() does
-			skip corrupted indexes so our dummy object 't' may
-			have less indexes than the real object 'table'. */
-			dict_stats_empty_table(table, true);
-
-			dict_stats_copy(table, t);
+			/* Pass reset_ignored_indexes=true as parameter
+			to dict_stats_copy. This will cause statictics
+			for corrupted indexes to be set to empty values */
+			dict_stats_copy(table, t, true);
 
 			dict_stats_assert_initialized(table);
 
@@ -3930,19 +4007,9 @@ dict_stats_save_defrag_stats(
 {
 	dberr_t	ret;
 
-	if (index->table->ibd_file_missing) {
-		ut_print_timestamp(stderr);
-		fprintf(stderr,
-			" InnoDB: Cannot save defragment stats because "
-			".ibd file is missing.\n");
-		return (DB_TABLESPACE_DELETED);
-	}
-	if (dict_index_is_corrupted(index)) {
-		ut_print_timestamp(stderr);
-		fprintf(stderr,
-			" InnoDB: Cannot save defragment stats because "
-			"index is corrupted.\n");
-		return(DB_CORRUPTION);
+	if (index->is_readable()) {
+	} else {
+		return (dict_stats_report_error(index->table, true));
 	}
 
 	if (dict_index_is_univ(index)) {

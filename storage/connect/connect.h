@@ -1,4 +1,4 @@
-/* Copyright (C) Olivier Bertrand 2004 - 2011
+/* Copyright (C) MariaDB Corporation Ab
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -11,10 +11,11 @@
 
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /**************** Cnt H Declares Source Code File (.H) *****************/
 /*  Name: CONNECT.H    Version 2.4                                     */
+/*  Author Olivier BERTRAND  bertrandop@gmail.com                      */
 /*  This file contains the some based classes declares.                */
 /***********************************************************************/
 #include "filamtxt.h"
@@ -65,7 +66,8 @@ class TDBDOX: public TDBDOS {
   friend int   CntIndexRange(PGLOBAL, PTDB, const uchar**, uint*,
                              bool*, key_part_map*);
   friend class ha_connect;
-  }; // end of class TDBDOX
+	TDBDOX() : TDBDOS((PGLOBAL)0, (PTDBDOS)0) {}     /* Never called */
+}; // end of class TDBDOX
 
 class XKPDEF: public KPARTDEF {
   friend class TDBDOX;

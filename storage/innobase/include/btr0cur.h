@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2014, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -186,7 +187,7 @@ btr_cur_open_at_index_side_func(
 	const char*	file,		/*!< in: file name */
 	ulint		line,		/*!< in: line where called */
 	mtr_t*		mtr)		/*!< in/out: mini-transaction */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 #define btr_cur_open_at_index_side(f,i,l,c,lv,m)			\
 	btr_cur_open_at_index_side_func(f,i,l,c,lv,__FILE__,__LINE__,m)
 /**********************************************************************//**
@@ -220,22 +221,24 @@ btr_cur_optimistic_insert(
 	btr_cur_t*	cursor,	/*!< in: cursor on page after which to insert;
 				cursor stays valid */
 	ulint**		offsets,/*!< out: offsets on *rec */
-	mem_heap_t**	heap,	/*!< in/out: pointer to memory heap, or NULL */
+	mem_heap_t**	heap,	/*!< in/out: pointer to memory heap */
 	dtuple_t*	entry,	/*!< in/out: entry to insert */
 	rec_t**		rec,	/*!< out: pointer to inserted record if
 				succeed */
 	big_rec_t**	big_rec,/*!< out: big rec vector whose fields have to
-				be stored externally by the caller, or
-				NULL */
+				be stored externally by the caller */
 	ulint		n_ext,	/*!< in: number of externally stored columns */
-	que_thr_t*	thr,	/*!< in: query thread or NULL */
+	que_thr_t*	thr,	/*!< in/out: query thread; can be NULL if
+				!(~flags
+				& (BTR_NO_LOCKING_FLAG
+				| BTR_NO_UNDO_LOG_FLAG)) */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction;
 				if this function returns DB_SUCCESS on
 				a leaf page of a secondary index in a
 				compressed tablespace, the caller must
 				mtr_commit(mtr) before latching
 				any further pages */
-	__attribute__((nonnull(2,3,4,5,6,7,10), warn_unused_result));
+	MY_ATTRIBUTE((nonnull(2,3,4,5,6,7,10), warn_unused_result));
 /*************************************************************//**
 Performs an insert on a page of an index tree. It is assumed that mtr
 holds an x-latch on the tree and on the cursor page. If the insert is
@@ -256,17 +259,19 @@ btr_cur_pessimistic_insert(
 				cursor stays valid */
 	ulint**		offsets,/*!< out: offsets on *rec */
 	mem_heap_t**	heap,	/*!< in/out: pointer to memory heap
-				that can be emptied, or NULL */
+				that can be emptied */
 	dtuple_t*	entry,	/*!< in/out: entry to insert */
 	rec_t**		rec,	/*!< out: pointer to inserted record if
 				succeed */
 	big_rec_t**	big_rec,/*!< out: big rec vector whose fields have to
-				be stored externally by the caller, or
-				NULL */
+				be stored externally by the caller */
 	ulint		n_ext,	/*!< in: number of externally stored columns */
-	que_thr_t*	thr,	/*!< in: query thread or NULL */
+	que_thr_t*	thr,	/*!< in/out: query thread; can be NULL if
+				!(~flags
+				& (BTR_NO_LOCKING_FLAG
+				| BTR_NO_UNDO_LOG_FLAG)) */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
-	__attribute__((nonnull(2,3,4,5,6,7,10), warn_unused_result));
+	MY_ATTRIBUTE((nonnull(2,3,4,5,6,7,10), warn_unused_result));
 /*************************************************************//**
 See if there is enough place in the page modification log to log
 an update-in-place.
@@ -293,7 +298,7 @@ btr_cur_update_alloc_zip_func(
 	bool		create,	/*!< in: true=delete-and-insert,
 				false=update-in-place */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 #ifdef UNIV_DEBUG
 # define btr_cur_update_alloc_zip(page_zip,cursor,index,offsets,len,cr,mtr) \
 	btr_cur_update_alloc_zip_func(page_zip,cursor,index,offsets,len,cr,mtr)
@@ -325,7 +330,7 @@ btr_cur_update_in_place(
 				is a secondary index, the caller must
 				mtr_commit(mtr) before latching any
 				further pages */
-	__attribute__((warn_unused_result, nonnull));
+	MY_ATTRIBUTE((warn_unused_result, nonnull));
 /***********************************************************//**
 Writes a redo log record of updating a record in-place. */
 UNIV_INTERN
@@ -339,7 +344,7 @@ btr_cur_update_in_place_log(
 	trx_id_t	trx_id,		/*!< in: transaction id */
 	roll_ptr_t	roll_ptr,	/*!< in: roll ptr */
 	mtr_t*		mtr)		/*!< in: mtr */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /*************************************************************//**
 Tries to update a record on a page in an index tree. It is assumed that mtr
 holds an x-latch on the page. The operation does not succeed if there is too
@@ -371,7 +376,7 @@ btr_cur_optimistic_update(
 				is a secondary index, the caller must
 				mtr_commit(mtr) before latching any
 				further pages */
-	__attribute__((warn_unused_result, nonnull));
+	MY_ATTRIBUTE((warn_unused_result, nonnull));
 /*************************************************************//**
 Performs an update of a record on a page of a tree. It is assumed
 that mtr holds an x-latch on the tree and on the cursor page. If the
@@ -390,12 +395,12 @@ btr_cur_pessimistic_update(
 	ulint**		offsets,/*!< out: offsets on cursor->page_cur.rec */
 	mem_heap_t**	offsets_heap,
 				/*!< in/out: pointer to memory heap
-				that can be emptied, or NULL */
+				that can be emptied */
 	mem_heap_t*	entry_heap,
 				/*!< in/out: memory heap for allocating
 				big_rec and the index tuple */
 	big_rec_t**	big_rec,/*!< out: big rec vector whose fields have to
-				be stored externally by the caller, or NULL */
+				be stored externally by the caller */
 	const upd_t*	update,	/*!< in: update vector; this is allowed also
 				contain trx id and roll ptr fields, but
 				the values in update vector have no effect */
@@ -405,7 +410,7 @@ btr_cur_pessimistic_update(
 	trx_id_t	trx_id,	/*!< in: transaction id */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction; must be committed
 				before latching any further pages */
-	__attribute__((warn_unused_result, nonnull));
+	MY_ATTRIBUTE((warn_unused_result, nonnull));
 /***********************************************************//**
 Marks a clustered index record deleted. Writes an undo log record to
 undo log on this delete marking. Writes in the trx id field the id
@@ -422,7 +427,7 @@ btr_cur_del_mark_set_clust_rec(
 	const ulint*	offsets,/*!< in: rec_get_offsets(rec) */
 	que_thr_t*	thr,	/*!< in: query thread */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 /***********************************************************//**
 Sets a secondary index record delete mark to TRUE or FALSE.
 @return	DB_SUCCESS, DB_LOCK_WAIT, or error number */
@@ -435,7 +440,7 @@ btr_cur_del_mark_set_sec_rec(
 	ibool		val,	/*!< in: value to set */
 	que_thr_t*	thr,	/*!< in: query thread */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 /*************************************************************//**
 Tries to compress a page of the tree if it seems useful. It is assumed
 that mtr holds an x-latch on the tree and on the cursor page. To avoid
@@ -453,7 +458,7 @@ btr_cur_compress_if_useful(
 	ibool		adjust,	/*!< in: TRUE if should adjust the
 				cursor position even if compression occurs */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /*******************************************************//**
 Removes the record on which the tree cursor is positioned. It is assumed
 that the mtr has an x-latch on the page where the cursor is positioned,
@@ -474,7 +479,7 @@ btr_cur_optimistic_delete_func(
 				TRUE on a leaf page of a secondary
 				index, the mtr must be committed
 				before latching any further pages */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 # ifdef UNIV_DEBUG
 #  define btr_cur_optimistic_delete(cursor, flags, mtr)		\
 	btr_cur_optimistic_delete_func(cursor, flags, mtr)
@@ -510,7 +515,7 @@ btr_cur_pessimistic_delete(
 	ulint		flags,	/*!< in: BTR_CREATE_FLAG or 0 */
 	enum trx_rb_ctx	rb_ctx,	/*!< in: rollback context */
 	mtr_t*		mtr)	/*!< in: mtr */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 #endif /* !UNIV_HOTBACKUP */
 /***********************************************************//**
 Parses a redo log record of updating a record in-place.
@@ -561,8 +566,7 @@ btr_estimate_n_rows_in_range(
 	const dtuple_t*	tuple1,	/*!< in: range start, may also be empty tuple */
 	ulint		mode1,	/*!< in: search mode for range start */
 	const dtuple_t*	tuple2,	/*!< in: range end, may also be empty tuple */
-	ulint		mode2,	/*!< in: search mode for range end */
-	trx_t*		trx);	/*!< in: trx */
+	ulint		mode2);	/*!< in: search mode for range end */
 /*******************************************************************//**
 Estimates the number of different key values in a given index, for
 each n-column prefix of the index where 1 <= n <= dict_index_get_n_unique(index).
@@ -604,7 +608,7 @@ btr_cur_disown_inherited_fields(
 	const ulint*	offsets,/*!< in: array returned by rec_get_offsets() */
 	const upd_t*	update,	/*!< in: update vector */
 	mtr_t*		mtr)	/*!< in/out: mini-transaction */
-	__attribute__((nonnull(2,3,4,5,6)));
+	MY_ATTRIBUTE((nonnull(2,3,4,5,6)));
 
 /** Operation code for btr_store_big_rec_extern_fields(). */
 enum blob_op {
@@ -624,7 +628,7 @@ ibool
 btr_blob_op_is_update(
 /*==================*/
 	enum blob_op	op)	/*!< in: operation */
-	__attribute__((warn_unused_result));
+	MY_ATTRIBUTE((warn_unused_result));
 
 /*******************************************************************//**
 Stores the fields in big_rec_vec to the tablespace and puts pointers to
@@ -649,7 +653,7 @@ btr_store_big_rec_extern_fields(
 	mtr_t*		btr_mtr,	/*!< in: mtr containing the
 					latches to the clustered index */
 	enum blob_op	op)		/*! in: operation code */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /*******************************************************************//**
 Frees the space in an externally stored field to the file space
@@ -698,8 +702,7 @@ btr_copy_externally_stored_field_prefix(
 				field containing also the reference to
 				the external part; must be protected by
 				a lock or a page latch */
-	ulint		local_len,/*!< in: length of data, in bytes */
-	trx_t*		trx);	/*!< in: transaction handle */
+	ulint		local_len);/*!< in: length of data, in bytes */
 /*******************************************************************//**
 Copies an externally stored field of a record to mem heap.  The
 clustered index record must be protected by a lock or a page latch.
@@ -716,8 +719,7 @@ btr_copy_externally_stored_field(
 	ulint		zip_size,/*!< in: nonzero=compressed BLOB page size,
 				zero for uncompressed BLOBs */
 	ulint		local_len,/*!< in: length of data */
-	mem_heap_t*	heap,	/*!< in: mem heap */
-	trx_t*		trx);	/*!< in: transaction handle */
+	mem_heap_t*	heap);	/*!< in: mem heap */
 /*******************************************************************//**
 Copies an externally stored field of a record to mem heap.
 @return	the field copied to heap, or NULL if the field is incomplete */
@@ -732,8 +734,7 @@ btr_rec_copy_externally_stored_field(
 				zero for uncompressed BLOBs */
 	ulint		no,	/*!< in: field number */
 	ulint*		len,	/*!< out: length of the field */
-	mem_heap_t*	heap,	/*!< in: mem heap */
-	trx_t*		trx);	/*!< in: transaction handle */
+	mem_heap_t*	heap);	/*!< in: mem heap */
 /*******************************************************************//**
 Flags the data tuple fields that are marked as extern storage in the
 update vector.  We use this function to remember which fields we must
@@ -746,7 +747,7 @@ btr_push_update_extern_fields(
 	dtuple_t*	tuple,	/*!< in/out: data tuple */
 	const upd_t*	update,	/*!< in: update vector */
 	mem_heap_t*	heap)	/*!< in: memory heap */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /***********************************************************//**
 Sets a secondary index record's delete mark to the given value. This
 function is only used by the insert buffer merge mechanism. */

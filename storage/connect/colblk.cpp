@@ -1,7 +1,7 @@
 /************* Colblk C++ Functions Source Code File (.CPP) ************/
-/*  Name: COLBLK.CPP  Version 2.1                                      */
+/*  Name: COLBLK.CPP  Version 2.2                                      */
 /*                                                                     */
-/*  (C) Copyright to the author Olivier BERTRAND          1998-2015    */
+/*  (C) Copyright to the author Olivier BERTRAND          1998-2017    */
 /*                                                                     */
 /*  This file contains the COLBLK class functions.                     */
 /***********************************************************************/
@@ -76,7 +76,7 @@ COLBLK::COLBLK(PCOL col1, PTDB tdbp)
 //To_Orig = col1;
   To_Tdb = tdbp;
 
-  if (trace > 1)
+  if (trace(2))
     htrc(" copying COLBLK %s from %p to %p\n", Name, col1, this);
 
   if (tdbp)
@@ -115,7 +115,7 @@ bool COLBLK::SetFormat(PGLOBAL, FORMAT& fmt)
   {
   fmt = Format;
 
-  if (trace > 1)
+  if (trace(2))
     htrc("COLBLK: %p format=%c(%d,%d)\n",
          this, *fmt.Type, fmt.Length, fmt.Prec);
 
@@ -128,7 +128,7 @@ bool COLBLK::SetFormat(PGLOBAL, FORMAT& fmt)
 /***********************************************************************/
 bool COLBLK::Eval(PGLOBAL g)
   {
-  if (trace > 1)
+  if (trace(2))
     htrc("Col Eval: %s status=%.4X\n", Name, Status);
 
   if (!GetStatus(BUF_READ)) {
@@ -165,7 +165,7 @@ bool COLBLK::InitValue(PGLOBAL g)
   AddStatus(BUF_READY);
   Value->SetNullable(Nullable);
 
-  if (trace > 1)
+  if (trace(2))
     htrc(" colp=%p type=%d value=%p coluse=%.4X status=%.4X\n",
          this, Buf_Type, Value, ColUse, Status);
 
@@ -195,10 +195,10 @@ int COLBLK::GetLengthEx(void)
 /*  corresponding to this column and convert it to buffer type.        */
 /***********************************************************************/
 void COLBLK::ReadColumn(PGLOBAL g)
-  {
+{
   sprintf(g->Message, MSG(UNDEFINED_AM), "ReadColumn");
-  longjmp(g->jumper[g->jump_level], TYPE_COLBLK);
-  } // end of ReadColumn
+	throw (int)TYPE_COLBLK;
+} // end of ReadColumn
 
 /***********************************************************************/
 /*  WriteColumn: what this routine does is to access the last line     */
@@ -206,15 +206,15 @@ void COLBLK::ReadColumn(PGLOBAL g)
 /*  corresponding to this column from the column buffer and type.      */
 /***********************************************************************/
 void COLBLK::WriteColumn(PGLOBAL g)
-  {
+{
   sprintf(g->Message, MSG(UNDEFINED_AM), "WriteColumn");
-  longjmp(g->jumper[g->jump_level], TYPE_COLBLK);
-  } // end of WriteColumn
+	throw (int)TYPE_COLBLK;
+} // end of WriteColumn
 
 /***********************************************************************/
 /*  Make file output of a column descriptor block.                     */
 /***********************************************************************/
-void COLBLK::Print(PGLOBAL, FILE *f, uint n)
+void COLBLK::Printf(PGLOBAL, FILE *f, uint n)
   {
   char m[64];
   int  i;
@@ -232,15 +232,15 @@ void COLBLK::Print(PGLOBAL, FILE *f, uint n)
   fprintf(f,
     " coluse=%04X status=%04X buftyp=%d value=%p name=%s\n",
           ColUse, Status, Buf_Type, Value, Name);
-  } // end of Print
+  } // end of Printf
 
 /***********************************************************************/
 /*  Make string output of a column descriptor block.                   */
 /***********************************************************************/
-void COLBLK::Print(PGLOBAL, char *ps, uint)
+void COLBLK::Prints(PGLOBAL, char *ps, uint)
   {
   sprintf(ps, "R%d.%s", To_Tdb->GetTdb_No(), Name);
-  } // end of Print
+  } // end of Prints
 
 
 /***********************************************************************/
@@ -260,10 +260,10 @@ SPCBLK::SPCBLK(PCOLUMN cp)
 /*  corresponding to this column from the column buffer and type.      */
 /***********************************************************************/
 void SPCBLK::WriteColumn(PGLOBAL g)
-  {
+{
   sprintf(g->Message, MSG(SPCOL_READONLY), Name);
-  longjmp(g->jumper[g->jump_level], TYPE_COLBLK);
-  } // end of WriteColumn
+	throw (int)TYPE_COLBLK;
+} // end of WriteColumn
 
 /***********************************************************************/
 /*  RIDBLK constructor for the ROWID special column.                   */
@@ -300,7 +300,7 @@ FIDBLK::FIDBLK(PCOLUMN cp, OPVAL op) : SPCBLK(cp), Op(op)
 #if defined(__WIN__)
   Format.Prec = 1;          // Case insensitive
 #endif   // __WIN__
-  Constant = (!((PTDBASE)To_Tdb)->GetDef()->GetMultiple() &&
+  Constant = (!To_Tdb->GetDef()->GetMultiple() &&
               To_Tdb->GetAmType() != TYPE_AM_PLG &&
               To_Tdb->GetAmType() != TYPE_AM_PLM);
   Fn = NULL;
@@ -312,11 +312,11 @@ FIDBLK::FIDBLK(PCOLUMN cp, OPVAL op) : SPCBLK(cp), Op(op)
 /***********************************************************************/
 void FIDBLK::ReadColumn(PGLOBAL g)
   {
-  if (Fn != ((PTDBASE)To_Tdb)->GetFile(g)) {
+  if (Fn != To_Tdb->GetFile(g)) {
     char filename[_MAX_PATH];
 
-    Fn = ((PTDBASE)To_Tdb)->GetFile(g);
-    PlugSetPath(filename, Fn, ((PTDBASE)To_Tdb)->GetPath());
+    Fn = To_Tdb->GetFile(g);
+    PlugSetPath(filename, Fn, To_Tdb->GetPath());
 
     if (Op != OP_XX) {
       char buff[_MAX_PATH];
@@ -377,11 +377,9 @@ PRTBLK::PRTBLK(PCOLUMN cp) : SPCBLK(cp)
 void PRTBLK::ReadColumn(PGLOBAL g)
   {
   if (Pname == NULL) {
-    char   *p;
-    PTDBASE tdbp = (PTDBASE)To_Tdb;
+    const char *p;
 
-    Pname = tdbp->GetDef()->GetStringCatInfo(g, "partname", "?");
-
+    Pname = To_Tdb->GetDef()->GetStringCatInfo(g, "partname", "?");
     p = strrchr(Pname, '#');
     Value->SetValue_psz((p) ? p + 1 : Pname);
     } // endif Pname
@@ -409,9 +407,8 @@ SIDBLK::SIDBLK(PCOLUMN cp) : SPCBLK(cp)
 void SIDBLK::ReadColumn(PGLOBAL)
   {
 //if (Sname == NULL) {
-    Sname = (char*)To_Tdb->GetServer();
+    Sname = To_Tdb->GetServer();
     Value->SetValue_psz(Sname);
 //  } // endif Sname
 
   } // end of ReadColumn
-

@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2007, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2014, SkySQL Ab.
+   Copyright (c) 2008, 2016, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -314,13 +314,9 @@ extern "C" void free_user(struct user_conn *uc)
 void init_max_user_conn(void)
 {
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
-  if (my_hash_init(&hash_user_connections,system_charset_info,max_connections,
-                 0,0, (my_hash_get_key) get_key_conn,
-                 (my_hash_free_key) free_user, 0))
-  {
-    sql_print_error("Initializing hash_user_connections failed.");
-    exit(1);
-  }
+  my_hash_init(&hash_user_connections, system_charset_info, max_connections,
+               0, 0, (my_hash_get_key) get_key_conn,
+               (my_hash_free_key) free_user, 0);
 #endif
 }
 
@@ -479,24 +475,16 @@ void init_user_stats(USER_STATS *user_stats,
 
 void init_global_user_stats(void)
 {
-  if (my_hash_init(&global_user_stats, system_charset_info, max_connections,
-                0, 0, (my_hash_get_key) get_key_user_stats,
-                (my_hash_free_key)free_user_stats, 0))
-  {
-    sql_print_error("Initializing global_user_stats failed.");
-    exit(1);
-  }
+  my_hash_init(&global_user_stats, system_charset_info, max_connections,
+               0, 0, (my_hash_get_key) get_key_user_stats,
+               (my_hash_free_key) free_user_stats, 0);
 }
 
 void init_global_client_stats(void)
 {
-  if (my_hash_init(&global_client_stats, system_charset_info, max_connections,
-                0, 0, (my_hash_get_key) get_key_user_stats,
-                (my_hash_free_key)free_user_stats, 0))
-  {
-    sql_print_error("Initializing global_client_stats failed.");
-    exit(1);
-  }
+  my_hash_init(&global_client_stats, system_charset_info, max_connections,
+               0, 0, (my_hash_get_key) get_key_user_stats,
+               (my_hash_free_key) free_user_stats, 0);
 }
 
 extern "C" uchar *get_key_table_stats(TABLE_STATS *table_stats, size_t *length,
@@ -513,12 +501,9 @@ extern "C" void free_table_stats(TABLE_STATS* table_stats)
 
 void init_global_table_stats(void)
 {
-  if (my_hash_init(&global_table_stats, system_charset_info, max_connections,
-                0, 0, (my_hash_get_key) get_key_table_stats,
-                (my_hash_free_key)free_table_stats, 0)) {
-    sql_print_error("Initializing global_table_stats failed.");
-    exit(1);
-  }
+  my_hash_init(&global_table_stats, system_charset_info, max_connections,
+               0, 0, (my_hash_get_key) get_key_table_stats,
+               (my_hash_free_key) free_table_stats, 0);
 }
 
 extern "C" uchar *get_key_index_stats(INDEX_STATS *index_stats, size_t *length,
@@ -535,13 +520,9 @@ extern "C" void free_index_stats(INDEX_STATS* index_stats)
 
 void init_global_index_stats(void)
 {
-  if (my_hash_init(&global_index_stats, system_charset_info, max_connections,
-                0, 0, (my_hash_get_key) get_key_index_stats,
-                (my_hash_free_key)free_index_stats, 0))
-  {
-    sql_print_error("Initializing global_index_stats failed.");
-    exit(1);
-  }
+  my_hash_init(&global_index_stats, system_charset_info, max_connections,
+               0, 0, (my_hash_get_key) get_key_index_stats,
+               (my_hash_free_key) free_index_stats, 0);
 }
 
 
@@ -789,6 +770,7 @@ void update_global_user_stats(THD *thd, bool create_user, time_t now)
 
 bool thd_init_client_charset(THD *thd, uint cs_number)
 {
+  SV *gv=&global_system_variables;
   CHARSET_INFO *cs;
   /*
    Use server character set and collation if
@@ -799,12 +781,10 @@ bool thd_init_client_charset(THD *thd, uint cs_number)
   if (!opt_character_set_client_handshake ||
       !(cs= get_charset(cs_number, MYF(0))))
   {
-    thd->variables.character_set_client=
-      global_system_variables.character_set_client;
-    thd->variables.collation_connection=
-      global_system_variables.collation_connection;
-    thd->variables.character_set_results=
-      global_system_variables.character_set_results;
+    DBUG_ASSERT(is_supported_parser_charset(gv->character_set_client));
+    thd->variables.character_set_client= gv->character_set_client;
+    thd->variables.collation_connection= gv->collation_connection;
+    thd->variables.character_set_results= gv->character_set_results;
   }
   else
   {
@@ -1197,7 +1177,7 @@ void prepare_new_connection_state(THD* thd)
     if (thd->is_error())
     {
       Host_errors errors;
-      thd->killed= KILL_CONNECTION;
+      thd->set_killed(KILL_CONNECTION);
       thd->print_aborted_warning(0, "init_connect command failed");
       sql_print_warning("%s", thd->get_stmt_da()->message());
 
@@ -1355,9 +1335,9 @@ void do_handle_one_connection(THD *thd_arg)
 #ifdef WITH_WSREP
   if (WSREP(thd))
   {
-    mysql_mutex_lock(&thd->LOCK_wsrep_thd);
+    mysql_mutex_lock(&thd->LOCK_thd_data);
     thd->wsrep_query_state= QUERY_EXITING;
-    mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
+    mysql_mutex_unlock(&thd->LOCK_thd_data);
   }
 #endif
 end_thread:

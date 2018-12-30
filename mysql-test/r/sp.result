@@ -7716,6 +7716,7 @@ Handler_read_key	0
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	0
@@ -7727,6 +7728,7 @@ Handler_read_key	2
 Handler_read_last	0
 Handler_read_next	4097
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	0
@@ -7860,6 +7862,62 @@ v1
 6
 DROP PROCEDURE p1;
 DROP TABLE t1;
+#
+# MDEV-10713: signal 11 error on multi-table update - crash in
+# handler::increment_statistics or in make_select or assertion
+# failure pfs_thread == ((PFS_thread*) pthread_getspecific((THR_PFS)))
+#
+CREATE TABLE `t1` (
+`CLOSE_YN` varchar(10) COLLATE utf8_bin DEFAULT NULL
+) DEFAULT CHARSET=utf8 COLLATE=utf8_bin ;
+CREATE TABLE `t2` (
+`ap_close_to` varchar(8) COLLATE utf8_bin DEFAULT NULL
+) DEFAULT CHARSET=utf8 COLLATE=utf8_bin ;
+insert t1 values (1);
+CREATE  FUNCTION `f1`(`P_DC_CD` VARBINARY(50), `P_SYS_DATE` DATETIME) RETURNS datetime
+DETERMINISTIC
+SQL SECURITY INVOKER
+BEGIN
+DECLARE V_SYS_DATE DATETIME;
+SELECT now() AS LOC_DATE INTO V_SYS_DATE ;
+RETURN v_sys_date ;
+END $$
+update t1 S
+JOIN
+(
+SELECT CASE
+WHEN DATE_FORMAT( f1('F01', NOW()) , '%Y%m%d') <= CLOSE_YMD
+THEN '99991231'
+	     ELSE '' END ACCOUNT_APPLY_YYYYMMDD
+FROM (
+select case
+when 'AP'='AP'
+                   then ap_close_to
+end AS CLOSE_YMD
+from t2
+) A
+) X
+SET S.CLOSE_YN = ''
+where 1=1;
+drop function if exists f1;
+drop table t1,t2;
+#
+# MDEV-16957: Server crashes in Field_iterator_natural_join::next
+# upon 2nd execution of SP
+#
+CREATE TABLE t1 (a INT, b VARCHAR(32));
+CREATE PROCEDURE sp() SELECT * FROM t1 AS t1x JOIN t1 AS t1y USING (c);
+CALL sp;
+ERROR 42S22: Unknown column 'c' in 'from clause'
+CALL sp;
+ERROR 42S22: Unknown column 'c' in 'from clause'
+CALL sp;
+ERROR 42S22: Unknown column 'c' in 'from clause'
+alter table t1 add column c int;
+CALL sp;
+c	a	b	a	b
+DROP PROCEDURE sp;
+DROP TABLE t1;
 # End of 5.5 test
 #
 #  MDEV-7040: Crash in field_conv, memcpy_field_possible, part#2
@@ -7905,7 +7963,7 @@ CLOSE cur1;
 end|
 set @tmp_toc= @@table_open_cache;
 set @tmp_tdc= @@table_definition_cache;
-set global table_open_cache=1;
+set global table_open_cache=10;
 set global table_definition_cache=1;
 Warnings:
 Warning	1292	Truncated incorrect table_definition_cache value: '1'
@@ -7914,6 +7972,44 @@ set global table_open_cache= @tmp_toc;
 set global table_definition_cache= @tmp_tdc;
 drop procedure p1;
 drop table t1,t2,t3,t4,t5,t6;
+#
+# MDEV-11935: Queries in stored procedures with and
+# EXISTS(SELECT * FROM VIEW) crashes and closes hte conneciton.
+#
+CREATE TABLE ANY_TABLE (
+ENTITY_UID    BIGINT NOT NULL
+);
+CREATE TABLE SECURITY_PATH(
+origid BIGINT UNSIGNED NOT NULL,
+destid BIGINT UNSIGNED NOT NULL,
+KEY (destid)
+);
+CREATE VIEW ENTITY_ACCESS (
+ENTITY_UID,
+OWNER_UID
+) AS
+SELECT SP1.origid,
+SP2.destid
+FROM SECURITY_PATH SP1
+JOIN SECURITY_PATH SP2 ON SP1.destid = SP2.origid
+;
+CREATE PROCEDURE SP_EXAMPLE_SELECT ()
+BEGIN
+SELECT *
+FROM ANY_TABLE AT1
+WHERE EXISTS ( SELECT *
+FROM ENTITY_ACCESS EA
+WHERE AT1.ENTITY_UID = EA.ENTITY_UID
+AND   EA.OWNER_UID IS NULL );
+END
+//
+CALL SP_EXAMPLE_SELECT ();
+ENTITY_UID
+CALL SP_EXAMPLE_SELECT ();
+ENTITY_UID
+drop procedure SP_EXAMPLE_SELECT;
+drop view ENTITY_ACCESS;
+drop table ANY_TABLE, SECURITY_PATH;
 # End of 10.0 test
 CREATE FUNCTION f(f1 VARCHAR(64) COLLATE latin1_german2_ci)
 RETURNS VARCHAR(64)
@@ -7991,3 +8087,187 @@ return 1;
 end |
 ERROR 0A000: Not allowed to return a result set from a function
 drop table t1,t2;
+#
+# MDEV-11584: GRANT inside an SP does not work well on 2nd execution
+#
+CREATE PROCEDURE sp1()
+GRANT ALL PRIVILEGES ON *.* TO 'foo'@'%' IDENTIFIED BY 'pass';
+CALL sp1();
+CALL sp1();
+drop user 'foo'@'%';
+drop procedure sp1;
+#
+# MDEV-10972: Insert from select / view / union --
+# repeatable crash in 10.1, 10.2 Linux/Mac/Windows
+#
+create table t (id int auto_increment primary key);
+insert into t values (9494),(9495),(9496),(9497),(9498),(9499),(9500),(9501),(9502),(9503);
+create VIEW v AS
+select id from t
+union
+select id from t
+;
+drop procedure if exists p;
+Warnings:
+Note	1305	PROCEDURE test.p does not exist
+create procedure p()
+insert into tmp_t select t.id from (
+select id from v
+union
+select id from v
+) sq
+inner join t on (sq.id = t.id);
+CALL p();
+ERROR 42S02: Table 'test.tmp_t' doesn't exist
+create table tmp_t (id int null);
+CALL p();
+drop procedure p;
+drop view v;
+drop table t, tmp_t;
+#
+# MDEV-13936: Server crashes in Time_and_counter_tracker::incr_loops
+#
+CREATE TABLE t1 (i INT);
+CREATE VIEW v1 AS SELECT * FROM t1 WHERE RAND() > 0.5;
+CREATE FUNCTION f1() RETURNS INT RETURN ( SELECT MAX(i) FROM v1 );
+REPLACE INTO v1 VALUES (f1());
+ERROR HY000: The target table v1 of the INSERT is not insertable-into
+SET @aux = f1();
+DROP FUNCTION f1;
+DROP VIEW v1;
+DROP TABLE t1;
+#
+# MDEV-14857: problem with 10.2.11 server crashing when
+# executing stored procedure
+#
+SET max_sp_recursion_depth=10;
+CREATE TABLE t1 (a INT);
+CREATE TABLE t2 (b INT);
+CREATE PROCEDURE proc_0()
+BEGIN
+CALL empty_1();
+CALL proc_1();
+END ||
+CREATE PROCEDURE proc_1()
+BEGIN
+CALL proc_2();
+CALL proc_3();
+CALL proc_4();
+CALL proc_5();
+END ||
+CREATE PROCEDURE proc_2()
+CALL proc_6();
+||
+CREATE PROCEDURE proc_3()
+BEGIN
+CALL empty_2();
+CALL empty_3();
+END ||
+CREATE PROCEDURE proc_4()
+CALL proc_7();
+||
+CREATE PROCEDURE proc_5()
+CALL proc_select();
+||
+CREATE PROCEDURE proc_6()
+BEGIN
+CALL empty_4();
+CALL empty_5();
+CALL empty_6();
+CALL empty_7();
+CALL proc_8();
+END ||
+CREATE PROCEDURE proc_7()
+CALL proc_9('foo');
+||
+CREATE PROCEDURE proc_8()
+CALL proc_10();
+||
+CREATE PROCEDURE proc_9(IN opt VARCHAR(40))
+IF LEFT(opt,1) <> '_' THEN
+CALL proc_11();
+END IF;
+||
+CREATE PROCEDURE proc_10()
+CALL proc_12();
+||
+CREATE PROCEDURE proc_11()
+BEGIN
+CALL empty_8();
+CALL empty_9();
+CALL empty_10();
+CALL proc_13();
+END ||
+CREATE PROCEDURE proc_12()
+BEGIN
+CALL empty_11();
+CALL empty_12();
+CALL empty_13();
+END ||
+CREATE PROCEDURE proc_13()
+BEGIN
+CALL proc_9('_bar');
+CALL empty_14();
+END ||
+CREATE PROCEDURE empty_1() BEGIN END ;
+CREATE PROCEDURE empty_2() BEGIN END ;
+CREATE PROCEDURE empty_3() BEGIN END ;
+CREATE PROCEDURE empty_4() BEGIN END ;
+CREATE PROCEDURE empty_5() BEGIN END ;
+CREATE PROCEDURE empty_6() BEGIN END ;
+CREATE PROCEDURE empty_7() BEGIN END ;
+CREATE PROCEDURE empty_8() BEGIN END ;
+CREATE PROCEDURE empty_9() BEGIN END ;
+CREATE PROCEDURE empty_10() BEGIN END ;
+CREATE PROCEDURE empty_11() BEGIN END ;
+CREATE PROCEDURE empty_12() BEGIN END ;
+CREATE PROCEDURE empty_13() BEGIN END ;
+CREATE PROCEDURE empty_14() BEGIN END ;
+CREATE PROCEDURE proc_select()
+SELECT * FROM t1 WHERE NOT EXISTS ( SELECT * FROM t2)
+;
+CALL proc_0();
+a
+DROP PROCEDURE empty_1;
+DROP PROCEDURE empty_2;
+DROP PROCEDURE empty_3;
+DROP PROCEDURE empty_4;
+DROP PROCEDURE empty_5;
+DROP PROCEDURE empty_6;
+DROP PROCEDURE empty_7;
+DROP PROCEDURE empty_8;
+DROP PROCEDURE empty_9;
+DROP PROCEDURE empty_10;
+DROP PROCEDURE empty_11;
+DROP PROCEDURE empty_12;
+DROP PROCEDURE empty_13;
+DROP PROCEDURE empty_14;
+DROP PROCEDURE proc_0;
+DROP PROCEDURE proc_1;
+DROP PROCEDURE proc_2;
+DROP PROCEDURE proc_3;
+DROP PROCEDURE proc_4;
+DROP PROCEDURE proc_5;
+DROP PROCEDURE proc_6;
+DROP PROCEDURE proc_7;
+DROP PROCEDURE proc_8;
+DROP PROCEDURE proc_9;
+DROP PROCEDURE proc_10;
+DROP PROCEDURE proc_11;
+DROP PROCEDURE proc_12;
+DROP PROCEDURE proc_13;
+DROP PROCEDURE proc_select;
+DROP TABLE t1, t2;
+SET max_sp_recursion_depth=default;
+#
+# MDEV-15347: Valgrind or ASAN errors in mysql_make_view on query
+# from information_schema
+#
+CREATE VIEW v AS SELECT 1;
+CREATE FUNCTION f() RETURNS INT RETURN 1;
+SELECT * FROM INFORMATION_SCHEMA.TABLES JOIN INFORMATION_SCHEMA.PARAMETERS
+UNION
+SELECT * FROM INFORMATION_SCHEMA.TABLES JOIN INFORMATION_SCHEMA.PARAMETERS;
+DROP FUNCTION f;
+DROP VIEW v;
+#End of 10.1 tests

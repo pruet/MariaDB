@@ -340,9 +340,8 @@ public:
   bool init_column_part(THD *thd);
   bool add_column_list_value(THD *thd, Item *item);
   void set_show_version_string(String *packet);
-  partition_element *get_part_elem(const char *partition_name,
-                                   char *file_name,
-                                   uint32 *part_id);
+  partition_element *get_part_elem(const char *partition_name, char *file_name,
+                                   size_t file_name_size, uint32 *part_id);
   void report_part_expr_error(bool use_subpart_expr);
   bool set_used_partition(List<Item> &fields,
                           List<Item> &values,
@@ -369,6 +368,7 @@ public:
                         bool *prune_needs_default_values,
                         MY_BITMAP *used_partitions);
   bool has_same_partitioning(partition_info *new_part_info);
+  bool error_if_requires_values() const;
 private:
   static int list_part_cmp(const void* a, const void* b);
   bool set_up_default_partitions(handler *file, HA_CREATE_INFO *info,
@@ -384,6 +384,7 @@ private:
   bool is_full_part_expr_in_fields(List<Item> &fields);
 public:
   bool has_unique_name(partition_element *element);
+  bool field_in_partition_expr(Field *field) const;
 };
 
 uint32 get_next_partition_id_range(struct st_partition_iter* part_iter);

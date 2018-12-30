@@ -1,4 +1,5 @@
-/* Copyright (c) 2010, 2015, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2010, 2016, Oracle and/or its affiliates.
+   Copyright (c) 2011, 2016, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -152,8 +153,17 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
     tmp_write_to_binlog= 0;
     if (mysql_bin_log.is_open())
     {
-      if (mysql_bin_log.rotate_and_purge(true))
+      DYNAMIC_ARRAY *drop_gtid_domain=
+        (thd && (thd->lex->delete_gtid_domain.elements > 0)) ?
+        &thd->lex->delete_gtid_domain : NULL;
+      if (mysql_bin_log.rotate_and_purge(true, drop_gtid_domain))
         *write_to_binlog= -1;
+
+      if (WSREP_ON)
+      {
+        /* Wait for last binlog checkpoint event to be logged. */
+        mysql_bin_log.wait_for_last_checkpoint_event();
+      }
     }
   }
   if (options & REFRESH_RELAY_LOG)
@@ -174,24 +184,24 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
       slave is not likely to have the same connection names.
     */
     tmp_write_to_binlog= 0;
-    mysql_mutex_lock(&LOCK_active_mi);
-    if (master_info_index)
+    if (connection_name.length == 0)
     {
-      if (!(mi= (master_info_index->
-                 get_master_info(&connection_name,
-                                 Sql_condition::WARN_LEVEL_ERROR))))
-      {
-        result= 1;
-      }
-      else
-      {
-        mysql_mutex_lock(&mi->data_lock);
-        if (rotate_relay_log(mi))
+      if (master_info_index->flush_all_relay_logs())
           *write_to_binlog= -1;
-        mysql_mutex_unlock(&mi->data_lock);
-      }
     }
-    mysql_mutex_unlock(&LOCK_active_mi);
+    else if (!(mi= (get_master_info(&connection_name,
+                               Sql_condition::WARN_LEVEL_ERROR))))
+    {
+      result= 1;
+    }
+    else
+    {
+      mysql_mutex_lock(&mi->data_lock);
+      if (rotate_relay_log(mi))
+        *write_to_binlog= -1;
+      mysql_mutex_unlock(&mi->data_lock);
+      mi->release();
+    }
 #endif
   }
 #ifdef HAVE_QUERY_CACHE
@@ -246,7 +256,8 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
           NOTE: my_error() has been already called by reopen_tables() within
           close_cached_tables().
         */
-        result= 1;
+        thd->global_read_lock.unlock_global_read_lock(thd);
+        return 1;
       }
 
       if (thd->global_read_lock.make_global_read_lock_block_commit(thd)) // Killed
@@ -277,9 +288,18 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
         */
         if (tables)
         {
+          int err;
           for (TABLE_LIST *t= tables; t; t= t->next_local)
-            if (!find_table_for_mdl_upgrade(thd, t->db, t->table_name, false))
-              return 1;
+            if (!find_table_for_mdl_upgrade(thd, t->db, t->table_name, &err))
+            {
+              if (is_locked_view(thd, t))
+                t->next_local= t->next_global;
+              else
+              {
+                my_error(err, MYF(0), t->table_name);
+                return 1;
+              }
+            }
         }
         else
         {
@@ -368,27 +388,33 @@ bool reload_acl_and_cache(THD *thd, unsigned long long options,
    LEX_MASTER_INFO* lex_mi= &thd->lex->mi;
    Master_info *mi;
    tmp_write_to_binlog= 0;
-   mysql_mutex_lock(&LOCK_active_mi);
-   if (master_info_index)
+
+   if (!(mi= get_master_info(&lex_mi->connection_name,
+                             Sql_condition::WARN_LEVEL_ERROR)))
    {
-     if (!(mi= (master_info_index->
-                get_master_info(&lex_mi->connection_name,
-                                Sql_condition::WARN_LEVEL_ERROR))))
+     result= 1;
+   }
+   else
+   {
+     /* The following will fail if slave is running */
+     if (reset_slave(thd, mi))
      {
-       result= 1;
-     }
-     else if (reset_slave(thd, mi))
-     {
+       mi->release();
        /* NOTE: my_error() has been already called by reset_slave(). */
        result= 1;
      }
      else if (mi->connection_name.length && thd->lex->reset_slave_info.all)
      {
        /* If not default connection and 'all' is used */
-       master_info_index->remove_master_info(&mi->connection_name);
+       mi->release();
+       mysql_mutex_lock(&LOCK_active_mi);
+       if (master_info_index->remove_master_info(mi))
+         result= 1;
+       mysql_mutex_unlock(&LOCK_active_mi);
      }
+     else
+       mi->release();
    }
-   mysql_mutex_unlock(&LOCK_active_mi);
  }
 #endif
  if (options & REFRESH_USER_RESOURCES)

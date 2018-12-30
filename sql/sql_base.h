@@ -1,4 +1,6 @@
 /* Copyright (c) 2010, 2013, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2011, 2018, MariaDB
+
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -58,6 +60,10 @@ enum enum_resolution_type {
 enum find_item_error_report_type {REPORT_ALL_ERRORS, REPORT_EXCEPT_NOT_FOUND,
 				  IGNORE_ERRORS, REPORT_EXCEPT_NON_UNIQUE,
                                   IGNORE_EXCEPT_NON_UNIQUE};
+
+/* Flag bits for unique_table() */
+#define CHECK_DUP_ALLOW_DIFFERENT_ALIAS 1
+#define CHECK_DUP_FOR_CREATE 2
 
 uint create_tmp_table_def_key(THD *thd, char *key, const char *db,
                               const char *table_name);
@@ -120,6 +126,7 @@ TABLE *open_ltable(THD *thd, TABLE_LIST *table_list, thr_lock_type update,
                             MYSQL_OPEN_GET_NEW_TABLE |\
                             MYSQL_OPEN_HAS_MDL_LOCK)
 
+bool is_locked_view(THD *thd, TABLE_LIST *t);
 bool open_table(THD *thd, TABLE_LIST *table_list, Open_table_context *ot_ctx);
 
 bool get_key_map_from_key_list(key_map *map, TABLE *table,
@@ -141,6 +148,8 @@ my_bool mysql_rm_tmp_tables(void);
 bool rm_temporary_table(handlerton *base, const char *path);
 void close_tables_for_reopen(THD *thd, TABLE_LIST **tables,
                              const MDL_savepoint &start_of_statement_svp);
+bool table_already_fk_prelocked(TABLE_LIST *tl, LEX_STRING *db,
+                                LEX_STRING *table, thr_lock_type lock_type);
 TABLE_LIST *find_table_in_list(TABLE_LIST *table,
                                TABLE_LIST *TABLE_LIST::*link,
                                const char *db_name,
@@ -174,7 +183,8 @@ int setup_wild(THD *thd, TABLE_LIST *tables, List<Item> &fields,
 	       List<Item> *sum_func_list, uint wild_num);
 bool setup_fields(THD *thd, Item** ref_pointer_array,
                   List<Item> &item, enum_mark_columns mark_used_columns,
-                  List<Item> *sum_func_list, bool allow_sum_func);
+                  List<Item> *sum_func_list, List<Item> *pre_fix,
+                  bool allow_sum_func);
 void unfix_fields(List<Item> &items);
 bool fill_record(THD * thd, TABLE *table_arg, List<Item> &fields,
                  List<Item> &values, bool ignore_errors);
@@ -277,7 +287,7 @@ void kill_delayed_threads_for_table(TDC_element *element);
 void close_thread_table(THD *thd, TABLE **table_ptr);
 bool close_temporary_tables(THD *thd);
 TABLE_LIST *unique_table(THD *thd, TABLE_LIST *table, TABLE_LIST *table_list,
-                         bool check_alias);
+                         uint check_flag);
 int drop_temporary_table(THD *thd, TABLE *table, bool *is_trans);
 void close_temporary_table(THD *thd, TABLE *table, bool free_share,
                            bool delete_table);
@@ -322,7 +332,7 @@ static inline bool tdc_open_view(THD *thd, TABLE_LIST *table_list,
 
 TABLE *find_table_for_mdl_upgrade(THD *thd, const char *db,
                                   const char *table_name,
-                                  bool no_error);
+                                  int *p_error);
 void mark_tmp_table_for_reuse(TABLE *table);
 
 int update_virtual_fields(THD *thd, TABLE *table,
@@ -405,7 +415,7 @@ inline bool setup_fields_with_no_wrap(THD *thd, Item **ref_pointer_array,
   bool res;
   thd->lex->select_lex.no_wrap_view_item= TRUE;
   res= setup_fields(thd, ref_pointer_array, item, mark_used_columns,
-                    sum_func_list, allow_sum_func);
+                    sum_func_list, NULL,  allow_sum_func);
   thd->lex->select_lex.no_wrap_view_item= FALSE;
   return res;
 }

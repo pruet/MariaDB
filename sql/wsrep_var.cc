@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #include "wsrep_var.h"
 
@@ -34,6 +34,9 @@ const  char* wsrep_node_name        = 0;
 const  char* wsrep_node_address     = 0;
 const  char* wsrep_node_incoming_address = 0;
 const  char* wsrep_start_position   = 0;
+ulong   wsrep_reject_queries;
+
+static long wsrep_prev_slave_threads = wsrep_slave_threads;
 
 int wsrep_init_vars()
 {
@@ -50,21 +53,51 @@ int wsrep_init_vars()
   return 0;
 }
 
+extern ulong innodb_lock_schedule_algorithm;
+
 bool wsrep_on_update (sys_var *self, THD* thd, enum_var_type var_type)
 {
   if (var_type == OPT_GLOBAL) {
     // FIXME: this variable probably should be changed only per session
     thd->variables.wsrep_on = global_system_variables.wsrep_on;
   }
+
   return false;
 }
 
-bool wsrep_causal_reads_update (SV *sv)
+bool wsrep_on_check(sys_var *self, THD* thd, set_var* var)
 {
-  if (sv->wsrep_causal_reads) {
-    sv->wsrep_sync_wait |= WSREP_SYNC_WAIT_BEFORE_READ;
+  bool new_wsrep_on= (bool)var->save_result.ulonglong_value;
+
+  if (check_has_super(self, thd, var))
+    return true;
+
+  if (new_wsrep_on && innodb_lock_schedule_algorithm != 0) {
+    my_message(ER_WRONG_ARGUMENTS, " WSREP (galera) can't be enabled "
+	    "if innodb_lock_schedule_algorithm=VATS. Please configure"
+	    " innodb_lock_schedule_algorithm=FCFS and restart.", MYF(0));
+    return true;
+  }
+  return false;
+}
+
+bool wsrep_causal_reads_update (sys_var *self, THD* thd, enum_var_type var_type)
+{
+  // global setting should not affect session setting.
+  // if (var_type == OPT_GLOBAL) {
+  //   thd->variables.wsrep_causal_reads = global_system_variables.wsrep_causal_reads;
+  // }
+  if (thd->variables.wsrep_causal_reads) {
+    thd->variables.wsrep_sync_wait |= WSREP_SYNC_WAIT_BEFORE_READ;
   } else {
-    sv->wsrep_sync_wait &= ~WSREP_SYNC_WAIT_BEFORE_READ;
+    thd->variables.wsrep_sync_wait &= ~WSREP_SYNC_WAIT_BEFORE_READ;
+  }
+
+  // update global settings too.
+  if (global_system_variables.wsrep_causal_reads) {
+      global_system_variables.wsrep_sync_wait |= WSREP_SYNC_WAIT_BEFORE_READ;
+  } else {
+      global_system_variables.wsrep_sync_wait &= ~WSREP_SYNC_WAIT_BEFORE_READ;
   }
 
   return false;
@@ -72,12 +105,17 @@ bool wsrep_causal_reads_update (SV *sv)
 
 bool wsrep_sync_wait_update (sys_var* self, THD* thd, enum_var_type var_type)
 {
-  if (var_type == OPT_GLOBAL)
-    global_system_variables.wsrep_causal_reads =
-      MY_TEST(global_system_variables.wsrep_sync_wait & WSREP_SYNC_WAIT_BEFORE_READ);
-  else
-    thd->variables.wsrep_causal_reads =
-      MY_TEST(thd->variables.wsrep_sync_wait & WSREP_SYNC_WAIT_BEFORE_READ);
+  // global setting should not affect session setting.
+  // if (var_type == OPT_GLOBAL) {
+  //   thd->variables.wsrep_sync_wait = global_system_variables.wsrep_sync_wait;
+  // }
+  thd->variables.wsrep_causal_reads = thd->variables.wsrep_sync_wait &
+          WSREP_SYNC_WAIT_BEFORE_READ;
+
+  // update global settings too
+  global_system_variables.wsrep_causal_reads = global_system_variables.wsrep_sync_wait &
+          WSREP_SYNC_WAIT_BEFORE_READ;
+
   return false;
 }
 
@@ -167,16 +205,46 @@ void wsrep_start_position_init (const char* val)
   wsrep_set_local_position (val, false);
 }
 
+static int get_provider_option_value(const char* opts,
+                                     const char* opt_name,
+                                     ulong* opt_value)
+{
+  int ret= 1;
+  ulong opt_value_tmp;
+  char *opt_value_str, *s, *opts_copy= my_strdup(opts, MYF(MY_WME));
+
+  if ((opt_value_str= strstr(opts_copy, opt_name)) == NULL)
+    goto end;
+  opt_value_str= strtok_r(opt_value_str, "=", &s);
+  if (opt_value_str == NULL) goto end;
+  opt_value_str= strtok_r(NULL, ";", &s);
+  if (opt_value_str == NULL) goto end;
+
+  opt_value_tmp= strtoul(opt_value_str, NULL, 10);
+  if (errno == ERANGE) goto end;
+
+  *opt_value= opt_value_tmp;
+  ret= 0;
+
+end:
+  my_free(opts_copy);
+  return ret;
+}
+
 static bool refresh_provider_options()
 {
+  DBUG_ASSERT(wsrep);
+
   WSREP_DEBUG("refresh_provider_options: %s", 
               (wsrep_provider_options) ? wsrep_provider_options : "null");
   char* opts= wsrep->options_get(wsrep);
   if (opts)
   {
-    if (wsrep_provider_options) my_free((void *)wsrep_provider_options);
-    wsrep_provider_options = (char*)my_memdup(opts, strlen(opts) + 1, 
-                                              MYF(MY_WME));
+    wsrep_provider_options_init(opts);
+    get_provider_option_value(wsrep_provider_options,
+                              (char*)"repl.max_ws_size",
+                              &wsrep_max_ws_size);
+    free(opts);
   }
   else
   {
@@ -253,8 +321,9 @@ bool wsrep_provider_update (sys_var *self, THD* thd, enum_var_type type)
   if (wsrep_inited == 1)
     wsrep_deinit(false);
 
-  char* tmp= strdup(wsrep_provider); // wsrep_init() rewrites provider 
+  char* tmp= strdup(wsrep_provider); // wsrep_init() rewrites provider
                                      //when fails
+
   if (wsrep_init())
   {
     my_error(ER_CANT_OPEN_LIBRARY, MYF(0), tmp);
@@ -291,17 +360,17 @@ void wsrep_provider_init (const char* value)
 
 bool wsrep_provider_options_check(sys_var *self, THD* thd, set_var* var)
 {
-  return 0;
-}
-
-bool wsrep_provider_options_update(sys_var *self, THD* thd, enum_var_type type)
-{
   if (wsrep == NULL)
   {
     my_message(ER_WRONG_ARGUMENTS, "WSREP (galera) not started", MYF(0));
     return true;
   }
+  return false;
+}
 
+bool wsrep_provider_options_update(sys_var *self, THD* thd, enum_var_type type)
+{
+  DBUG_ASSERT(wsrep);
   wsrep_status_t ret= wsrep->options_set(wsrep, wsrep_provider_options);
   if (ret != WSREP_OK)
   {
@@ -317,6 +386,28 @@ void wsrep_provider_options_init(const char* value)
   if (wsrep_provider_options && wsrep_provider_options != value) 
     my_free((void *)wsrep_provider_options);
   wsrep_provider_options = (value) ? my_strdup(value, MYF(0)) : NULL;
+}
+
+bool wsrep_reject_queries_update(sys_var *self, THD* thd, enum_var_type type)
+{
+    switch (wsrep_reject_queries) {
+        case WSREP_REJECT_NONE:
+            WSREP_INFO("Allowing client queries due to manual setting");
+            break;
+        case WSREP_REJECT_ALL:
+            WSREP_INFO("Rejecting client queries due to manual setting");
+            break;
+        case WSREP_REJECT_ALL_KILL:
+            /* close all client connections, but this one */
+            wsrep_close_client_connections(FALSE, thd);
+            WSREP_INFO("Rejecting client queries and killing connections due to manual setting");
+            break;
+        default:
+          WSREP_INFO("Unknown value for wsrep_reject_queries: %lu",
+                     wsrep_reject_queries);
+            return true;
+    }
+    return false;
 }
 
 static int wsrep_cluster_address_verify (const char* cluster_address_str)
@@ -348,7 +439,16 @@ bool wsrep_cluster_address_check (sys_var *self, THD* thd, set_var* var)
 
 bool wsrep_cluster_address_update (sys_var *self, THD* thd, enum_var_type type)
 {
-  bool wsrep_on_saved= thd->variables.wsrep_on;
+  bool wsrep_on_saved;
+
+  /* Do not proceed if wsrep provider is not loaded. */
+  if (!wsrep)
+  {
+    WSREP_INFO("wsrep provider is not loaded, can't re(start) replication.");
+    return false;
+  }
+
+  wsrep_on_saved= thd->variables.wsrep_on;
   thd->variables.wsrep_on= false;
 
   /* stop replication is heavy operation, and includes closing all client 
@@ -463,18 +563,17 @@ void wsrep_node_address_init (const char* value)
   wsrep_node_address = (value) ? my_strdup(value, MYF(0)) : NULL;
 }
 
-bool wsrep_slave_threads_check (sys_var *self, THD* thd, set_var* var)
+static void wsrep_slave_count_change_update ()
 {
-  mysql_mutex_lock(&LOCK_wsrep_slave_threads);
-  wsrep_slave_count_change += (var->save_result.ulonglong_value -
-                               wsrep_slave_threads);
-  mysql_mutex_unlock(&LOCK_wsrep_slave_threads);
-
-  return 0;
+  wsrep_slave_count_change = (wsrep_slave_threads - wsrep_prev_slave_threads);
+  WSREP_DEBUG("Change on slave threads: New %lu old %lu difference %d",
+	  wsrep_slave_threads, wsrep_prev_slave_threads, wsrep_slave_count_change);
+  wsrep_prev_slave_threads = wsrep_slave_threads;
 }
 
 bool wsrep_slave_threads_update (sys_var *self, THD* thd, enum_var_type type)
 {
+  wsrep_slave_count_change_update();
   if (wsrep_slave_count_change > 0)
   {
     wsrep_create_appliers(wsrep_slave_count_change);
@@ -485,6 +584,18 @@ bool wsrep_slave_threads_update (sys_var *self, THD* thd, enum_var_type type)
 
 bool wsrep_desync_check (sys_var *self, THD* thd, set_var* var)
 {
+  if (wsrep == NULL)
+  {
+    my_message(ER_WRONG_ARGUMENTS, "WSREP (galera) not started", MYF(0));
+    return true;
+  }
+
+  if (thd->global_read_lock.is_acquired())
+  {
+    my_message (ER_CANNOT_USER, "Global read lock acquired. Can't set 'wsrep_desync'", MYF(0));
+    return true;
+  }
+
   bool new_wsrep_desync= (bool) var->save_result.ulonglong_value;
   if (wsrep_desync == new_wsrep_desync) {
     if (new_wsrep_desync) {
@@ -496,20 +607,10 @@ bool wsrep_desync_check (sys_var *self, THD* thd, set_var* var)
                    ER_WRONG_VALUE_FOR_VAR,
                    "'wsrep_desync' is already OFF.");
     }
+    return false;
   }
-  return 0;
-}
-
-bool wsrep_desync_update (sys_var *self, THD* thd, enum_var_type type)
-{
-  if (wsrep == NULL)
-  {
-    my_message(ER_WRONG_ARGUMENTS, "WSREP (galera) not started", MYF(0));
-    return true;
-  }
-
   wsrep_status_t ret(WSREP_WARNING);
-  if (wsrep_desync) {
+  if (new_wsrep_desync) {
     ret = wsrep->desync (wsrep);
     if (ret != WSREP_OK) {
       WSREP_WARN ("SET desync failed %d for schema: %s, query: %s", ret,
@@ -529,6 +630,39 @@ bool wsrep_desync_update (sys_var *self, THD* thd, enum_var_type type)
     }
   }
   return false;
+}
+
+bool wsrep_desync_update (sys_var *self, THD* thd, enum_var_type type)
+{
+  DBUG_ASSERT(wsrep);
+  return false;
+}
+
+bool wsrep_max_ws_size_check(sys_var *self, THD* thd, set_var* var)
+{
+  if (wsrep == NULL)
+  {
+    my_message(ER_WRONG_ARGUMENTS, "WSREP (galera) not started", MYF(0));
+    return true;
+  }
+  return false;
+}
+
+bool wsrep_max_ws_size_update (sys_var *self, THD *thd, enum_var_type)
+{
+  DBUG_ASSERT(wsrep);
+
+  char max_ws_size_opt[128];
+  my_snprintf(max_ws_size_opt, sizeof(max_ws_size_opt),
+              "repl.max_ws_size=%d", wsrep_max_ws_size);
+  wsrep_status_t ret= wsrep->options_set(wsrep, max_ws_size_opt);
+  if (ret != WSREP_OK)
+  {
+    WSREP_ERROR("Set options returned %d", ret);
+    refresh_provider_options();
+    return true;
+  }
+  return refresh_provider_options();
 }
 
 static SHOW_VAR wsrep_status_vars[]=

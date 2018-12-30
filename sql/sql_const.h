@@ -45,7 +45,18 @@
 #define MAX_MBWIDTH		3		/* Max multibyte sequence */
 #define MAX_FILENAME_MBWIDTH    5
 #define MAX_FIELD_CHARLENGTH	255
-#define MAX_FIELD_VARCHARLENGTH	65535
+/*
+  In MAX_FIELD_VARCHARLENGTH we reserve extra bytes for the overhead:
+  - 2 bytes for the length
+  - 1 byte for NULL bits
+  to avoid the "Row size too large" error for these three corner definitions:
+    CREATE TABLE t1 (c VARBINARY(65533));
+    CREATE TABLE t1 (c VARBINARY(65534));
+    CREATE TABLE t1 (c VARBINARY(65535));
+  Like VARCHAR(65536), they will be converted to BLOB automatically
+  in non-sctict mode.
+*/
+#define MAX_FIELD_VARCHARLENGTH	(65535-2-1)
 #define MAX_FIELD_BLOBLENGTH UINT_MAX32         /* cf field_blob::get_length() */
 #define CONVERT_IF_BIGGER_TO_BLOB 512           /* Threshold *in characters*   */
 
@@ -69,6 +80,7 @@
 #define RAND_TABLE_BIT	(((table_map) 1) << (sizeof(table_map)*8-1))
 #define PSEUDO_TABLE_BITS (PARAM_TABLE_BIT | OUTER_REF_TABLE_BIT | \
                            RAND_TABLE_BIT)
+#define CONNECT_STRING_MAXLEN   65535           /* stored in 2 bytes in .frm */
 #define MAX_FIELDS	4096			/* Limit in the .frm file */
 #define MAX_PARTITIONS  8192
 
@@ -112,7 +124,7 @@
 #define MAX_ACCEPT_RETRY	10	// Test accept this many times
 #define MAX_FIELDS_BEFORE_HASH	32
 #define USER_VARS_HASH_SIZE     16
-#define TABLE_OPEN_CACHE_MIN    400
+#define TABLE_OPEN_CACHE_MIN    200
 #define TABLE_OPEN_CACHE_DEFAULT 2000
 #define TABLE_DEF_CACHE_DEFAULT 400
 /**

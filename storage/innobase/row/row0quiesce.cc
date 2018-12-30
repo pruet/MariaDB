@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2012, 2014, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2012, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -37,7 +38,7 @@ Created 2012-02-08 by Sunny Bains.
 /*********************************************************************//**
 Write the meta data (index user fields) config file.
 @return DB_SUCCESS or error code. */
-static	__attribute__((nonnull, warn_unused_result))
+static	MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_quiesce_write_index_fields(
 /*===========================*/
@@ -97,7 +98,7 @@ row_quiesce_write_index_fields(
 /*********************************************************************//**
 Write the meta data config file index information.
 @return DB_SUCCESS or error code. */
-static	__attribute__((nonnull, warn_unused_result))
+static	MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_quiesce_write_indexes(
 /*======================*/
@@ -210,7 +211,7 @@ Write the meta data (table columns) config file. Serialise the contents of
 dict_col_t structure, along with the column name. All fields are serialized
 as ib_uint32_t.
 @return DB_SUCCESS or error code. */
-static	__attribute__((nonnull, warn_unused_result))
+static	MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_quiesce_write_table(
 /*====================*/
@@ -236,7 +237,11 @@ row_quiesce_write_table(
 		mach_write_to_4(ptr, col->len);
 		ptr += sizeof(ib_uint32_t);
 
-		mach_write_to_4(ptr, col->mbminmaxlen);
+		/* FIXME: This will not work if mbminlen>4.
+		This field is also redundant, because the lengths
+		are a property of the character set encoding, which
+		in turn is encodedin prtype above. */
+		mach_write_to_4(ptr, col->mbmaxlen * 5 + col->mbminlen);
 		ptr += sizeof(ib_uint32_t);
 
 		mach_write_to_4(ptr, col->ind);
@@ -293,7 +298,7 @@ row_quiesce_write_table(
 /*********************************************************************//**
 Write the meta data config file header.
 @return DB_SUCCESS or error code. */
-static	__attribute__((nonnull, warn_unused_result))
+static	MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_quiesce_write_header(
 /*=====================*/
@@ -415,7 +420,7 @@ row_quiesce_write_header(
 /*********************************************************************//**
 Write the table meta data after quiesce.
 @return DB_SUCCESS or error code */
-static	__attribute__((nonnull, warn_unused_result))
+static	MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_quiesce_write_cfg(
 /*==================*/
@@ -530,10 +535,8 @@ row_quiesce_table_start(
 		trx_purge_stop();
 	}
 
-	ut_a(table->id > 0);
-
 	for (ulint count = 0;
-	     ibuf_contract_in_background(table->id, TRUE) != 0
+	     ibuf_merge_space(table->space) != 0
 	     && !trx_is_interrupted(trx);
 	     ++count) {
 		if (!(count % 20)) {
@@ -544,8 +547,7 @@ row_quiesce_table_start(
 	}
 
 	if (!trx_is_interrupted(trx)) {
-		buf_LRU_flush_or_remove_pages(
-			table->space, BUF_REMOVE_FLUSH_WRITE, trx);
+		buf_LRU_flush_or_remove_pages(table->space, trx);
 
 		if (trx_is_interrupted(trx)) {
 

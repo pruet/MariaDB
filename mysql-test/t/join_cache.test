@@ -3742,9 +3742,11 @@ FROM
   LEFT JOIN t2 c23 ON c23.parent_id = t.id AND c23.col2 = "val"
   LEFT JOIN t2 c24 ON c24.parent_id = t.id AND c24.col2 = "val"
   LEFT JOIN t2 c25 ON c25.parent_id = t.id AND c25.col2 = "val"
+  LEFT JOIN t2 c26 ON c26.parent_id = t.id AND c26.col2 = "val"
+  LEFT JOIN t2 c27 ON c27.parent_id = t.id AND c27.col2 = "val"
 ORDER BY 
   col1;
-select timestampdiff(second, @init_time, now()) <= 1;
+select timestampdiff(second, @init_time, now()) <= 5;
 
 set join_cache_level=2;
 
@@ -3777,9 +3779,11 @@ FROM
   LEFT JOIN t2 c23 ON c23.parent_id = t.id AND c23.col2 = "val"
   LEFT JOIN t2 c24 ON c24.parent_id = t.id AND c24.col2 = "val"
   LEFT JOIN t2 c25 ON c25.parent_id = t.id AND c25.col2 = "val"
+  LEFT JOIN t2 c26 ON c26.parent_id = t.id AND c26.col2 = "val"
+  LEFT JOIN t2 c27 ON c27.parent_id = t.id AND c27.col2 = "val"
 ORDER BY 
   col1;
-select timestampdiff(second, @init_time, now()) <= 1;
+select timestampdiff(second, @init_time, now()) <= 5;
 
 EXPLAIN
 SELECT t.* 
@@ -3810,6 +3814,8 @@ FROM
   LEFT JOIN t2 c23 ON c23.parent_id = t.id AND c23.col2 = "val"
   LEFT JOIN t2 c24 ON c24.parent_id = t.id AND c24.col2 = "val"
   LEFT JOIN t2 c25 ON c25.parent_id = t.id AND c25.col2 = "val"
+  LEFT JOIN t2 c26 ON c26.parent_id = t.id AND c26.col2 = "val"
+  LEFT JOIN t2 c27 ON c27.parent_id = t.id AND c27.col2 = "val"
 ORDER BY 
   col1;
 
@@ -3817,6 +3823,82 @@ set join_buffer_size=default;
 set join_cache_level = default;
 
 DROP TABLE t1,t2;
+
+--echo #
+--echo # MDEV-14960: BNLH used for materialized semi-join
+--echo #
+
+CREATE TABLE t1 (i1 int);
+CREATE TABLE t2 (e1 int);
+CREATE TABLE t4 (e1 int);
+CREATE TABLE t5 (e1 int);
+
+INSERT INTO t1 VALUES
+  (1),(2),(3),(4),(5),(6),(7),(8);
+INSERT INTO t1 SELECT i1+8 FROM t1;
+INSERT INTO t1 SELECT i1+16 FROM t1;
+INSERT INTO t1 SELECT i1+32 FROM t1;
+INSERT INTO t1 SELECT i1+64 FROM t1;
+INSERT INTO t2 SELECT * FROM t1;
+INSERT INTO t4 SELECT * FROM t1;
+INSERT INTO t5 SELECT * FROM t1;
+
+set @save_optimizer_switch= @@optimizer_switch;
+SET join_cache_level = 6;
+SET join_buffer_size=4096;
+SET join_buffer_space_limit=4096;
+SET optimizer_switch = 'join_cache_hashed=on,optimize_join_buffer_size=on';
+
+let $q=
+SELECT * FROM t1
+WHERE
+  i1 < 10 AND
+  i1 IN
+  (SELECT i1 FROM
+    (SELECT  (t4.e1) i1  FROM   t4
+      LEFT JOIN t5  ON t4.e1 = t5.e1
+      LEFT JOIN  (SELECT e1  FROM t2 ) AS d ON  t4.e1 = d.e1) a);
+
+eval EXPLAIN $q;
+eval $q;
+
+SET join_cache_level = default;
+SET join_buffer_size = default;
+SET join_buffer_space_limit= default;
+set optimizer_switch=@save_optimizer_switch;
+
+DROP TABLE t1,t4,t5,t2;
+
+--echo #
+--echo # MDEV-16603: BNLH for query with materialized semi-join
+--echo #
+
+--source include/have_innodb.inc
+
+set join_cache_level=4;
+
+CREATE TABLE t1 ( i1 int, v1 varchar(1)) ENGINE=InnoDB;
+INSERT INTO t1 VALUES (7,'x');
+
+CREATE TABLE t2 (i1 int, v1 varchar(1), KEY v1 (v1,i1)) ENGINE=InnoDB;
+
+INSERT INTO t2 VALUES
+ (NULL,'x'),(1,'x'),(3,'x'),(5,'x'),(8,'x'),(48,'x'),
+ (228,'x'),(3,'y'),(1,'z'),(9,'z');
+
+CREATE TABLE temp
+SELECT t1.i1 AS f1, t1.v1 AS f2 FROM (t2 JOIN t1 ON (t1.v1 = t2.v1));
+
+let $q =
+SELECT * FROM temp
+WHERE (f1,f2) IN (SELECT t1.i1, t1.v1 FROM (t2 JOIN t1 ON (t1.v1 = t2.v1)));
+
+eval $q;
+eval EXPLAIN EXTENDED $q;
+
+DROP TABLE t1,t2,temp;
+
+SET join_cache_level = default;
 
 --echo #
 --echo # MDEV-5123 Remove duplicated conditions pushed both to join_tab->select_cond and join_tab->cache_select->cond for blocked joins.
@@ -3895,5 +3977,4 @@ SELECT * FROM INFORMATION_SCHEMA.PROFILING, mysql.user WHERE password_expired = 
 set join_cache_level=default;
 
 # The following command must be the last one the file 
-# this must be the last command in the file
 set @@optimizer_switch=@save_optimizer_switch;

@@ -150,6 +150,7 @@
 #cmakedefine HAVE_CUSERID 1
 #cmakedefine HAVE_CXX_NEW 1
 #cmakedefine HAVE_DIRECTIO 1
+#cmakedefine HAVE_DLADDR 1
 #cmakedefine HAVE_DLERROR 1
 #cmakedefine HAVE_DLOPEN 1
 #cmakedefine HAVE_DOPRNT 1
@@ -492,7 +493,6 @@
 #cmakedefine _LARGE_FILES 1
 #cmakedefine _LARGEFILE_SOURCE 1
 #cmakedefine _LARGEFILE64_SOURCE 1
-#cmakedefine _FILE_OFFSET_BITS @_FILE_OFFSET_BITS@
 
 #cmakedefine TIME_WITH_SYS_TIME 1
 
@@ -666,29 +666,6 @@
 #cmakedefine WSREP_PROC_INFO 1
 #endif
 
-#ifdef _AIX
-/*
-  AIX includes inttypes.h from sys/types.h
-  Explicitly request format macros before the first inclusion of inttypes.h
-*/
 #define __STDC_FORMAT_MACROS
-#endif
-
-/*
-  stat structure (from <sys/stat.h>) is conditionally defined
-  to have different layout and size depending on the defined macros.
-  The correct macro is defined in my_config.h, which means it MUST be
-  included first (or at least before <features.h> - so, practically,
-  before including any system headers).
-
-  Check the include order by looking at __GLIBC__ (defined in <features.h>)
-
-  But we cannot force all third-party clients/connectors to include
-  my_config.h first. So, their crashes are their responsibility,
-  we enable this check only for MariaDB sources (SAFE_MUTEX check).
-*/
-#if defined(__GLIBC__) && defined(SAFE_MUTEX)
-#error <my_config.h> MUST be included first!
-#endif
 
 #endif

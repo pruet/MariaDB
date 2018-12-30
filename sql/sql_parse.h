@@ -33,7 +33,8 @@ enum enum_mysql_completiontype {
   COMMIT_RELEASE=-1,   COMMIT=0,    COMMIT_AND_CHAIN=6
 };
 
-extern "C" int test_if_data_home_dir(const char *dir);
+extern "C" int path_starts_from_data_home_dir(const char *dir);
+int test_if_data_home_dir(const char *dir);
 int error_if_data_home_dir(const char *path, const char *what);
 
 bool multi_update_precheck(THD *thd, TABLE_LIST *tables);
@@ -76,6 +77,7 @@ bool check_string_byte_length(LEX_STRING *str, uint err_msg,
 bool check_string_char_length(LEX_STRING *str, uint err_msg,
                               uint max_char_length, CHARSET_INFO *cs,
                               bool no_error);
+bool check_ident_length(LEX_STRING *ident);
 CHARSET_INFO* merge_charset_and_collation(CHARSET_INFO *cs, CHARSET_INFO *cl);
 CHARSET_INFO *find_bin_collation(CHARSET_INFO *cs);
 bool check_host_name(LEX_STRING *str);
@@ -83,6 +85,7 @@ bool check_identifier_name(LEX_STRING *str, uint max_char_length,
                            uint err_code, const char *param_for_err_msg);
 bool mysql_test_parse_for_slave(THD *thd,char *inBuf,uint length);
 bool sqlcom_can_generate_row_events(const THD *thd);
+bool stmt_causes_implicit_commit(THD *thd, uint mask);
 bool is_update_query(enum enum_sql_command command);
 bool is_log_table_write_query(enum enum_sql_command command);
 bool alloc_query(THD *thd, const char *packet, uint packet_length);

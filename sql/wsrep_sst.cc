@@ -11,10 +11,11 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #include "wsrep_sst.h"
 
+#include <inttypes.h>
 #include <mysqld.h>
 #include <m_ctype.h>
 #include <my_sys.h>
@@ -30,9 +31,14 @@
 #include <cstdio>
 #include <cstdlib>
 
-char wsrep_defaults_file[FN_REFLEN * 2 + 10 +
-                         sizeof(WSREP_SST_OPT_CONF) +
-                         sizeof(WSREP_SST_OPT_EXTRA_CONF)] = {0};
+#if MYSQL_VERSION_ID < 100200
+# include <my_service_manager.h>
+#endif
+
+static char wsrep_defaults_file[FN_REFLEN * 2 + 10 + 30 +
+                                sizeof(WSREP_SST_OPT_CONF) +
+                                sizeof(WSREP_SST_OPT_CONF_SUFFIX) +
+                                sizeof(WSREP_SST_OPT_CONF_EXTRA)] = {0};
 
 const char* wsrep_sst_method          = WSREP_SST_DEFAULT;
 const char* wsrep_sst_receive_address = WSREP_SST_ADDRESS_AUTO;
@@ -62,6 +68,12 @@ bool wsrep_sst_method_update (sys_var *self, THD* thd, enum_var_type type)
     return 0;
 }
 
+static const char* data_home_dir = NULL;
+
+void wsrep_set_data_home_dir(const char *data_dir)
+{
+  data_home_dir= (data_dir && *data_dir) ? data_dir : NULL;
+}
 
 static void make_wsrep_defaults_file()
 {
@@ -75,38 +87,19 @@ static void make_wsrep_defaults_file()
 
     if (my_defaults_extra_file)
       ptr= strxnmov(ptr, end - ptr,
-                    WSREP_SST_OPT_EXTRA_CONF, " '", my_defaults_extra_file, "' ", NULL);
+                    WSREP_SST_OPT_CONF_EXTRA, " '", my_defaults_extra_file, "' ", NULL);
+
+    if (my_defaults_group_suffix)
+      ptr= strxnmov(ptr, end - ptr,
+                    WSREP_SST_OPT_CONF_SUFFIX, " '", my_defaults_group_suffix, "' ", NULL);
   }
 }
 
-
-// TODO: Improve address verification.
-static bool sst_receive_address_check (const char* str)
-{
-    if (!strncasecmp(str, "127.0.0.1", strlen("127.0.0.1")) ||
-        !strncasecmp(str, "localhost", strlen("localhost")))
-    {
-        return 1;
-    }
-
-    return 0;
-}
 
 bool  wsrep_sst_receive_address_check (sys_var *self, THD* thd, set_var* var)
 {
-  char addr_buf[FN_REFLEN];
-
   if ((! var->save_result.string_value.str) ||
       (var->save_result.string_value.length > (FN_REFLEN - 1))) // safety
-  {
-    goto err;
-  }
-
-  memcpy(addr_buf, var->save_result.string_value.str,
-         var->save_result.string_value.length);
-  addr_buf[var->save_result.string_value.length]= 0;
-
-  if (sst_receive_address_check(addr_buf))
   {
     goto err;
   }
@@ -177,8 +170,8 @@ bool wsrep_sst_auth_update (sys_var *self, THD* thd, enum_var_type type)
 
 void wsrep_sst_auth_init (const char* value)
 {
-    if (wsrep_sst_auth == value) wsrep_sst_auth = NULL;
-    if (value) sst_auth_real_set (value);
+    DBUG_ASSERT(wsrep_sst_auth == value);
+    sst_auth_real_set (wsrep_sst_auth);
 }
 
 bool  wsrep_sst_donor_check (sys_var *self, THD* thd, set_var* var)
@@ -204,6 +197,9 @@ bool wsrep_before_SE()
 static bool            sst_complete = false;
 static bool            sst_needed   = false;
 
+#define WSREP_EXTEND_TIMEOUT_INTERVAL 30
+#define WSREP_TIMEDWAIT_SECONDS 10
+
 void wsrep_sst_grab ()
 {
   WSREP_INFO("wsrep_sst_grab()");
@@ -215,11 +211,28 @@ void wsrep_sst_grab ()
 // Wait for end of SST
 bool wsrep_sst_wait ()
 {
-  if (mysql_mutex_lock (&LOCK_wsrep_sst)) abort();
+  double total_wtime = 0;
+
+  if (mysql_mutex_lock (&LOCK_wsrep_sst))
+    abort();
+
+  WSREP_INFO("Waiting for SST to complete.");
+
   while (!sst_complete)
   {
-    WSREP_INFO("Waiting for SST to complete.");
-    mysql_cond_wait (&COND_wsrep_sst, &LOCK_wsrep_sst);
+    struct timespec wtime;
+    set_timespec(wtime, WSREP_TIMEDWAIT_SECONDS);
+    time_t start_time = time(NULL);
+    mysql_cond_timedwait (&COND_wsrep_sst, &LOCK_wsrep_sst, &wtime);
+    time_t end_time = time(NULL);
+
+    if (!sst_complete)
+    {
+      total_wtime += difftime(end_time, start_time);
+      WSREP_DEBUG("Waiting for SST to complete. current seqno: %" PRId64 " waited %f secs.", local_seqno, total_wtime);
+      service_manager_extend_timeout(WSREP_EXTEND_TIMEOUT_INTERVAL,
+        "WSREP state transfer ongoing, current seqno: %ld waited %f secs", local_seqno, total_wtime);
+    }
   }
 
   if (local_seqno >= 0)
@@ -340,6 +353,7 @@ static int sst_scan_uuid_seqno (const char* str,
                                 wsrep_uuid_t* uuid, wsrep_seqno_t* seqno)
 {
   int offt = wsrep_uuid_scan (str, strlen(str), uuid);
+  errno= 0;                                     /* Reset the errno */
   if (offt > 0 && strlen(str) > (unsigned int)offt && ':' == str[offt])
   {
     *seqno = strtoll (str + offt + 1, NULL, 10);
@@ -384,7 +398,23 @@ static int generate_binlog_opt_val(char** ret)
   {
     assert(opt_bin_logname);
     *ret= strcmp(opt_bin_logname, "0") ?
-        my_strdup(opt_bin_logname, MYF(0)) : my_strdup("", MYF(0));
+      my_strdup(opt_bin_logname, MYF(0)) : my_strdup("", MYF(0));
+  }
+  else
+  {
+    *ret= my_strdup("", MYF(0));
+  }
+  if (!*ret) return -ENOMEM;
+  return 0;
+}
+
+static int generate_binlog_index_opt_val(char** ret)
+{
+  DBUG_ASSERT(ret);
+  *ret= NULL;
+  if (opt_binlog_index_name) {
+    *ret= strcmp(opt_binlog_index_name, "0") ?
+      my_strdup(opt_binlog_index_name, MYF(0)) : my_strdup("", MYF(0));
   }
   else
   {
@@ -475,13 +505,11 @@ static void* sst_joiner_thread (void* a)
 
       } else {
         // Scan state ID first followed by wsrep_gtid_domain_id.
-        char uuid[512];
-        long int domain_id;
-        size_t len= pos - out + 1;
+        unsigned long int domain_id;
 
-        if (len > sizeof(uuid)) goto err;       // safety check
-        memcpy(uuid, out, len);                 // including '\0'
-        err= sst_scan_uuid_seqno (uuid, &ret_uuid, &ret_seqno);
+        // Null-terminate the state-id.
+        out[pos - out]= 0;
+        err= sst_scan_uuid_seqno (out, &ret_uuid, &ret_seqno);
 
         if (err)
         {
@@ -490,11 +518,11 @@ static void* sst_joiner_thread (void* a)
         else if (wsrep_gtid_mode)
         {
           errno= 0;                             /* Reset the errno */
-          domain_id= strtol(pos + 1, NULL, 10);
+          domain_id= strtoul(pos + 1, NULL, 10);
           err= errno;
 
           /* Check if we received a valid gtid_domain_id. */
-          if (err == EINVAL || err == ERANGE || domain_id < 0x0 || domain_id > 0xFFFF)
+          if (err == EINVAL || err == ERANGE)
           {
             WSREP_ERROR("Failed to get donor wsrep_gtid_domain_id.");
             err= EINVAL;
@@ -544,6 +572,29 @@ static int sst_append_auth_env(wsp::env& env, const char* sst_auth)
   return -env.error();
 }
 
+#define DATA_HOME_DIR_ENV "INNODB_DATA_HOME_DIR"
+
+static int sst_append_data_dir(wsp::env& env, const char* data_dir)
+{
+  int const data_dir_size= strlen(DATA_HOME_DIR_ENV) + 1 /* = */
+    + (data_dir ? strlen(data_dir) : 0) + 1 /* \0 */;
+
+  wsp::string data_dir_str(data_dir_size); // for automatic cleanup on return
+  if (!data_dir_str()) return -ENOMEM;
+
+  int ret= snprintf(data_dir_str(), data_dir_size, "%s=%s",
+                    DATA_HOME_DIR_ENV, data_dir ? data_dir : "");
+
+  if (ret < 0 || ret >= data_dir_size)
+  {
+    WSREP_ERROR("sst_append_data_dir(): snprintf() failed: %d", ret);
+    return (ret < 0 ? ret : -EMSGSIZE);
+  }
+
+  env.append(data_dir_str());
+  return -env.error();
+}
+
 static ssize_t sst_prepare_other (const char*  method,
                                   const char*  sst_auth,
                                   const char*  addr_in,
@@ -560,7 +611,9 @@ static ssize_t sst_prepare_other (const char*  method,
   }
 
   const char* binlog_opt= "";
+  const char* binlog_index_opt= "";
   char* binlog_opt_val= NULL;
+  char* binlog_index_opt_val= NULL;
 
   int ret;
   if ((ret= generate_binlog_opt_val(&binlog_opt_val)))
@@ -569,22 +622,33 @@ static ssize_t sst_prepare_other (const char*  method,
                 ret);
     return ret;
   }
+
+  if ((ret= generate_binlog_index_opt_val(&binlog_index_opt_val)))
+  {
+    WSREP_ERROR("sst_prepare_other(): generate_binlog_index_opt_val() failed %d",
+                ret);
+  }
+
   if (strlen(binlog_opt_val)) binlog_opt= WSREP_SST_OPT_BINLOG;
+  if (strlen(binlog_index_opt_val)) binlog_index_opt= WSREP_SST_OPT_BINLOG_INDEX;
 
   make_wsrep_defaults_file();
 
   ret= snprintf (cmd_str(), cmd_len,
                  "wsrep_sst_%s "
-                 WSREP_SST_OPT_ROLE" 'joiner' "
-                 WSREP_SST_OPT_ADDR" '%s' "
-                 WSREP_SST_OPT_DATA" '%s' "
+                 WSREP_SST_OPT_ROLE " 'joiner' "
+                 WSREP_SST_OPT_ADDR " '%s' "
+                 WSREP_SST_OPT_DATA " '%s' "
                  " %s "
-                 WSREP_SST_OPT_PARENT" '%d'"
-                 " %s '%s' ",
+                 WSREP_SST_OPT_PARENT " '%d'"
+                 " %s '%s'"
+	         " %s '%s'",
                  method, addr_in, mysql_real_data_home,
-                 wsrep_defaults_file, (int)getpid(),
-                 binlog_opt, binlog_opt_val);
+                 wsrep_defaults_file,
+                 (int)getpid(), binlog_opt, binlog_opt_val,
+                 binlog_index_opt, binlog_index_opt_val);
   my_free(binlog_opt_val);
+  my_free(binlog_index_opt_val);
 
   if (ret < 0 || ret >= cmd_len)
   {
@@ -603,6 +667,16 @@ static ssize_t sst_prepare_other (const char*  method,
   {
     WSREP_ERROR("sst_prepare_other(): appending auth failed: %d", ret);
     return ret;
+  }
+
+  if (data_home_dir)
+  {
+    if ((ret= sst_append_data_dir(env, data_home_dir)))
+    {
+      WSREP_ERROR("sst_prepare_other(): appending data "
+                  "directory failed: %d", ret);
+      return ret;
+    }
   }
 
   pthread_t tmp;
@@ -698,7 +772,7 @@ ssize_t wsrep_sst_prepare (void** msg)
 
   // Attempt 1: wsrep_sst_receive_address
   if (wsrep_sst_receive_address &&
-    strcmp (wsrep_sst_receive_address, WSREP_SST_ADDRESS_AUTO))
+      strcmp (wsrep_sst_receive_address, WSREP_SST_ADDRESS_AUTO))
   {
     addr_in= wsrep_sst_receive_address;
   }
@@ -838,16 +912,13 @@ static int sst_donate_mysqldump (const char*         addr,
 {
   char host[256];
   wsp::Address address(addr);
-
   if (!address.is_valid())
   {
     WSREP_ERROR("Could not parse SST address : %s", addr);
     return 0;
   }
-
   memcpy(host, address.get_address(), address.get_address_len());
   int port= address.get_port();
-
   int const cmd_len= 4096;
   wsp::string  cmd_str(cmd_len);
 
@@ -864,15 +935,15 @@ static int sst_donate_mysqldump (const char*         addr,
 
   int ret= snprintf (cmd_str(), cmd_len,
                      "wsrep_sst_mysqldump "
-                     WSREP_SST_OPT_HOST" '%s' "
-                     WSREP_SST_OPT_PORT" '%d' "
-                     WSREP_SST_OPT_LPORT" '%u' "
-                     WSREP_SST_OPT_SOCKET" '%s' "
+                     WSREP_SST_OPT_ADDR " '%s' "
+                     WSREP_SST_OPT_PORT " '%d' "
+                     WSREP_SST_OPT_LPORT " '%u' "
+                     WSREP_SST_OPT_SOCKET " '%s' "
                      " %s "
-                     WSREP_SST_OPT_GTID" '%s:%lld' "
-                     WSREP_SST_OPT_GTID_DOMAIN_ID" '%d'"
+                     WSREP_SST_OPT_GTID " '%s:%lld' "
+                     WSREP_SST_OPT_GTID_DOMAIN_ID " '%d'"
                      "%s",
-                     host, port, mysqld_port, mysqld_unix_port,
+	             addr, port, mysqld_port, mysqld_unix_port,
                      wsrep_defaults_file, uuid_str,
                      (long long)seqno, wsrep_gtid_domain_id,
                      bypass ? " " WSREP_SST_OPT_BYPASS : "");
@@ -1119,6 +1190,16 @@ wait_signal:
         if (!err)
         {
           sst_disallow_writes (thd.ptr, true);
+          /*
+            Lets also keep statements that modify binary logs (like RESET LOGS,
+            RESET MASTER) from proceeding until the files have been transferred
+            to the joiner node.
+          */
+          if (mysql_bin_log.is_open())
+          {
+            mysql_mutex_lock(mysql_bin_log.get_log_lock());
+          }
+
           locked= true;
           goto wait_signal;
         }
@@ -1127,6 +1208,11 @@ wait_signal:
       {
         if (locked)
         {
+          if (mysql_bin_log.is_open())
+          {
+            mysql_mutex_assert_owner(mysql_bin_log.get_log_lock());
+            mysql_mutex_unlock(mysql_bin_log.get_log_lock());
+          }
           sst_disallow_writes (thd.ptr, false);
           thd.ptr->global_read_lock.unlock_global_read_lock (thd.ptr);
           locked= false;
@@ -1159,6 +1245,11 @@ wait_signal:
 
   if (locked) // don't forget to unlock server before return
   {
+    if (mysql_bin_log.is_open())
+    {
+      mysql_mutex_assert_owner(mysql_bin_log.get_log_lock());
+      mysql_mutex_unlock(mysql_bin_log.get_log_lock());
+    }
     sst_disallow_writes (thd.ptr, false);
     thd.ptr->global_read_lock.unlock_global_read_lock (thd.ptr);
   }
@@ -1207,14 +1298,14 @@ static int sst_donate_other (const char*   method,
 
   ret= snprintf (cmd_str(), cmd_len,
                  "wsrep_sst_%s "
-                 WSREP_SST_OPT_ROLE" 'donor' "
-                 WSREP_SST_OPT_ADDR" '%s' "
-                 WSREP_SST_OPT_SOCKET" '%s' "
-                 WSREP_SST_OPT_DATA" '%s' "
+                 WSREP_SST_OPT_ROLE " 'donor' "
+                 WSREP_SST_OPT_ADDR " '%s' "
+                 WSREP_SST_OPT_SOCKET " '%s' "
+                 WSREP_SST_OPT_DATA " '%s' "
                  " %s "
                  " %s '%s' "
-                 WSREP_SST_OPT_GTID" '%s:%lld' "
-                 WSREP_SST_OPT_GTID_DOMAIN_ID" '%d'"
+                 WSREP_SST_OPT_GTID " '%s:%lld' "
+                 WSREP_SST_OPT_GTID_DOMAIN_ID " '%d'"
                  "%s",
                  method, addr, mysqld_unix_port, mysql_real_data_home,
                  wsrep_defaults_file,
@@ -1279,6 +1370,16 @@ wsrep_cb_status_t wsrep_sst_donate_cb (void* app_ctx, void* recv_ctx,
     return WSREP_CB_FAILURE;
   }
 
+  if (data_home_dir)
+  {
+    if ((ret= sst_append_data_dir(env, data_home_dir)))
+    {
+      WSREP_ERROR("wsrep_sst_donate_cb(): appending data "
+                  "directory failed: %d", ret);
+      return WSREP_CB_FAILURE;
+    }
+  }
+
   if (!strcmp (WSREP_SST_MYSQLDUMP, method))
   {
     ret = sst_donate_mysqldump(data, &current_gtid->uuid, uuid_str,
@@ -1300,10 +1401,25 @@ void wsrep_SE_init_grab()
 
 void wsrep_SE_init_wait()
 {
+  double total_wtime=0;
+
   while (SE_initialized == false)
   {
-    mysql_cond_wait (&COND_wsrep_sst_init, &LOCK_wsrep_sst_init);
+    struct timespec wtime;
+    set_timespec(wtime, WSREP_TIMEDWAIT_SECONDS);
+    time_t start_time = time(NULL);
+    mysql_cond_timedwait (&COND_wsrep_sst_init, &LOCK_wsrep_sst_init, &wtime);
+    time_t end_time = time(NULL);
+
+    if (!SE_initialized)
+    {
+      total_wtime += difftime(end_time, start_time);
+      WSREP_DEBUG("Waiting for SST to complete. current seqno: %" PRId64 " waited %f secs.", local_seqno, total_wtime);
+      service_manager_extend_timeout(WSREP_EXTEND_TIMEOUT_INTERVAL,
+        "WSREP state transfer ongoing, current seqno: %ld waited %f secs", local_seqno, total_wtime);
+    }
   }
+
   mysql_mutex_unlock (&LOCK_wsrep_sst_init);
 }
 

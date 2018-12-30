@@ -181,7 +181,16 @@ int toku_db_get_range_lock(DB *db, DB_TXN *txn, const DBT *left_key, const DBT *
     request.create();
     int r = toku_db_start_range_lock(db, txn, left_key, right_key, lock_type, &request);
     if (r == DB_LOCK_NOTGRANTED) {
+        toku_debug_sync(db_txn_struct_i(txn)->tokutxn,
+                        "toku_range_lock_before_wait");
         r = toku_db_wait_range_lock(db, txn, &request);
+        if (r == DB_LOCK_NOTGRANTED)
+            toku_debug_sync(db_txn_struct_i(txn)->tokutxn,
+                            "toku_range_lock_not_granted_after_wait");
+    }
+    else if (r == 0) {
+        toku_debug_sync(db_txn_struct_i(txn)->tokutxn,
+                        "toku_range_lock_granted_immediately");
     }
 
     request.destroy();
@@ -191,9 +200,13 @@ int toku_db_get_range_lock(DB *db, DB_TXN *txn, const DBT *left_key, const DBT *
 // Setup and start an asynchronous lock request.
 int toku_db_start_range_lock(DB *db, DB_TXN *txn, const DBT *left_key, const DBT *right_key,
         toku::lock_request::type lock_type, toku::lock_request *request) {
+    uint64_t client_id;
+    void *client_extra;
     DB_TXN *txn_anc = txn_oldest_ancester(txn);
     TXNID txn_anc_id = txn_anc->id64(txn_anc);
-    request->set(db->i->lt, txn_anc_id, left_key, right_key, lock_type, toku_is_big_txn(txn_anc));
+    txn->get_client_id(txn, &client_id, &client_extra);
+    request->set(db->i->lt, txn_anc_id, left_key, right_key, lock_type,
+        toku_is_big_txn(txn_anc), client_extra);
 
     const int r = request->start();
     if (r == 0) {
@@ -221,7 +234,8 @@ int toku_db_wait_range_lock(DB *db, DB_TXN *txn, toku::lock_request *request) {
     uint64_t killed_time_msec = env->i->default_killed_time_msec;
     if (env->i->get_killed_time_callback)
         killed_time_msec = env->i->get_killed_time_callback(killed_time_msec);
-    const int r = request->wait(wait_time_msec, killed_time_msec, env->i->killed_callback);
+    const int r = request->wait(wait_time_msec, killed_time_msec, env->i->killed_callback,
+                                env->i->lock_wait_needed_callback);
     if (r == 0) {
         db_txn_note_row_lock(db, txn_anc, left_key, right_key);
     } else if (r == DB_LOCK_NOTGRANTED) {
@@ -241,6 +255,8 @@ int toku_db_get_point_write_lock(DB *db, DB_TXN *txn, const DBT *key) {
 // acquire a point write lock on the key for a given txn.
 // this does not block the calling thread.
 void toku_db_grab_write_lock (DB *db, DBT *key, TOKUTXN tokutxn) {
+    uint64_t client_id;
+    void *client_extra;
     DB_TXN *txn = toku_txn_get_container_db_txn(tokutxn);
     DB_TXN *txn_anc = txn_oldest_ancester(txn);
     TXNID txn_anc_id = txn_anc->id64(txn_anc);
@@ -248,7 +264,10 @@ void toku_db_grab_write_lock (DB *db, DBT *key, TOKUTXN tokutxn) {
     // This lock request must succeed, so we do not want to wait
     toku::lock_request request;
     request.create();
-    request.set(db->i->lt, txn_anc_id, key, key, toku::lock_request::type::WRITE, toku_is_big_txn(txn_anc));
+    txn->get_client_id(txn, &client_id, &client_extra);
+    request.set(db->i->lt, txn_anc_id, key, key,
+        toku::lock_request::type::WRITE, toku_is_big_txn(txn_anc),
+        client_extra);
     int r = request.start();
     invariant_zero(r);
     db_txn_note_row_lock(db, txn_anc, key, key);
@@ -268,7 +287,7 @@ void toku_db_release_lt_key_ranges(DB_TXN *txn, txn_lt_key_ranges *ranges) {
 
     // all of our locks have been released, so first try to wake up
     // pending lock requests, then release our reference on the lt
-    toku::lock_request::retry_all_lock_requests(lt);
+    toku::lock_request::retry_all_lock_requests(lt, txn->mgrp->i->lock_wait_needed_callback);
 
     // Release our reference on this locktree
     toku::locktree_manager *ltm = &txn->mgrp->i->ltm;

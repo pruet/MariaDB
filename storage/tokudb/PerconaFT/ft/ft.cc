@@ -50,9 +50,10 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #include <toku_assert.h>
 #include <portability/toku_atomic.h>
 
-void 
-toku_reset_root_xid_that_created(FT ft, TXNID new_root_xid_that_created) {
-    // Reset the root_xid_that_created field to the given value.  
+toku_instr_key *ft_ref_lock_mutex_key;
+
+void toku_reset_root_xid_that_created(FT ft, TXNID new_root_xid_that_created) {
+    // Reset the root_xid_that_created field to the given value.
     // This redefines which xid created the dictionary.
 
     // hold lock around setting and clearing of dirty bit
@@ -100,15 +101,11 @@ toku_ft_free (FT ft) {
     toku_free(ft);
 }
 
-void
-toku_ft_init_reflock(FT ft) {
-    toku_mutex_init(&ft->ft_ref_lock, NULL);
+void toku_ft_init_reflock(FT ft) {
+    toku_mutex_init(*ft_ref_lock_mutex_key, &ft->ft_ref_lock, nullptr);
 }
 
-void
-toku_ft_destroy_reflock(FT ft) {
-    toku_mutex_destroy(&ft->ft_ref_lock);
-}
+void toku_ft_destroy_reflock(FT ft) { toku_mutex_destroy(&ft->ft_ref_lock); }
 
 void
 toku_ft_grab_reflock(FT ft) {
@@ -198,6 +195,8 @@ static void ft_checkpoint (CACHEFILE cf, int fd, void *header_v) {
         ch->time_of_last_modification = now;
         ch->checkpoint_count++;
         ft_hack_highest_unused_msn_for_upgrade_for_checkpoint(ft);
+        ch->on_disk_logical_rows =
+            ft->h->on_disk_logical_rows = ft->in_memory_logical_rows;
                                                              
         // write translation and header to disk (or at least to OS internal buffer)
         toku_serialize_ft_to(fd, ch, &ft->blocktable, ft->cf);
@@ -251,7 +250,19 @@ static void ft_close(CACHEFILE cachefile, int fd, void *header_v, bool oplsn_val
             char* fname_in_env = toku_cachefile_fname_in_env(cachefile);
             assert(fname_in_env);
             BYTESTRING bs = {.len=(uint32_t) strlen(fname_in_env), .data=fname_in_env};
-            toku_log_fclose(logger, &lsn, ft->h->dirty, bs, toku_cachefile_filenum(cachefile)); // flush the log on close (if new header is being written), otherwise it might not make it out.
+            if (!toku_cachefile_is_skip_log_recover_on_close(cachefile)) {
+                toku_log_fclose(
+                    logger,
+                    &lsn,
+                    ft->h->dirty,
+                    bs,
+                    toku_cachefile_filenum(cachefile));  // flush the log on
+                                                         // close (if new header
+                                                         // is being written),
+                                                         // otherwise it might
+                                                         // not make it out.
+                toku_cachefile_do_log_recover_on_close(cachefile);
+            }
         }
     }
     if (ft->h->dirty) {               // this is the only place this bit is tested (in currentheader)
@@ -383,7 +394,8 @@ ft_header_create(FT_OPTIONS options, BLOCKNUM root_blocknum, TXNID root_xid_that
         .count_of_optimize_in_progress = 0,
         .count_of_optimize_in_progress_read_from_disk = 0,
         .msn_at_start_of_last_completed_optimize = ZERO_MSN,
-        .on_disk_stats = ZEROSTATS
+        .on_disk_stats = ZEROSTATS,
+        .on_disk_logical_rows = 0
     };
     return (FT_HEADER) toku_xmemdup(&h, sizeof h);
 }
@@ -420,7 +432,8 @@ int toku_read_ft_and_store_in_cachefile (FT_HANDLE ft_handle, CACHEFILE cf, LSN 
     }
 
     int fd = toku_cachefile_get_fd(cf);
-    int r = toku_deserialize_ft_from(fd, max_acceptable_lsn, &ft);
+    const char *fn = toku_cachefile_fname_in_env(cf);
+    int r = toku_deserialize_ft_from(fd, fn, max_acceptable_lsn, &ft);
     if (r == TOKUDB_BAD_CHECKSUM) {
         fprintf(stderr, "Checksum failure while reading header in file %s.\n", toku_cachefile_fname_in_env(cf));
         assert(false);  // make absolutely sure we crash before doing anything else
@@ -802,7 +815,14 @@ toku_ft_stat64 (FT ft, struct ftstat64_s *s) {
     s->fsize = toku_cachefile_size(ft->cf);
     // just use the in memory stats from the header
     // prevent appearance of negative numbers for numrows, numbytes
-    int64_t n = ft->in_memory_stats.numrows;
+    // if the logical count was never properly re-counted on an upgrade,
+    // return the existing physical count instead.
+    int64_t n;
+    if (ft->in_memory_logical_rows == (uint64_t)-1) {
+        n = ft->in_memory_stats.numrows;
+    } else {
+        n = ft->in_memory_logical_rows;
+    }
     if (n < 0) {
         n = 0;
     }
@@ -871,20 +891,41 @@ DESCRIPTOR toku_ft_get_cmp_descriptor(FT_HANDLE ft_handle) {
     return &ft_handle->ft->cmp_descriptor;
 }
 
-void
-toku_ft_update_stats(STAT64INFO headerstats, STAT64INFO_S delta) {
+void toku_ft_update_stats(STAT64INFO headerstats, STAT64INFO_S delta) {
     (void) toku_sync_fetch_and_add(&(headerstats->numrows),  delta.numrows);
     (void) toku_sync_fetch_and_add(&(headerstats->numbytes), delta.numbytes);
 }
 
-void
-toku_ft_decrease_stats(STAT64INFO headerstats, STAT64INFO_S delta) {
+void toku_ft_decrease_stats(STAT64INFO headerstats, STAT64INFO_S delta) {
     (void) toku_sync_fetch_and_sub(&(headerstats->numrows),  delta.numrows);
     (void) toku_sync_fetch_and_sub(&(headerstats->numbytes), delta.numbytes);
 }
 
-void
-toku_ft_remove_reference(FT ft, bool oplsn_valid, LSN oplsn, remove_ft_ref_callback remove_ref, void *extra) {
+void toku_ft_adjust_logical_row_count(FT ft, int64_t delta) {
+    // In order to make sure that the correct count is returned from
+    // toku_ft_stat64, the ft->(in_memory|on_disk)_logical_rows _MUST_NOT_ be
+    // modified from anywhere else from here with the exceptions of
+    // serializing in a header, initializing a new header and analyzing
+    // an index for a logical_row count.
+    // The gist is that on an index upgrade, all logical_rows values
+    // in the ft header are set to -1 until an analyze can reset it to an
+    // accurate value. Until then, the physical count from in_memory_stats
+    // must be returned in toku_ft_stat64.
+    if (delta != 0 && ft->in_memory_logical_rows != (uint64_t)-1) {
+        toku_sync_fetch_and_add(&(ft->in_memory_logical_rows), delta);
+        if (ft->in_memory_logical_rows == (uint64_t)-1) {
+            toku_sync_fetch_and_add(&(ft->in_memory_logical_rows), 1);
+        }
+    }
+}
+
+void toku_ft_remove_reference(
+    FT ft,
+    bool oplsn_valid,
+    LSN oplsn,
+    remove_ft_ref_callback remove_ref,
+    void *extra) {
+
     toku_ft_grab_reflock(ft);
     if (toku_ft_has_one_reference_unlocked(ft)) {
         toku_ft_release_reflock(ft);

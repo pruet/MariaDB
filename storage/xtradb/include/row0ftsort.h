@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2010, 2012, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, MariaDB Corporation.
+Copyright (c) 2010, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2015, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -72,7 +72,6 @@ struct fts_psort_common_t {
 						store Doc ID during sort, if
 						Doc ID will not be big enough
 						to use 8 bytes value */
-	fil_space_crypt_t*	crypt_data;	/*!< crypt data or NULL */
 };
 
 struct fts_psort_t {
@@ -112,6 +111,14 @@ struct fts_tokenize_ctx {
 	ib_rbt_t*		cached_stopword;/*!< in: stopword list */
 	dfield_t		sort_field[FTS_NUM_FIELDS_SORT];
 						/*!< in: sort field */
+
+	fts_tokenize_ctx() :
+		processed_len(0), init_pos(0), buf_used(0),
+		rows_added(), cached_stopword(NULL), sort_field()
+	{
+		memset(rows_added, 0, sizeof rows_added);
+		memset(sort_field, 0, sizeof sort_field);
+	}
 };
 
 typedef struct fts_tokenize_ctx fts_tokenize_ctx_t;
@@ -193,7 +200,7 @@ row_fts_psort_info_init(
 					instantiated */
 	fts_psort_t**		merge)	/*!< out: parallel merge info
 					to be instantiated */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /********************************************************************//**
 Clean up and deallocate FTS parallel sort structures, and close
 temparary merge sort files */
@@ -281,5 +288,5 @@ row_fts_merge_insert(
 	fts_psort_t*	psort_info,	/*!< parallel sort info */
 	ulint		id)		/* !< in: which auxiliary table's data
 					to insert to */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 #endif /* row0ftsort_h */

@@ -262,11 +262,11 @@ create table mysqltest2.t2 like test.t1;
 lock table test.t1 write, mysqltest2.t2 write;
 select * from information_schema.metadata_lock_info;
 THREAD_ID	LOCK_MODE	LOCK_DURATION	LOCK_TYPE	TABLE_SCHEMA	TABLE_NAME
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Global read lock		
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	test	t1
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	mysqltest2	
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	test	
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	mysqltest2	t2
+#	MDL_INTENTION_EXCLUSIVE	NULL	Global read lock		
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	mysqltest2	
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	test	
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	mysqltest2	t2
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	test	t1
 create or replace table test.t1;
 ERROR 42000: A table must have at least 1 column
 show tables;
@@ -274,10 +274,10 @@ Tables_in_test
 t2
 select * from information_schema.metadata_lock_info;
 THREAD_ID	LOCK_MODE	LOCK_DURATION	LOCK_TYPE	TABLE_SCHEMA	TABLE_NAME
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Global read lock		
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	mysqltest2	
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	test	
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	mysqltest2	t2
+#	MDL_INTENTION_EXCLUSIVE	NULL	Global read lock		
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	mysqltest2	
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	test	
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	mysqltest2	t2
 create or replace table mysqltest2.t2;
 ERROR 42000: A table must have at least 1 column
 select * from information_schema.metadata_lock_info;
@@ -289,11 +289,11 @@ create table mysqltest2.t2 like test.t1;
 lock table test.t1 write, mysqltest2.t2 write;
 select * from information_schema.metadata_lock_info;
 THREAD_ID	LOCK_MODE	LOCK_DURATION	LOCK_TYPE	TABLE_SCHEMA	TABLE_NAME
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Global read lock		
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	test	t1
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	mysqltest2	
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	test	
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	mysqltest2	t2
+#	MDL_INTENTION_EXCLUSIVE	NULL	Global read lock		
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	mysqltest2	
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	test	
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	mysqltest2	t2
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	test	t1
 create or replace table test.t1 (a int) select 1 as 'a', 2 as 'a';
 ERROR 42S21: Duplicate column name 'a'
 show tables;
@@ -301,10 +301,10 @@ Tables_in_test
 t2
 select * from information_schema.metadata_lock_info;
 THREAD_ID	LOCK_MODE	LOCK_DURATION	LOCK_TYPE	TABLE_SCHEMA	TABLE_NAME
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Global read lock		
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	mysqltest2	
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	test	
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	mysqltest2	t2
+#	MDL_INTENTION_EXCLUSIVE	NULL	Global read lock		
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	mysqltest2	
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	test	
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	mysqltest2	t2
 create or replace table mysqltest2.t2 (a int) select 1 as 'a', 2 as 'a';
 ERROR 42S21: Duplicate column name 'a'
 select * from information_schema.metadata_lock_info;
@@ -398,31 +398,31 @@ create table t1 (a int);
 lock table t1 write, t2 read;
 select * from information_schema.metadata_lock_info;
 THREAD_ID	LOCK_MODE	LOCK_DURATION	LOCK_TYPE	TABLE_SCHEMA	TABLE_NAME
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Global read lock		
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	test	t1
-#	MDL_SHARED_READ	MDL_EXPLICIT	Table metadata lock	test	t2
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	test	
+#	MDL_INTENTION_EXCLUSIVE	NULL	Global read lock		
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	test	
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	test	t1
+#	MDL_SHARED_READ	NULL	Table metadata lock	test	t2
 create or replace table t1 (i int);
 select * from information_schema.metadata_lock_info;
 THREAD_ID	LOCK_MODE	LOCK_DURATION	LOCK_TYPE	TABLE_SCHEMA	TABLE_NAME
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Global read lock		
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	test	t1
-#	MDL_SHARED_READ	MDL_EXPLICIT	Table metadata lock	test	t2
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	test	
+#	MDL_INTENTION_EXCLUSIVE	NULL	Global read lock		
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	test	
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	test	t1
+#	MDL_SHARED_READ	NULL	Table metadata lock	test	t2
 create or replace table t1 like t2;
 select * from information_schema.metadata_lock_info;
 THREAD_ID	LOCK_MODE	LOCK_DURATION	LOCK_TYPE	TABLE_SCHEMA	TABLE_NAME
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Global read lock		
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	test	t1
-#	MDL_SHARED_READ	MDL_EXPLICIT	Table metadata lock	test	t2
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	test	
+#	MDL_INTENTION_EXCLUSIVE	NULL	Global read lock		
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	test	
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	test	t1
+#	MDL_SHARED_READ	NULL	Table metadata lock	test	t2
 create or replace table t1 select 1 as f1;
 select * from information_schema.metadata_lock_info;
 THREAD_ID	LOCK_MODE	LOCK_DURATION	LOCK_TYPE	TABLE_SCHEMA	TABLE_NAME
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Global read lock		
-#	MDL_SHARED_NO_READ_WRITE	MDL_EXPLICIT	Table metadata lock	test	t1
-#	MDL_SHARED_READ	MDL_EXPLICIT	Table metadata lock	test	t2
-#	MDL_INTENTION_EXCLUSIVE	MDL_EXPLICIT	Schema metadata lock	test	
+#	MDL_INTENTION_EXCLUSIVE	NULL	Global read lock		
+#	MDL_INTENTION_EXCLUSIVE	NULL	Schema metadata lock	test	
+#	MDL_SHARED_NO_READ_WRITE	NULL	Table metadata lock	test	t1
+#	MDL_SHARED_READ	NULL	Table metadata lock	test	t2
 drop table t1;
 unlock tables;
 #
@@ -440,3 +440,69 @@ KILL QUERY con_id;
 ERROR 70100: Query execution was interrupted
 drop table t1;
 DROP TABLE t2;
+#
+# MDEV-10824 - Crash in CREATE OR REPLACE TABLE t1 AS SELECT spfunc()
+#
+CREATE TABLE t1(a INT);
+CREATE FUNCTION f1() RETURNS VARCHAR(16383) RETURN 'test';
+CREATE OR REPLACE TABLE t1 AS SELECT f1();
+LOCK TABLE t1 WRITE;
+CREATE OR REPLACE TABLE t1 AS SELECT f1();
+UNLOCK TABLES;
+DROP FUNCTION f1;
+DROP TABLE t1;
+#
+# MDEV-11129
+# CREATE OR REPLACE TABLE t1 AS SELECT spfunc() crashes if spfunc()
+# references t1
+#
+CREATE OR REPLACE TABLE t1(a INT);
+CREATE FUNCTION f1() RETURNS VARCHAR(16383)
+BEGIN
+INSERT INTO t1 VALUES(1);
+RETURN 'test';
+END;
+$$
+CREATE OR REPLACE TABLE t1 AS SELECT f1();
+ERROR HY000: Table 't1' is specified twice, both as a target for 'CREATE' and as a separate source for data
+LOCK TABLE t1 WRITE;
+CREATE OR REPLACE TABLE t1 AS SELECT f1();
+ERROR HY000: Table 't1' was not locked with LOCK TABLES
+UNLOCK TABLES;
+DROP FUNCTION f1;
+DROP TABLE t1;
+#
+# MDEV-14410 - Assertion `table->pos_in_locked_tables == __null ||
+#              table->pos_in_locked_tables->table == table' failed in
+#              mark_used_tables_as_free_for_reuse
+#
+CREATE TABLE t1 (a INT);
+CREATE TABLE t2 (b INT);
+CREATE TABLE t3 (c INT);
+CREATE TRIGGER tr1 BEFORE INSERT ON t3 FOR EACH ROW INSERT INTO t1 VALUES ();
+CREATE TRIGGER tr2 BEFORE INSERT ON t2 FOR EACH ROW INSERT INTO t3 SELECT * FROM t1;
+LOCK TABLE t1 WRITE, t2 WRITE;
+CREATE OR REPLACE TABLE t1 (i INT);
+UNLOCK TABLES;
+INSERT INTO t2 VALUES (1);
+DROP TABLE t1, t2, t3;
+#
+# MDEV-11071 - Assertion `thd->transaction.stmt.is_empty()' failed in
+#              Locked_tables_list::unlock_locked_tables
+#
+CREATE TEMPORARY TABLE t1(a INT) ENGINE=InnoDB;
+CREATE TEMPORARY TABLE t2(a INT);
+CREATE TABLE t3(a INT);
+LOCK TABLE t2 WRITE;
+SELECT * FROM t2;
+a
+CREATE OR REPLACE TEMPORARY TABLE t1(c INT DEFAULT '');
+ERROR 42000: Invalid default value for 'c'
+SELECT * FROM t3;
+ERROR HY000: Table 't3' was not locked with LOCK TABLES
+CREATE OR REPLACE TEMPORARY TABLE t2(c INT DEFAULT '');
+ERROR 42000: Invalid default value for 'c'
+SELECT * FROM t3;
+ERROR HY000: Table 't3' was not locked with LOCK TABLES
+UNLOCK TABLES;
+DROP TABLE t3;

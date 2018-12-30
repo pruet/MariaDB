@@ -1,9 +1,9 @@
 /************* Tabxml C++ Program Source Code File (.CPP) **************/
 /* PROGRAM NAME: TABXML                                                */
 /* -------------                                                       */
-/*  Version 2.8                                                        */
+/*  Version 3.0                                                        */
 /*                                                                     */
-/*  Author Olivier BERTRAND          2007 - 2015                       */
+/*  Author Olivier BERTRAND          2007 - 2017                       */
 /*                                                                     */
 /*  This program are the XML tables classes using MS-DOM or libxml2.   */
 /***********************************************************************/
@@ -42,7 +42,7 @@
 /***********************************************************************/
 #include "global.h"
 #include "plgdbsem.h"
-#include "reldef.h"
+//#include "reldef.h"
 #include "xtable.h"
 #include "colblk.h"
 #include "mycat.h"
@@ -118,10 +118,11 @@ PQRYRES XMLColumns(PGLOBAL g, char *db, char *tab, PTOS topt, bool info)
   static XFLD fldtyp[] = {FLD_NAME, FLD_TYPE, FLD_TYPENAME, FLD_PREC, 
                           FLD_LENGTH, FLD_SCALE, FLD_NULL, FLD_FORMAT};
   static unsigned int length[] = {0, 6, 8, 10, 10, 6, 6, 0};
-  char   *fn, *op, colname[65], fmt[129], buf[512];
+  char    colname[65], fmt[129], buf[512];
   int     i, j, lvl, n = 0;
   int     ncol = sizeof(buftyp) / sizeof(int);
   bool    ok = true;
+	PCSZ    fn, op;
   PXCL    xcol, xcp, fxcp = NULL, pxcp = NULL;
   PLVL   *lvlp, vp;
   PXNODE  node = NULL;
@@ -136,7 +137,12 @@ PQRYRES XMLColumns(PGLOBAL g, char *db, char *tab, PTOS topt, bool info)
     goto skipit;
     } // endif info
 
-  /*********************************************************************/
+	if (GetIntegerTableOption(g, topt, "Multiple", 0)) {
+		strcpy(g->Message, "Cannot find column definition for multiple table");
+		return NULL;
+	}	// endif Multiple
+
+	/*********************************************************************/
   /*  Open the input file.                                             */
   /*********************************************************************/
   if (!(fn = GetStringTableOption(g, topt, "Filename", NULL))) {
@@ -147,13 +153,18 @@ PQRYRES XMLColumns(PGLOBAL g, char *db, char *tab, PTOS topt, bool info)
     lvl = (lvl < 0) ? 0 : (lvl > 16) ? 16 : lvl;
   } // endif fn
 
-  if (trace)
+  if (trace(1))
     htrc("File %s lvl=%d\n", topt->filename, lvl);
 
   tdp = new(g) XMLDEF;
   tdp->Fn = fn;
-  tdp->Database = SetPath(g, db);
+
+	if (!(tdp->Database = SetPath(g, db)))
+		return NULL;
+
   tdp->Tabname = tab;
+	tdp->Zipped = GetBooleanTableOption(g, topt, "Zipped", false);
+	tdp->Entry = GetStringTableOption(g, topt, "Entry", NULL);
 
   if (!(op = GetStringTableOption(g, topt, "Xmlsup", NULL)))
 #if defined(__WIN__)
@@ -204,7 +215,8 @@ PQRYRES XMLColumns(PGLOBAL g, char *db, char *tab, PTOS topt, bool info)
 
     while (true) {
       if (!vp->atp &&
-          !(node = (vp->nl) ? vp->nl->GetItem(g, vp->k++, node) : NULL))
+				!(node = (vp->nl) ? vp->nl->GetItem(g, vp->k++, tdp->Usedom ? node : NULL)
+				                  : NULL))
         if (j) {
           vp = lvlp[--j];
 
@@ -254,7 +266,8 @@ PQRYRES XMLColumns(PGLOBAL g, char *db, char *tab, PTOS topt, bool info)
         if (j < lvl && ok) {
           vp = lvlp[j+1];
           vp->k = 0;
-          vp->atp = node->GetAttribute(g, NULL);
+					vp->pn = node;
+					vp->atp = node->GetAttribute(g, NULL);
           vp->nl = node->GetChildElements(g);
 
           if (tdp->Usedom && vp->nl->GetLength() == 1) {
@@ -265,7 +278,7 @@ PQRYRES XMLColumns(PGLOBAL g, char *db, char *tab, PTOS topt, bool info)
 
           if (vp->atp || vp->b) {
             if (!vp->atp)
-              node = vp->nl->GetItem(g, vp->k++, node);
+							node = vp->nl->GetItem(g, vp->k++, tdp->Usedom ? node : NULL);
 
 						strncat(fmt, colname, XLEN(fmt));
 						strncat(fmt, "/", XLEN(fmt));
@@ -349,8 +362,8 @@ PQRYRES XMLColumns(PGLOBAL g, char *db, char *tab, PTOS topt, bool info)
   txmp->CloseDB(g);
 
  skipit:
-  if (trace)
-    htrc("CSVColumns: n=%d len=%d\n", n, length[0]);
+  if (trace(1))
+    htrc("XMLColumns: n=%d len=%d\n", n, length[0]);
 
   /*********************************************************************/
   /*  Allocate the structures used to refer to the result set.         */
@@ -424,11 +437,14 @@ XMLDEF::XMLDEF(void)
   DefNs = NULL;
   Attrib = NULL;
   Hdattr = NULL;
+	Entry = NULL;
   Coltype = 1;
   Limit = 0;
   Header = 0;
   Xpand = false;
   Usedom = false;
+	Zipped = false;
+	Mulentries = false;
   } // end of XMLDEF constructor
 
 /***********************************************************************/
@@ -436,7 +452,8 @@ XMLDEF::XMLDEF(void)
 /***********************************************************************/
 bool XMLDEF::DefineAM(PGLOBAL g, LPCSTR am, int poff)
   {
-  char *defrow, *defcol, buf[10];
+	PCSZ defrow, defcol;
+	char buf[10];
 
   Fn = GetStringCatInfo(g, "Filename", NULL);
   Encoding = GetStringCatInfo(g, "Encoding", "UTF-8");
@@ -507,7 +524,14 @@ bool XMLDEF::DefineAM(PGLOBAL g, LPCSTR am, int poff)
   // Get eventual table node attribute
   Attrib = GetStringCatInfo(g, "Attribute", NULL);
   Hdattr = GetStringCatInfo(g, "HeadAttr", NULL);
-  return false;
+
+	// Specific for zipped files
+	if ((Zipped = GetBoolCatInfo("Zipped", false)))
+		Mulentries = ((Entry = GetStringCatInfo(g, "Entry", NULL)))
+		? strchr(Entry, '*') || strchr(Entry, '?')
+		: GetBoolCatInfo("Mulentries", false);
+
+	return false;
   } // end of DefineAM
 
 /***********************************************************************/
@@ -517,6 +541,11 @@ PTDB XMLDEF::GetTable(PGLOBAL g, MODE m)
   {
   if (Catfunc == FNC_COL)
     return new(g) TDBXCT(this);
+
+	if (Zipped && !(m == MODE_READ || m == MODE_ANY)) {
+		strcpy(g->Message, "ZIpped XML tables are read only");
+		return NULL;
+	}	// endif Zipped
 
   PTDBASE tdbp = new(g) TDBXML(this);
 
@@ -547,6 +576,7 @@ TDBXML::TDBXML(PXMLDEF tdp) : TDBASE(tdp)
   Xfile = tdp->Fn;
   Enc = tdp->Encoding;
   Tabname = tdp->Tabname;
+#if 0 // why all these?
   Rowname = (tdp->Rowname) ? tdp->Rowname : NULL;
   Colname = (tdp->Colname) ? tdp->Colname : NULL;
   Mulnode = (tdp->Mulnode) ? tdp->Mulnode : NULL;
@@ -555,10 +585,22 @@ TDBXML::TDBXML(PXMLDEF tdp) : TDBASE(tdp)
   DefNs = (tdp->DefNs) ? tdp->DefNs : NULL;
   Attrib = (tdp->Attrib) ? tdp->Attrib : NULL;
   Hdattr = (tdp->Hdattr) ? tdp->Hdattr : NULL;
-  Coltype = tdp->Coltype;
+#endif // 0
+	Rowname = tdp->Rowname;
+	Colname = tdp->Colname;
+	Mulnode = tdp->Mulnode;
+	XmlDB = tdp->XmlDB;
+	Nslist = tdp->Nslist;
+	DefNs = tdp->DefNs;
+	Attrib = tdp->Attrib;
+	Hdattr = tdp->Hdattr;
+	Entry = tdp->Entry;
+	Coltype = tdp->Coltype;
   Limit = tdp->Limit;
   Xpand = tdp->Xpand;
-  Changed = false;
+	Zipped = tdp->Zipped;
+	Mulentries = tdp->Mulentries;
+	Changed = false;
   Checked = false;
   NextSame = false;
   NewRow = false;
@@ -600,10 +642,13 @@ TDBXML::TDBXML(PTDBXML tdbp) : TDBASE(tdbp)
   DefNs = tdbp->DefNs;
   Attrib = tdbp->Attrib;
   Hdattr = tdbp->Hdattr;
-  Coltype = tdbp->Coltype;
+	Entry = tdbp->Entry;
+	Coltype = tdbp->Coltype;
   Limit = tdbp->Limit;
   Xpand = tdbp->Xpand;
-  Changed = tdbp->Changed;
+	Zipped = tdbp->Zipped;
+	Mulentries = tdbp->Mulentries;
+	Changed = tdbp->Changed;
   Checked = tdbp->Checked;
   NextSame = tdbp->NextSame;
   NewRow = tdbp->NewRow;
@@ -620,7 +665,7 @@ TDBXML::TDBXML(PTDBXML tdbp) : TDBASE(tdbp)
   } // end of TDBXML copy constructor
 
 // Used for update
-PTDB TDBXML::CopyOne(PTABS t)
+PTDB TDBXML::Clone(PTABS t)
   {
   PTDB    tp;
   PXMLCOL cp1, cp2;
@@ -634,14 +679,14 @@ PTDB TDBXML::CopyOne(PTABS t)
     } // endfor cp1
 
   return tp;
-  } // end of CopyOne
+  } // end of Clone
 
 /***********************************************************************/
 /*  Allocate XML column description block.                             */
 /***********************************************************************/
 PCOL TDBXML::MakeCol(PGLOBAL g, PCOLDEF cdp, PCOL cprec, int n)
   {
-  if (trace)
+  if (trace(1))
     htrc("TDBXML: MakeCol %s n=%d\n", (cdp) ? cdp->GetName() : "<null>", n);
 
   return new(g) XMLCOL(cdp, this, cprec, n);
@@ -675,13 +720,13 @@ int TDBXML::LoadTableFile(PGLOBAL g, char *filename)
   if (Docp)
     return rc;               // Already done
 
-  if (trace)
+  if (trace(1))
     htrc("TDBXML: loading %s\n", filename);
 
   /*********************************************************************/
   /*  Firstly we check whether this file have been already loaded.     */
   /*********************************************************************/
-  if (Mode == MODE_READ || Mode == MODE_ANY)
+  if ((Mode == MODE_READ || Mode == MODE_ANY) && !Zipped) 
     for (fp = dup->Openlist; fp; fp = fp->Next)
       if (fp->Type == type && fp->Length && fp->Count)
         if (!stricmp(fp->Fname, filename))
@@ -703,16 +748,16 @@ int TDBXML::LoadTableFile(PGLOBAL g, char *filename)
       return RC_FX;
 
     // Initialize the implementation
-    if (Docp->Initialize(g)) {
+    if (Docp->Initialize(g, Entry, Zipped)) {
       sprintf(g->Message, MSG(INIT_FAILED), (Usedom) ? "DOM" : "libxml2");
       return RC_FX;
       } // endif init
 
-    if (trace)
+    if (trace(1))
       htrc("TDBXML: parsing %s rc=%d\n", filename, rc);
 
     // Parse the XML file
-    if (Docp->ParseFile(filename)) {
+    if (Docp->ParseFile(g, filename)) {
       // Does the file exist?
       int h= global_open(g, MSGID_NONE, filename, _O_RDONLY);
 
@@ -891,7 +936,7 @@ bool TDBXML::Initialize(PGLOBAL g)
     if (rc)
       sprintf(g->Message, "%s: %s", MSG(COM_ERROR), buf);
     else
-      sprintf(g->Message, "%s hr=%p", MSG(COM_ERROR), e.Error());
+      sprintf(g->Message, "%s hr=%x", MSG(COM_ERROR), e.Error());
 
     goto error;
 #endif   // __WIN__
@@ -1137,7 +1182,7 @@ int TDBXML::ReadDB(PGLOBAL g)
       } // endswitch recpos
 
   } else {
-    if (trace)
+    if (trace(1))
       htrc("TDBXML ReadDB: Irow=%d Nrow=%d\n", Irow, Nrow);
 
     // This is to force the table to be expanded when constructing
@@ -1164,7 +1209,7 @@ int TDBXML::ReadDB(PGLOBAL g)
   } // endif To_Kindex
 
   if (!same) {
-    if (trace > 1)
+    if (trace(2))
       htrc("TDBXML ReadDB: Irow=%d RowNode=%p\n", Irow, RowNode);
 
     // Get the new row node
@@ -1274,8 +1319,8 @@ void TDBXML::CloseDB(PGLOBAL g)
         Docp->CloseDoc(g, To_Xb);
 
         // This causes a crash in Diagnostics_area::set_error_status
-//      longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-        } // endif DumpDoc
+//				throw (int)TYPE_AM_XML;
+			} // endif DumpDoc
       
       } // endif Changed
 
@@ -1317,8 +1362,8 @@ void TDBXML::CloseDB(PGLOBAL g)
 /***********************************************************************/
 /*  XMLCOL public constructor.                                        */
 /***********************************************************************/
-XMLCOL::XMLCOL(PCOLDEF cdp, PTDB tdbp, PCOL cprec, int i, PSZ am)
-  : COLBLK(cdp, tdbp, i)
+XMLCOL::XMLCOL(PCOLDEF cdp, PTDB tdbp, PCOL cprec, int i, PCSZ am)
+      : COLBLK(cdp, tdbp, i)
   {
   if (cprec) {
     Next = cprec->GetNext();
@@ -1427,7 +1472,7 @@ bool XMLCOL::ParseXpath(PGLOBAL g, bool mode)
     } else
       strcat(pbuf, Xname);
 
-    if (trace)
+    if (trace(1))
       htrc("XMLCOL: pbuf=%s\n", pbuf);
 
     // For Update or Insert the Xpath must be analyzed
@@ -1510,7 +1555,7 @@ bool XMLCOL::ParseXpath(PGLOBAL g, bool mode)
   if (Type || Nod)
     Tdbp->Hasnod = true;
 
-  if (trace)
+  if (trace(1))
     htrc("XMLCOL: Xname=%s\n", pbuf);
 
   // Save the calculated Xpath
@@ -1597,8 +1642,8 @@ void XMLCOL::ReadColumn(PGLOBAL g)
     if (ValNode->GetType() != XML_ELEMENT_NODE &&
         ValNode->GetType() != XML_ATTRIBUTE_NODE) {
       sprintf(g->Message, MSG(BAD_VALNODE), ValNode->GetType(), Name);
-      longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-      } // endif type
+			throw (int)TYPE_AM_XML;
+		} // endif type
 
     // Get the Xname value from the XML file
     switch (ValNode->GetContent(g, Valbuf, Long + 1)) {
@@ -1608,8 +1653,8 @@ void XMLCOL::ReadColumn(PGLOBAL g)
         PushWarning(g, Tdbp);
         break;
       default:
-        longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-      } // endswitch
+				throw (int)TYPE_AM_XML;
+		} // endswitch
 
     Value->SetValue_psz(Valbuf);
   } else {
@@ -1634,7 +1679,7 @@ void XMLCOL::WriteColumn(PGLOBAL g)
   int   i, n, k = 0;
   PXNODE TopNode = NULL;
 
-  if (trace > 1)
+  if (trace(2))
     htrc("XML WriteColumn: col %s R%d coluse=%.4X status=%.4X\n",
           Name, Tdbp->GetTdb_No(), ColUse, Status);
 
@@ -1659,7 +1704,7 @@ void XMLCOL::WriteColumn(PGLOBAL g)
   /*  For columns having an Xpath, the Clist must be updated.          */
   /*********************************************************************/
   if (Tdbp->CheckRow(g, Nod || Tdbp->Colname))
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
+		throw (int)TYPE_AM_XML;
 
   /*********************************************************************/
   /*  Null values are represented by no node.                          */
@@ -1731,8 +1776,8 @@ void XMLCOL::WriteColumn(PGLOBAL g)
 
     if (ColNode == NULL) {
       strcpy(g->Message, MSG(COL_ALLOC_ERR));
-      longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-      } // endif ColNode
+			throw (int)TYPE_AM_XML;
+		} // endif ColNode
 
     } // endif ColNode
 
@@ -1750,7 +1795,7 @@ void XMLCOL::WriteColumn(PGLOBAL g)
 
   if (ValNode == NULL && AttNode == NULL) {
     strcpy(g->Message, MSG(VAL_ALLOC_ERR));
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
+    throw (int)TYPE_AM_XML;
     } // endif ValNode
 
   /*********************************************************************/
@@ -1760,8 +1805,8 @@ void XMLCOL::WriteColumn(PGLOBAL g)
 
   if (strlen(p) > (unsigned)Long) {
     sprintf(g->Message, MSG(VALUE_TOO_LONG), p, Name, Long);
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-  } else
+		throw (int)TYPE_AM_XML;
+	} else
     strcpy(Valbuf, p);
 
   /*********************************************************************/
@@ -1810,8 +1855,8 @@ void XMULCOL::ReadColumn(PGLOBAL g)
         if (ValNode->GetType() != XML_ELEMENT_NODE &&
             ValNode->GetType() != XML_ATTRIBUTE_NODE) {
           sprintf(g->Message, MSG(BAD_VALNODE), ValNode->GetType(), Name);
-          longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-          } // endif type
+					throw (int)TYPE_AM_XML;
+				} // endif type
 
         // Get the Xname value from the XML file
         switch (ValNode->GetContent(g, p, (b ? Long : len))) {
@@ -1821,7 +1866,7 @@ void XMULCOL::ReadColumn(PGLOBAL g)
             PushWarning(g, Tdbp);
             break;
           default:
-            longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
+            throw (int)TYPE_AM_XML;
           } // endswitch
 
         if (!b) {
@@ -1868,7 +1913,7 @@ void XMULCOL::WriteColumn(PGLOBAL g)
   int   i, n, len, k = 0;
   PXNODE TopNode = NULL;
 
-  if (trace)
+  if (trace(1))
     htrc("XML WriteColumn: col %s R%d coluse=%.4X status=%.4X\n",
           Name, Tdbp->GetTdb_No(), ColUse, Status);
 
@@ -1896,7 +1941,7 @@ void XMULCOL::WriteColumn(PGLOBAL g)
   /*  For columns having an Xpath, the Clist must be updated.          */
   /*********************************************************************/
   if (Tdbp->CheckRow(g, Nod))
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
+		throw (int)TYPE_AM_XML;
 
   /*********************************************************************/
   /*  Find the column and value nodes to update or insert.             */
@@ -1945,8 +1990,8 @@ void XMULCOL::WriteColumn(PGLOBAL g)
 
         if (len > 1 && !Tdbp->Xpand) {
           sprintf(g->Message, MSG(BAD_VAL_UPDATE), Name);
-          longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-        } else
+					throw (int)TYPE_AM_XML;
+				} else
           ValNode = Nlx->GetItem(g, Tdbp->Nsub, Vxnp);
 
       } else  // Inod != Nod
@@ -1987,8 +2032,8 @@ void XMULCOL::WriteColumn(PGLOBAL g)
 
     if (ColNode == NULL) {
       strcpy(g->Message, MSG(COL_ALLOC_ERR));
-      longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-      } // endif ColNode
+			throw (int)TYPE_AM_XML;
+		} // endif ColNode
 
     } // endif ColNode
 
@@ -2006,8 +2051,8 @@ void XMULCOL::WriteColumn(PGLOBAL g)
 
   if (ValNode == NULL && AttNode == NULL) {
     strcpy(g->Message, MSG(VAL_ALLOC_ERR));
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-    } // endif ValNode
+		throw (int)TYPE_AM_XML;
+	} // endif ValNode
 
   /*********************************************************************/
   /*  Get the string representation of Value according to column type. */
@@ -2016,8 +2061,8 @@ void XMULCOL::WriteColumn(PGLOBAL g)
 
   if (strlen(p) > (unsigned)Long) {
     sprintf(g->Message, MSG(VALUE_TOO_LONG), p, Name, Long);
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-  } else
+		throw (int)TYPE_AM_XML;
+	} else
     strcpy(Valbuf, p);
 
   /*********************************************************************/
@@ -2048,8 +2093,8 @@ void XPOSCOL::ReadColumn(PGLOBAL g)
 
   if (Tdbp->Clist == NULL) {
     strcpy(g->Message, MSG(MIS_TAG_LIST));
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-    } // endif Clist
+		throw (int)TYPE_AM_XML;
+	} // endif Clist
 
   if ((ValNode = Tdbp->Clist->GetItem(g, Rank, Vxnp))) {
     // Get the column value from the XML file
@@ -2060,8 +2105,8 @@ void XPOSCOL::ReadColumn(PGLOBAL g)
         PushWarning(g, Tdbp);
         break;
       default:
-        longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-      } // endswitch
+				throw (int)TYPE_AM_XML;
+		} // endswitch
 
     Value->SetValue_psz(Valbuf);
   } else {
@@ -2084,7 +2129,7 @@ void XPOSCOL::WriteColumn(PGLOBAL g)
   char          *p, buf[16];
   int           i, k, n;
 
-  if (trace)
+  if (trace(1))
     htrc("XML WriteColumn: col %s R%d coluse=%.4X status=%.4X\n",
           Name, Tdbp->GetTdb_No(), ColUse, Status);
 
@@ -2111,15 +2156,15 @@ void XPOSCOL::WriteColumn(PGLOBAL g)
   /*  For all columns the Clist must be updated.                       */
   /*********************************************************************/
   if (Tdbp->CheckRow(g, true))
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
+		throw (int)TYPE_AM_XML;
 
   /*********************************************************************/
   /*  Find the column and value nodes to update or insert.             */
   /*********************************************************************/
   if (Tdbp->Clist == NULL) {
     strcpy(g->Message, MSG(MIS_TAG_LIST));
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-    } // endif Clist
+		throw (int)TYPE_AM_XML;
+	} // endif Clist
 
   n =  Tdbp->Clist->GetLength();
   k = Rank;
@@ -2143,8 +2188,8 @@ void XPOSCOL::WriteColumn(PGLOBAL g)
 
   if (strlen(p) > (unsigned)Long) {
     sprintf(g->Message, MSG(VALUE_TOO_LONG), p, Name, Long);
-    longjmp(g->jumper[g->jump_level], TYPE_AM_XML);
-  } else
+		throw (int)TYPE_AM_XML;
+	} else
     strcpy(Valbuf, p);
 
   /*********************************************************************/

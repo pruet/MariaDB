@@ -50,7 +50,7 @@ IF(CMAKE_C_COMPILER MATCHES "icl")
 ENDIF()
 
 ADD_DEFINITIONS(-D_WINDOWS -D__WIN__ -D_CRT_SECURE_NO_DEPRECATE)
-ADD_DEFINITIONS(-D_WIN32_WINNT=0x0501)
+ADD_DEFINITIONS(-D_WIN32_WINNT=0x0A00)
 # We do not want the windows.h macros min/max
 ADD_DEFINITIONS(-DNOMINMAX)
 # Speed up build process excluding unused header files
@@ -114,8 +114,8 @@ IF(MSVC)
   ENDIF()
   
   #TODO: update the code and remove the disabled warnings
-  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4800 /wd4805 /wd4996")
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4800 /wd4805 /wd4996 /wd4291 /we4099")
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /wd4800 /wd4805 /wd4996 /we4700")
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4800 /wd4805 /wd4996 /wd4291 /wd4577 /we4099 /we4700")
 
   IF(CMAKE_SIZEOF_VOID_P MATCHES 8)
     # _WIN64 is defined by the compiler itself. 
@@ -127,9 +127,8 @@ IF(MSVC)
 ENDIF()
 
 # Always link with socket library
-LINK_LIBRARIES(ws2_32)
-# ..also for tests
-SET(CMAKE_REQUIRED_LIBRARIES ws2_32)
+STRING(APPEND CMAKE_C_STANDARD_LIBRARIES " ws2_32.lib")
+STRING(APPEND CMAKE_CXX_STANDARD_LIBRARIES " ws2_32.lib")
 
 # System checks
 SET(SIGNAL_WITH_VIO_CLOSE 1) # Something that runtime team needs

@@ -831,6 +831,135 @@ DROP TABLES t1,t2;
 set optimizer_switch=@save_derived_optimizer_switch;
 
 --echo #
+--echo # MDEV-10663: Use of Inline table columns in HAVING clause
+--echo # throws 1463 Error
+--echo #
+
+set @save_sql_mode = @@sql_mode;
+set sql_mode='ONLY_FULL_GROUP_BY,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+
+CREATE TABLE `example1463` (
+  `Customer` varchar(255) NOT NULL,
+  `DeliveryStatus` varchar(255) NOT NULL,
+  `OrderSize` int(11) NOT NULL
+);
+INSERT INTO example1463 VALUES ('Charlie', 'Success', 100);
+INSERT INTO example1463 VALUES ('David', 'Success', 110);
+INSERT INTO example1463 VALUES ('Charlie', 'Failed', 200);
+INSERT INTO example1463 VALUES ('David', 'Success', 100);
+INSERT INTO example1463 VALUES ('David', 'Unknown', 100);
+INSERT INTO example1463 VALUES ('Edward', 'Success', 150);
+INSERT INTO example1463 VALUES ('Edward', 'Pending', 150);
+
+SELECT Customer, Success, SUM(OrderSize)
+ FROM (SELECT Customer,
+ CASE WHEN DeliveryStatus='Success' THEN 'Yes' ELSE 'No' END AS Success,
+ OrderSize
+ FROM example1463) as subQ
+ GROUP BY Success, Customer
+ WITH ROLLUP;
+SELECT Customer, Success, SUM(OrderSize)
+ FROM (SELECT Customer,
+ CASE WHEN DeliveryStatus='Success' THEN 'Yes' ELSE 'No' END AS Success,
+ OrderSize
+ FROM example1463) as subQ
+ GROUP BY Success, Customer;
+SELECT Customer, Success, SUM(OrderSize)
+ FROM (SELECT Customer,
+ CASE WHEN DeliveryStatus='Success' THEN 'Yes' ELSE 'No' END AS Success,
+ OrderSize
+ FROM example1463) as subQ
+ GROUP BY Success, Customer
+ HAVING Success IS NOT NULL;
+
+DROP TABLE example1463;
+set sql_mode= @save_sql_mode;
+
+--echo #
+--echo # MDEV-9028: SELECT DISTINCT constant column of  derived  table
+--echo #            used as the second operand of LEFT JOIN
+--echo #
+
+create table t1 (id int, data varchar(255));
+insert into t1 values (1,'yes'),(2,'yes');
+
+select distinct t1.id, tt.id, tt.data
+  from t1
+       left join
+       (select t1.id, 'yes' as data from t1) as tt
+       on t1.id = tt.id;
+
+select distinct t1.id, tt.id, tt.data
+  from t1
+       left join
+       (select t1.id, 'yes' as data from t1 where id > 1) as tt
+       on t1.id = tt.id;
+
+drop table t1;
+
+--echo #
+--echo # MDEV-14241: Server crash in key_copy / get_matching_chain_by_join_key
+--echo # or valgrind warnings
+--echo #
+
+CREATE TABLE t1 (a VARCHAR(10)) ENGINE=MyISAM;
+CREATE OR REPLACE ALGORITHM=TEMPTABLE VIEW v1 AS SELECT * FROM t1;
+INSERT INTO t1 VALUES ('foo'),('bar');
+
+CREATE TABLE t2 (b integer auto_increment primary key) ENGINE=MyISAM;
+INSERT INTO t2 VALUES (NULL),(NULL);
+
+CREATE TABLE t3 (c VARCHAR(1024) CHARACTER SET utf8, d INT) ENGINE=MyISAM;
+CREATE OR REPLACE ALGORITHM=TEMPTABLE VIEW v3 AS SELECT * FROM t3;
+INSERT INTO t3 VALUES ('abc',NULL),('def',4);
+
+set @save_join_cache_level= @@join_cache_level;
+SET join_cache_level= 8;
+explain
+SELECT * FROM v1, t2, v3 WHERE a = c AND b = d;
+SELECT * FROM v1, t2, v3 WHERE a = c AND b = d;
+
+DROP VIEW v1, v3;
+DROP TABLE t1, t2, t3;
+
+--echo #
+--echo # MDEV-14786: Server crashes in Item_cond::transform on 2nd
+--echo # execution of SP querying from a view
+--echo #
+create table t1 (i int, row_start timestamp(6) not null default now(),
+                 row_end timestamp(6) not null default '2030-01-01 0:0:0');
+create view v1 as select i from t1 where i < 5 and (row_end =
+TIMESTAMP'2030-01-01 0:0:0' or row_end is null);
+create procedure pr(x int) select i from v1;
+call pr(1);
+call pr(2);
+drop procedure pr;
+drop view v1;
+drop table t1;
+set @@join_cache_level= @save_join_cache_level;
+
+--echo #
+--echo # MDEV-16307: Incorrect results when using BNLH join instead of BNL join with views
+--echo #
+
+CREATE TABLE t1 (c1 text, c2 int);
+INSERT INTO t1 VALUES ('a',1), ('c',3), ('g',7), ('d',4), ('c',3);
+CREATE TABLE t2 (c1 text, c2 int);
+INSERT INTO t2 VALUES ('b',2), ('c',3);
+CREATE ALGORITHM=TEMPTABLE VIEW v1 AS SELECT * FROM t1;
+
+explain SELECT v1.c1, v1.c2, t2.c1, t2.c2 FROM v1, t2 WHERE v1.c1=t2.c1;
+SELECT v1.c1, v1.c2, t2.c1, t2.c2 FROM v1, t2 WHERE v1.c1=t2.c1;
+set @save_join_cache_level= @@join_cache_level;
+set @@join_cache_level=4;
+explain SELECT v1.c1, v1.c2, t2.c1, t2.c2 FROM v1, t2 WHERE v1.c1=t2.c1;
+SELECT v1.c1, v1.c2, t2.c1, t2.c2 FROM v1, t2 WHERE v1.c1=t2.c1;
+drop table t1,t2;
+drop view v1;
+set @@join_cache_level= @save_join_cache_level;
+--echo # end of 5.5
+
+--echo #
 --echo # Start of 10.1 tests
 --echo #
 

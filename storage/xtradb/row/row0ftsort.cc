@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2010, 2015, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2015, 2016, MariaDB Corporation.
+Copyright (c) 2010, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2015, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -40,7 +40,7 @@ Created 10/13/2010 Jimmy Yang
 		b[N] = row_merge_read_rec(				\
 			block[N], buf[N], b[N], index,			\
 			fd[N], &foffs[N], &mrec[N], offsets[N],		\
-			crypt_data, crypt_block[N], space);		\
+			crypt_block[N], space);				\
 		if (UNIV_UNLIKELY(!b[N])) {				\
 			if (mrec[N]) {					\
 				goto exit;				\
@@ -59,6 +59,8 @@ tokenized doc string. The index has three "fields":
 2) Doc ID (depend on number of records to sort, it can be a 4 bytes or 8 bytes
 integer value)
 3) Word's position in original doc.
+
+@see fts_create_one_index_table()
 
 @return dict_index_t structure for the fts sort index */
 UNIV_INTERN
@@ -101,16 +103,13 @@ row_merge_create_fts_sort_index(
 	field->prefix_len = 0;
 	field->col = static_cast<dict_col_t*>(
 		mem_heap_alloc(new_index->heap, sizeof(dict_col_t)));
-	field->col->len = FTS_MAX_WORD_LEN;
-
-	if (strcmp(charset->name, "latin1_swedish_ci") == 0) {
-		field->col->mtype = DATA_VARCHAR;
-	} else {
-		field->col->mtype = DATA_VARMYSQL;
-	}
-
 	field->col->prtype = idx_field->col->prtype | DATA_NOT_NULL;
-	field->col->mbminmaxlen = idx_field->col->mbminmaxlen;
+	field->col->mtype = charset == &my_charset_latin1
+		? DATA_VARCHAR : DATA_VARMYSQL;
+	field->col->mbminlen = idx_field->col->mbminlen;
+	field->col->mbmaxlen = idx_field->col->mbmaxlen;
+	field->col->len = HA_FT_MAXCHARLEN * field->col->mbmaxlen;
+
 	field->fixed_len = 0;
 
 	/* Doc ID */
@@ -152,7 +151,8 @@ row_merge_create_fts_sort_index(
 
 	field->col->prtype = DATA_NOT_NULL | DATA_BINARY_TYPE;
 
-	field->col->mbminmaxlen = 0;
+	field->col->mbminlen = 0;
+	field->col->mbmaxlen = 0;
 
 	/* The third field is on the word's position in the original doc */
 	field = dict_index_get_nth_field(new_index, 2);
@@ -164,7 +164,8 @@ row_merge_create_fts_sort_index(
 	field->col->len = 4 ;
 	field->fixed_len = 4;
 	field->col->prtype = DATA_NOT_NULL;
-	field->col->mbminmaxlen = 0;
+	field->col->mbminlen = 0;
+	field->col->mbmaxlen = 0;
 
 	return(new_index);
 }
@@ -196,7 +197,6 @@ row_fts_psort_info_init(
 	fts_psort_t*		merge_info = NULL;
 	ulint			block_size;
 	ibool			ret = TRUE;
-	fil_space_crypt_t*	crypt_data = NULL;
 	bool			encrypted = false;
 
 	block_size = 3 * srv_sort_buf_size;
@@ -226,18 +226,9 @@ row_fts_psort_info_init(
 	common_info->sort_event = os_event_create();
 	common_info->merge_event = os_event_create();
 	common_info->opt_doc_id_size = opt_doc_id_size;
-	crypt_data = fil_space_get_crypt_data(new_table->space);
 
-	if ((crypt_data && crypt_data->encryption == FIL_SPACE_ENCRYPTION_ON) ||
-		(srv_encrypt_tables &&
-			crypt_data && crypt_data->encryption == FIL_SPACE_ENCRYPTION_DEFAULT)) {
-
-		common_info->crypt_data = crypt_data;
+	if (log_tmp_is_encrypted()) {
 		encrypted = true;
-	} else {
-		/* Not needed */
-		common_info->crypt_data = NULL;
-		crypt_data = NULL;
 	}
 
 	ut_ad(trx->mysql_thd != NULL);
@@ -247,9 +238,6 @@ row_fts_psort_info_init(
 	each parallel sort thread. Each "sort bucket" holds records for
 	a particular "FTS index partition" */
 	for (j = 0; j < fts_sort_pll_degree; j++) {
-
-		UT_LIST_INIT(psort_info[j].fts_doc_list);
-
 		for (i = 0; i < FTS_NUM_AUX_INDEX; i++) {
 
 			psort_info[j].merge_file[i] =
@@ -407,6 +395,7 @@ row_fts_free_pll_merge_buf(
 
 /*********************************************************************//**
 Tokenize incoming text data and add to the sort buffer.
+@see row_merge_buf_encode()
 @return	TRUE if the record passed, FALSE if out of space */
 static
 ibool
@@ -415,8 +404,6 @@ row_merge_fts_doc_tokenize(
 	row_merge_buf_t**	sort_buf,	/*!< in/out: sort buffer */
 	doc_id_t		doc_id,		/*!< in: Doc ID */
 	fts_doc_t*		doc,		/*!< in: Doc to be tokenized */
-	dtype_t*		word_dtype,	/*!< in: data structure for
-						word col */
 	merge_file_t**		merge_file,	/*!< in/out: merge file */
 	ibool			opt_doc_id_size,/*!< in: whether to use 4 bytes
 						instead of 8 bytes integer to
@@ -448,7 +435,7 @@ row_merge_fts_doc_tokenize(
 		ulint		idx = 0;
 		ib_uint32_t	position;
 		ulint           offset = 0;
-		ulint		cur_len = 0;
+		ulint		cur_len;
 		doc_id_t	write_doc_id;
 
 		inc = innobase_mysql_fts_get_token(
@@ -502,14 +489,34 @@ row_merge_fts_doc_tokenize(
 		dfield_set_data(field, t_str.f_str, t_str.f_len);
 		len = dfield_get_len(field);
 
-		field->type.mtype = word_dtype->mtype;
-		field->type.prtype = word_dtype->prtype | DATA_NOT_NULL;
+		dict_col_copy_type(dict_index_get_nth_col(buf->index, 0), &field->type);
+		field->type.prtype |= DATA_NOT_NULL;
+		ut_ad(len <= field->type.len);
 
-		/* Variable length field, set to max size. */
-		field->type.len = FTS_MAX_WORD_LEN;
-		field->type.mbminmaxlen = word_dtype->mbminmaxlen;
+		/* For the temporary file, row_merge_buf_encode() uses
+		1 byte for representing the number of extra_size bytes.
+		This number will always be 1, because for this 3-field index
+		consisting of one variable-size column, extra_size will always
+		be 1 or 2, which can be encoded in one byte.
 
-		cur_len += len;
+		The extra_size is 1 byte if the length of the
+		variable-length column is less than 128 bytes or the
+		maximum length is less than 256 bytes. */
+
+		/* One variable length column, word with its lenght less than
+		fts_max_token_size, add one extra size and one extra byte.
+
+		Since the max length for FTS token now is larger than 255,
+		so we will need to signify length byte itself, so only 1 to 128
+		bytes can be used for 1 bytes, larger than that 2 bytes. */
+		if (len < 128 || field->type.len < 256) {
+			/* Extra size is one byte. */
+			cur_len = 2 + len;
+		} else {
+			/* Extra size is two bytes. */
+			cur_len = 3 + len;
+		}
+
 		dfield_dup(field, buf->heap);
 		field++;
 
@@ -536,7 +543,8 @@ row_merge_fts_doc_tokenize(
 		field->type.mtype = DATA_INT;
 		field->type.prtype = DATA_NOT_NULL | DATA_BINARY_TYPE;
 		field->type.len = len;
-		field->type.mbminmaxlen = 0;
+		field->type.mbminlen = 0;
+		field->type.mbmaxlen = 0;
 
 		cur_len += len;
 		dfield_dup(field, buf->heap);
@@ -555,19 +563,14 @@ row_merge_fts_doc_tokenize(
 		field->type.mtype = DATA_INT;
 		field->type.prtype = DATA_NOT_NULL;
 		field->type.len = len;
-		field->type.mbminmaxlen = 0;
+		field->type.mbminlen = 0;
+		field->type.mbmaxlen = 0;
 		cur_len += len;
 		dfield_dup(field, buf->heap);
 
-		/* One variable length column, word with its lenght less than
-		fts_max_token_size, add one extra size and one extra byte */
-		cur_len += 2;
-
-		/* Reserve one byte for the end marker of row_merge_block_t
-		and we have reserved ROW_MERGE_RESERVE_SIZE (= 4) for
-		encryption key_version in the beginning of the buffer. */
+		/* Reserve one byte for the end marker of row_merge_block_t */
 		if (buf->total_size + data_size[idx] + cur_len
-			>= (srv_sort_buf_size - 1 - ROW_MERGE_RESERVE_SIZE)) {
+			>= (srv_sort_buf_size - 1)) {
 
 			buf_full = TRUE;
 			break;
@@ -658,12 +661,9 @@ fts_parallel_tokenization(
 	mem_heap_t*		blob_heap = NULL;
 	fts_doc_t		doc;
 	dict_table_t*		table = psort_info->psort_common->new_table;
-	dtype_t			word_dtype;
-	dict_field_t*		idx_field;
 	fts_tokenize_ctx_t	t_ctx;
 	ulint			retried = 0;
 	dberr_t			error = DB_SUCCESS;
-	fil_space_crypt_t*	crypt_data = NULL;
 
 	ut_ad(psort_info->psort_common->trx->mysql_thd != NULL);
 
@@ -676,22 +676,13 @@ fts_parallel_tokenization(
 	merge_file = psort_info->merge_file;
 	blob_heap = mem_heap_create(512);
 	memset(&doc, 0, sizeof(doc));
-	memset(&t_ctx, 0, sizeof(t_ctx));
 	memset(mycount, 0, FTS_NUM_AUX_INDEX * sizeof(int));
 
 	doc.charset = fts_index_get_charset(
 		psort_info->psort_common->dup->index);
 
-	idx_field = dict_index_get_nth_field(
-		psort_info->psort_common->dup->index, 0);
-	word_dtype.prtype = idx_field->col->prtype;
-	word_dtype.mbminmaxlen = idx_field->col->mbminmaxlen;
-	word_dtype.mtype = (strcmp(doc.charset->name, "latin1_swedish_ci") == 0)
-				? DATA_VARCHAR : DATA_VARMYSQL;
-
 	block = psort_info->merge_block;
 	crypt_block = psort_info->crypt_block;
-	crypt_data = psort_info->psort_common->crypt_data;
 	zip_size = dict_table_zip_size(table);
 
 	row_merge_fts_get_next_doc_item(psort_info, &doc_item);
@@ -722,8 +713,7 @@ loop:
 				doc.text.f_str =
 					btr_copy_externally_stored_field(
 						&doc.text.f_len, data,
-						zip_size, data_len, blob_heap,
-						NULL);
+						zip_size, data_len, blob_heap);
 			} else {
 				doc.text.f_str = data;
 				doc.text.f_len = data_len;
@@ -740,7 +730,6 @@ loop:
 
 		processed = row_merge_fts_doc_tokenize(
 			buf, doc_item->doc_id, &doc,
-			&word_dtype,
 			merge_file, psort_info->psort_common->opt_doc_id_size,
 			&t_ctx);
 
@@ -787,7 +776,6 @@ loop:
 		if (!row_merge_write(merge_file[t_ctx.buf_used]->fd,
 				     merge_file[t_ctx.buf_used]->offset++,
 				     block[t_ctx.buf_used],
-				     crypt_data,
 				     crypt_block[t_ctx.buf_used],
 				     table->space)) {
 			error = DB_TEMP_FILE_WRITE_FAILURE;
@@ -883,7 +871,6 @@ exit:
 				if (!row_merge_write(merge_file[i]->fd,
 						merge_file[i]->offset++,
 						block[i],
-						crypt_data,
 						crypt_block[i],
 						table->space)) {
 					error = DB_TEMP_FILE_WRITE_FAILURE;
@@ -923,7 +910,7 @@ exit:
 				       psort_info->psort_common->dup,
 				       merge_file[i], block[i], &tmpfd[i],
 				       false, 0.0/* pct_progress */, 0.0/* pct_cost */,
-				       crypt_data, crypt_block[i], table->space);
+				       crypt_block[i], table->space);
 
 		if (error != DB_SUCCESS) {
 			close(tmpfd[i]);
@@ -1016,7 +1003,7 @@ fts_parallel_merge(
 	CloseHandle(psort_info->thread_hdl);
 #endif /*__WIN__ */
 
-	os_thread_exit(NULL);
+	os_thread_exit(NULL, false);
 
 	OS_THREAD_DUMMY_RETURN;
 }
@@ -1045,7 +1032,7 @@ row_fts_start_parallel_merge(
 /********************************************************************//**
 Insert processed FTS data to auxillary index tables.
 @return	DB_SUCCESS if insertion runs fine */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 dberr_t
 row_merge_write_fts_word(
 /*=====================*/
@@ -1313,10 +1300,9 @@ row_fts_build_sel_tree_level(
 	int	child_left;
 	int	child_right;
 	ulint	i;
-	ulint	num_item;
+	ulint	num_item	= ulint(1) << level;
 
-	start = static_cast<ulint>((1 << level) - 1);
-	num_item = static_cast<ulint>(1 << level);
+	start = num_item - 1;
 
 	for (i = 0; i < num_item;  i++) {
 		child_left = sel_tree[(start + i) * 2 + 1];
@@ -1385,7 +1371,7 @@ row_fts_build_sel_tree(
 		treelevel++;
 	}
 
-	start = (1 << treelevel) - 1;
+	start = (ulint(1) << treelevel) - 1;
 
 	for (i = 0; i < (int) fts_sort_pll_degree; i++) {
 		sel_tree[i + start] = i;
@@ -1436,7 +1422,6 @@ row_fts_merge_insert(
 	ulint			start;
 	fts_psort_insert_t	ins_ctx;
 	ulint			count_diag = 0;
-	fil_space_crypt_t*	crypt_data = NULL;
 	ulint			space;
 
 	ut_ad(index);
@@ -1450,7 +1435,6 @@ row_fts_merge_insert(
 	ins_ctx.trx->op_info = "inserting index entries";
 
 	ins_ctx.opt_doc_id_size = psort_info[0].psort_common->opt_doc_id_size;
-	crypt_data = psort_info[0].psort_common->crypt_data;
 
 	heap = mem_heap_create(500 + sizeof(mrec_buf_t));
 
@@ -1544,7 +1528,6 @@ row_fts_merge_insert(
 			    && (!row_merge_read(
 					fd[i], foffs[i],
 					(row_merge_block_t*) block[i],
-					crypt_data,
 					(row_merge_block_t*) crypt_block[i],
 					space))) {
 				error = DB_CORRUPTION;

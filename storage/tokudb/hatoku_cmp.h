@@ -26,9 +26,9 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #ifndef _HATOKU_CMP
 #define _HATOKU_CMP
 
-#include "stdint.h"
+#include "hatoku_defines.h"
+#include "tokudb_debug.h"
 
-#include <db.h>
 
 //
 // A MySQL row is encoded in TokuDB, as follows:
@@ -180,7 +180,7 @@ static inline uint32_t get_blob_field_len(const uchar* from_tokudb, uint32_t len
         length = uint4korr(from_tokudb);
         break;
     default:
-        assert(false);
+        assert_unreachable();
     }
     return length;
 }
@@ -354,11 +354,7 @@ static uint32_t create_toku_clustering_val_pack_descriptor (
     bool is_clustering
     );
 
-static inline bool is_key_clustering(
-    void* row_desc,
-    uint32_t row_desc_size
-    ) 
-{
+static inline bool is_key_clustering(uint32_t row_desc_size) {
     return (row_desc_size > 0);
 }
 
@@ -384,12 +380,8 @@ static uint32_t create_toku_secondary_key_pack_descriptor (
     KEY* prim_key
     );
 
-static inline bool is_key_pk(
-    void* row_desc,
-    uint32_t row_desc_size
-    ) 
-{
-    uchar* buf = (uchar *)row_desc;
+static inline bool is_key_pk(void* row_desc) {
+    uchar* buf = (uchar*)row_desc;
     return buf[0];
 }
 

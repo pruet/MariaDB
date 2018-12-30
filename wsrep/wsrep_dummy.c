@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA
  */
 
 /*! @file Dummy wsrep API implementation. */
@@ -84,8 +84,15 @@ static wsrep_status_t dummy_options_set(
 
 static char* dummy_options_get (wsrep_t* w)
 {
-    WSREP_DBUG_ENTER(w);
-    return WSREP_DUMMY(w)->options;
+  char *options;
+
+  WSREP_DBUG_ENTER(w);
+  options= WSREP_DUMMY(w)->options;
+
+  if (options)
+    options= strdup(WSREP_DUMMY(w)->options);
+
+  return options;
 }
 
 static wsrep_status_t dummy_connect(

@@ -65,6 +65,8 @@
 #            so it has been removed.
 # 2013-10-08 PH got rid of the "source" command, which is a bash-ism (use ".")
 # 2013-11-05 PH added support for PARENS_NEST_LIMIT
+# 2016-03-01 PH applied Chris Wilson's patch for MSVC static build
+# 2016-06-24 PH applied Chris Wilson's revised patch (adds a separate option)
 
 PROJECT(PCRE C CXX)
 
@@ -126,9 +128,9 @@ SET(PCREGREP_BUFSIZE "20480" CACHE STRING
 SET(PCRE_NEWLINE "LF" CACHE STRING
     "What to recognize as a newline (one of CR, LF, CRLF, ANY, ANYCRLF).")
 
-# MARIADB: Changed the default from OFF to ON as pcre_test.bat on Windows
-# MARIADB: fails complaining about too small stack size on Windows.
-SET(PCRE_NO_RECURSE ON CACHE BOOL
+# Windows has much smaller stack (pcre recursion limit of 112, vs
+# 250-500 on Linuxes)
+SET(PCRE_NO_RECURSE "${WIN32}" CACHE BOOL
     "If ON, then don't use stack recursion when matching. See NO_RECURSE in config.h.in for details.")
 
 SET(PCRE_POSIX_MALLOC_THRESHOLD "10" CACHE STRING

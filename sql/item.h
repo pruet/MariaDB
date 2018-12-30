@@ -1,8 +1,8 @@
 #ifndef SQL_ITEM_INCLUDED
 #define SQL_ITEM_INCLUDED
 
-/* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2016, MariaDB
+/* Copyright (c) 2000, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2018, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -53,6 +53,12 @@ bool trace_unsupported_by_check_vcol_func_processor(const char *where)
 {
   return trace_unsupported_func(where, "check_vcol_func_processor");
 }
+
+#ifdef DBUG_OFF
+static inline const char *dbug_print_item(Item *item) { return NULL; }
+#else
+extern const char *dbug_print_item(Item *item);
+#endif
 
 class Protocol;
 struct TABLE_LIST;
@@ -548,8 +554,7 @@ class Item_func_not;
 class Item_splocal;
 
 /**
-  String_copier that honors the current sql_mode (strict vs non strict)
-  and can send warnings.
+  String_copier that sends Item specific warnings.
 */
 class String_copier_for_item: public String_copier
 {
@@ -624,7 +629,7 @@ class Item: public Value_source,
 public:
   static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
   { return alloc_root(mem_root, size); }
-  static void operator delete(void *ptr,size_t size) { TRASH(ptr, size); }
+  static void operator delete(void *ptr,size_t size) { TRASH_FREE(ptr, size); }
   static void operator delete(void *ptr, MEM_ROOT *mem_root) {}
 
   enum Type {FIELD_ITEM= 0, FUNC_ITEM, SUM_FUNC_ITEM, STRING_ITEM,
@@ -657,6 +662,14 @@ protected:
 
   SEL_TREE *get_mm_tree_for_const(RANGE_OPT_PARAM *param);
 
+  Field *create_tmp_field(bool group, TABLE *table, uint convert_int_length);
+  /*
+    This method is used if the item was not null but convertion to
+    TIME/DATE/DATETIME failed. We return a zero date if allowed,
+    otherwise - null.
+  */
+  bool make_zero_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
+
 public:
   /*
     Cache val_str() into the own buffer, e.g. to evaluate constant
@@ -687,6 +700,7 @@ public:
                                            of a query with ROLLUP */ 
   bool null_value;			/* if item is null */
   bool with_sum_func;                   /* True if item contains a sum func */
+  bool with_param;                      /* True if contains an SP parameter */
   /**
     True if any item except Item_sum contains a field. Set during parsing.
   */
@@ -728,7 +742,9 @@ public:
     Fix after some tables has been pulled out. Basically re-calculate all
     attributes that are dependent on the tables.
   */
-  virtual void fix_after_pullout(st_select_lex *new_parent, Item **ref) {};
+  virtual void fix_after_pullout(st_select_lex *new_parent, Item **ref,
+                                 bool merge)
+    {};
 
   /*
     This method should be used in case where we are sure that we do not need
@@ -841,6 +857,10 @@ public:
       If value is not null null_value flag will be reset to FALSE.
   */
   virtual longlong val_int()=0;
+  Longlong_hybrid to_longlong_hybrid()
+  {
+    return Longlong_hybrid(val_int(), unsigned_flag);
+  }
   /*
     This is just a shortcut to avoid the cast. You should still use
     unsigned_flag to check the sign of the item.
@@ -855,25 +875,20 @@ public:
             store return value of this method.
 
     NOTE
-      Buffer passed via argument  should only be used if the item itself
-      doesn't have an own String buffer. In case when the item maintains
-      it's own string buffer, it's preferable to return it instead to
-      minimize number of mallocs/memcpys.
-      The caller of this method can modify returned string, but only in case
-      when it was allocated on heap, (is_alloced() is true).  This allows
-      the caller to efficiently use a buffer allocated by a child without
-      having to allocate a buffer of it's own. The buffer, given to
-      val_str() as argument, belongs to the caller and is later used by the
-      caller at it's own choosing.
-      A few implications from the above:
-      - unless you return a string object which only points to your buffer
-        but doesn't manages it you should be ready that it will be
-        modified.
-      - even for not allocated strings (is_alloced() == false) the caller
-        can change charset (see Item_func_{typecast/binary}. XXX: is this
-        a bug?
-      - still you should try to minimize data copying and return internal
-        object whenever possible.
+      The caller can modify the returned String, if it's not marked
+      "const" (with the String::mark_as_const() method). That means that
+      if the item returns its own internal buffer (e.g. tmp_value), it
+      *must* be marked "const" [1]. So normally it's preferrable to
+      return the result value in the String, that was passed as an
+      argument. But, for example, SUBSTR() returns a String that simply
+      points into the buffer of SUBSTR()'s args[0]->val_str(). Such a
+      String is always "const", so it's ok to use tmp_value for that and
+      avoid reallocating/copying of the argument String.
+
+      [1] consider SELECT CONCAT(f, ":", f) FROM (SELECT func() AS f);
+      here the return value of f() is used twice in the top-level
+      select, and if they share the same tmp_value buffer, modifying the
+      first one will implicitly modify the second too.
 
     RETURN
       In case of NULL value return 0 (NULL pointer) and set null_value flag
@@ -1021,9 +1036,7 @@ public:
   int save_str_value_in_field(Field *field, String *result);
 
   virtual Field *get_tmp_table_field() { return 0; }
-  /* This is also used to create fields in CREATE ... SELECT: */
-  virtual Field *tmp_table_field(TABLE *t_arg) { return 0; }
-  virtual Field *create_field_for_create_select(THD *thd, TABLE *table);
+  virtual Field *create_field_for_create_select(TABLE *table);
   virtual Field *create_field_for_schema(THD *thd, TABLE *table);
   virtual const char *full_name() const { return name ? name : "???"; }
   const char *field_name_or_null()
@@ -1440,6 +1453,11 @@ public:
   virtual bool exists2in_processor(uchar *opt_arg) { return 0; }
   virtual bool find_selective_predicates_list_processor(uchar *opt_arg)
   { return 0; }
+  bool cleanup_is_expensive_cache_processor(uchar *arg)
+  {
+    is_expensive_cache= (int8)(-1);
+    return 0;
+  }
 
   /* To call bool function for all arguments */
   struct bool_func_call_args
@@ -1630,6 +1648,15 @@ public:
   // used in row subselects to get value of elements
   virtual void bring_value() {}
 
+  virtual Field *create_tmp_field(bool group, TABLE *table)
+  {
+    /*
+      Values with MY_INT32_NUM_DECIMAL_DIGITS digits may or may not fit into
+      Field_long : make them Field_longlong.
+    */
+    return create_tmp_field(false, table, MY_INT32_NUM_DECIMAL_DIGITS - 2);
+  }
+
   Field *tmp_table_field_from_field_type(TABLE *table,
                                          bool fixed_length,
                                          bool set_blob_packlength);
@@ -1642,7 +1669,7 @@ public:
   { return this; }
   virtual bool expr_cache_is_needed(THD *) { return FALSE; }
   virtual Item *safe_charset_converter(THD *thd, CHARSET_INFO *tocs);
-  bool needs_charset_converter(uint32 length, CHARSET_INFO *tocs)
+  bool needs_charset_converter(uint32 length, CHARSET_INFO *tocs) const
   {
     /*
       This will return "true" if conversion happens:
@@ -2224,7 +2251,6 @@ public:
   {}
   ~Item_result_field() {}			/* Required with gcc 2.95 */
   Field *get_tmp_table_field() { return result_field; }
-  Field *tmp_table_field(TABLE *t_arg) { return result_field; }
   /*
     This implementation of used_tables() used by Item_avg_field and
     Item_variance_field which work when only temporary table left, so theu
@@ -2382,7 +2408,7 @@ public:
   bool send(Protocol *protocol, String *str_arg);
   void reset_field(Field *f);
   bool fix_fields(THD *, Item **);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   void make_field(Send_field *tmp_field);
   int save_in_field(Field *field,bool no_conversions);
   void save_org_in_field(Field *field, fast_field_copier optimizer_data);
@@ -2554,6 +2580,7 @@ public:
   longlong val_int();
   String *val_str(String *str);
   my_decimal *val_decimal(my_decimal *);
+  bool get_date(MYSQL_TIME *ltime, ulonglong fuzzydate);
   int save_in_field(Field *field, bool no_conversions);
   int save_safe_in_field(Field *field);
   bool send(Protocol *protocol, String *str);
@@ -2579,6 +2606,17 @@ public:
   Field *result_field;
   Item_null_result(THD *thd): Item_null(thd), result_field(0) {}
   bool is_result_field() { return result_field != 0; }
+#if MARIADB_VERSION_ID < 100300
+  enum_field_types field_type() const
+  {
+    return result_field->type();
+  }
+#else
+  const Type_handler *type_handler() const
+  {
+    return result_field->type_handler();
+  }
+#endif
   void save_in_result_field(bool no_conversions)
   {
     save_in_field(result_field, no_conversions);
@@ -3198,7 +3236,7 @@ class Item_blob :public Item_partition_func_safe_string
 {
 public:
   Item_blob(THD *thd, const char *name_arg, uint length):
-    Item_partition_func_safe_string(thd, name_arg, length, &my_charset_bin)
+    Item_partition_func_safe_string(thd, name_arg, strlen(name_arg), &my_charset_bin)
   { max_length= length; }
   enum Type type() const { return TYPE_HOLDER; }
   enum_field_types field_type() const { return MYSQL_TYPE_BLOB; }
@@ -3397,8 +3435,6 @@ public:
   { return val_real_from_date(); }
   my_decimal *val_decimal(my_decimal *decimal_value)
   { return  val_decimal_from_date(decimal_value); }
-  Field *tmp_table_field(TABLE *table)
-  { return tmp_table_field_from_field_type(table, false, false); }
   int save_in_field(Field *field, bool no_conversions)
   { return save_date_in_field(field); }
 };
@@ -3894,7 +3930,7 @@ public:
   bool send(Protocol *prot, String *tmp);
   void make_field(Send_field *field);
   bool fix_fields(THD *, Item **);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   int save_in_field(Field *field, bool no_conversions);
   void save_org_in_field(Field *field, fast_field_copier optimizer_data);
   fast_field_copier setup_fast_field_copier(Field *field)
@@ -3903,7 +3939,6 @@ public:
   enum_field_types field_type() const   { return (*ref)->field_type(); }
   Field *get_tmp_table_field()
   { return result_field ? result_field : (*ref)->get_tmp_table_field(); }
-  Field *tmp_table_field(TABLE *t_arg) { return 0; } 
   Item *get_tmp_table_item(THD *thd);
   table_map used_tables() const;		
   void update_used_tables(); 
@@ -4132,6 +4167,8 @@ public:
   bool fix_fields(THD *thd, Item **it);
   void cleanup();
 
+  Item *get_orig_item() const { return orig_item; }
+
   /* Methods of getting value which should be cached in the cache */
   void save_val(Field *to);
   double val_real();
@@ -4163,9 +4200,9 @@ public:
     Item *it= ((Item *) item)->real_item();
     return orig_item->eq(it, binary_cmp);
   }
-  void fix_after_pullout(st_select_lex *new_parent, Item **refptr)
+  void fix_after_pullout(st_select_lex *new_parent, Item **refptr, bool merge)
   {
-    orig_item->fix_after_pullout(new_parent, &orig_item);
+    orig_item->fix_after_pullout(new_parent, &orig_item, merge);
   }
   int save_in_field(Field *to, bool no_conversions);
   enum Item_result result_type () const { return orig_item->result_type(); }
@@ -4207,7 +4244,7 @@ public:
     if (result_type() == ROW_RESULT)
       orig_item->bring_value();
   }
-  virtual bool is_expensive() { return orig_item->is_expensive(); }
+  bool is_expensive() { return orig_item->is_expensive(); }
   bool is_expensive_processor(uchar *arg)
   { return orig_item->is_expensive_processor(arg); }
   bool check_vcol_func_processor(uchar *arg)
@@ -4423,7 +4460,7 @@ public:
     outer_ref->save_org_in_field(result_field, NULL);
   }
   bool fix_fields(THD *, Item **);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   table_map used_tables() const
   {
     return (*ref)->const_item() ? 0 : OUTER_REF_TABLE_BIT;
@@ -4512,7 +4549,7 @@ public:
   Base class to implement typed value caching Item classes
 
   Item_copy_ classes are very similar to the corresponding Item_
-  classes (e.g. Item_copy_int is similar to Item_int) but they add
+  classes (e.g. Item_copy_string is similar to Item_string) but they add
   the following additional functionality to Item_ :
     1. Nullability
     2. Possibility to store the value not only on instantiation time,
@@ -4565,13 +4602,6 @@ protected:
   }
 
 public:
-  /** 
-    Factory method to create the appropriate subclass dependent on the type of 
-    the original item.
-
-    @param item      the original item.
-  */  
-  static Item_copy *create(THD *thd, Item *item);
 
   /** 
     Update the cache with the value of the original item
@@ -4607,6 +4637,11 @@ public:
   virtual double val_real() = 0;
   virtual longlong val_int() = 0;
   virtual int save_in_field(Field *field, bool no_conversions) = 0;
+  bool walk(Item_processor processor, bool walk_subquery, uchar *args)
+  {
+    return (item->walk(processor, walk_subquery, args)) ||
+      (this->*processor)(args);
+  }
 };
 
 /**
@@ -4625,89 +4660,6 @@ public:
   longlong val_int();
   void copy();
   int save_in_field(Field *field, bool no_conversions);
-};
-
-
-class Item_copy_int : public Item_copy
-{
-protected:  
-  longlong cached_value; 
-public:
-  Item_copy_int(THD *thd, Item *i): Item_copy(thd, i) {}
-  int save_in_field(Field *field, bool no_conversions);
-
-  virtual String *val_str(String*);
-  virtual my_decimal *val_decimal(my_decimal *);
-  virtual double val_real()
-  {
-    return null_value ? 0.0 : (double) cached_value;
-  }
-  virtual longlong val_int()
-  {
-    return null_value ? 0 : cached_value;
-  }
-  virtual void copy();
-};
-
-
-class Item_copy_uint : public Item_copy_int
-{
-public:
-  Item_copy_uint(THD *thd, Item *item_arg): Item_copy_int(thd, item_arg)
-  {
-    unsigned_flag= 1;
-  }
-
-  String *val_str(String*);
-  double val_real()
-  {
-    return null_value ? 0.0 : (double) (ulonglong) cached_value;
-  }
-};
-
-
-class Item_copy_float : public Item_copy
-{
-protected:  
-  double cached_value; 
-public:
-  Item_copy_float(THD *thd, Item *i): Item_copy(thd, i) {}
-  int save_in_field(Field *field, bool no_conversions);
-
-  String *val_str(String*);
-  my_decimal *val_decimal(my_decimal *);
-  double val_real()
-  {
-    return null_value ? 0.0 : cached_value;
-  }
-  longlong val_int()
-  {
-    return (longlong) rint(val_real());
-  }
-  void copy()
-  {
-    cached_value= item->val_real();
-    null_value= item->null_value;
-  }
-};
-
-
-class Item_copy_decimal : public Item_copy
-{
-protected:  
-  my_decimal cached_value;
-public:
-  Item_copy_decimal(THD *thd, Item *i): Item_copy(thd, i) {}
-  int save_in_field(Field *field, bool no_conversions);
-
-  String *val_str(String*);
-  my_decimal *val_decimal(my_decimal *) 
-  { 
-    return null_value ? NULL: &cached_value; 
-  }
-  double val_real();
-  longlong val_int();
-  void copy();
 };
 
 
@@ -4817,6 +4769,10 @@ public:
   int save_in_field(Field *field_arg, bool no_conversions);
   table_map used_tables() const { return (table_map)0L; }
 
+  Field *get_tmp_table_field() { return 0; }
+  Item *get_tmp_table_item(THD *thd) { return this; }
+  Item_field *field_for_view_update() { return 0; }
+
   bool walk(Item_processor processor, bool walk_subquery, uchar *args)
   {
     return (arg && arg->walk(processor, walk_subquery, args)) ||
@@ -4857,6 +4813,8 @@ public:
    being treated as a constant and precalculated before execution
   */
   table_map used_tables() const { return RAND_TABLE_BIT; }
+
+  Item_field *field_for_view_update() { return 0; }
 
   bool walk(Item_processor processor, bool walk_subquery, uchar *args)
   {
@@ -5050,7 +5008,7 @@ public:
   bool basic_const_item() const
   { return MY_TEST(example && example->basic_const_item()); }
   virtual void clear() { null_value= TRUE; value_cached= FALSE; }
-  bool is_null() { return null_value; }
+  bool is_null() { return !has_value(); }
   virtual bool is_expensive()
   {
     if (value_cached)

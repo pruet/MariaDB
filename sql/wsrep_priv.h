@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA
  */
 
 //! @file declares symbols private to wsrep integration layer
@@ -26,7 +26,7 @@
 #include <pthread.h>
 #include <cstdio>
 
-void    wsrep_ready_set (my_bool x);
+my_bool wsrep_ready_set (my_bool x);
 
 ssize_t wsrep_sst_prepare   (void** msg);
 wsrep_cb_status wsrep_sst_donate_cb (void* app_ctx,
@@ -40,8 +40,11 @@ extern wsrep_uuid_t  local_uuid;
 extern wsrep_seqno_t local_seqno;
 
 // a helper function
-void wsrep_sst_received(wsrep_t*, const wsrep_uuid_t&, wsrep_seqno_t,
-                        const void*, size_t);
+void wsrep_sst_received (wsrep_t* const wsrep,
+                         const wsrep_uuid_t& uuid,
+                         wsrep_seqno_t const segno,
+                         const void * const state,
+                         size_t const state_len);
 /*! SST thread signals init thread about sst completion */
 void wsrep_sst_complete(const wsrep_uuid_t*, wsrep_seqno_t, bool);
 

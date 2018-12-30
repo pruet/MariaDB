@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /*
   These functions handle page caching for Maria tables.
@@ -493,15 +493,16 @@ error:
 
 #define FLUSH_CACHE         2000            /* sort this many blocks at once */
 
-static void free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block);
+static my_bool free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block,
+                          my_bool abort_if_pinned);
 static void unlink_hash(PAGECACHE *pagecache, PAGECACHE_HASH_LINK *hash_link);
 #ifndef DBUG_OFF
 static void test_key_cache(PAGECACHE *pagecache,
                            const char *where, my_bool lock);
 #endif
 
-#define PAGECACHE_HASH(p, f, pos) (((ulong) (pos) +                          \
-                                    (ulong) (f).file) & (p->hash_entries-1))
+#define PAGECACHE_HASH(p, f, pos) (((size_t) (pos) +                          \
+                                    (size_t) (f).file) & (p->hash_entries-1))
 #define FILE_HASH(f,cache) ((uint) (f).file & (cache->changed_blocks_hash_size-1))
 
 #define DEFAULT_PAGECACHE_DEBUG_LOG  "pagecache_debug.log"
@@ -641,10 +642,10 @@ static my_bool pagecache_fwrite(PAGECACHE *pagecache,
   {
     char buff[80];
     uint len= my_sprintf(buff,
-                         (buff, "fwrite: fd: %d  id: %u  page: %lu",
+                         (buff, "fwrite: fd: %d  id: %u  page: %llu",
                           filedesc->file,
                           _ma_file_callback_to_id(filedesc->callback_data),
-                          (ulong) pageno));
+                          pageno));
     (void) translog_log_debug_info(0, LOGREC_DEBUG_INFO_QUERY,
                                    (uchar*) buff, len);
   }
@@ -745,12 +746,12 @@ static inline uint next_power(uint value)
 
 */
 
-ulong init_pagecache(PAGECACHE *pagecache, size_t use_mem,
+size_t init_pagecache(PAGECACHE *pagecache, size_t use_mem,
                      uint division_limit, uint age_threshold,
                      uint block_size, uint changed_blocks_hash_size,
                      myf my_readwrite_flags)
 {
-  ulong blocks, hash_links, length;
+  size_t blocks, hash_links, length;
   int error;
   DBUG_ENTER("init_pagecache");
   DBUG_ASSERT(block_size >= 512);
@@ -787,10 +788,10 @@ ulong init_pagecache(PAGECACHE *pagecache, size_t use_mem,
   DBUG_PRINT("info", ("block_size: %u", block_size));
   DBUG_ASSERT(((uint)(1 << pagecache->shift)) == block_size);
 
-  blocks= (ulong) (use_mem / (sizeof(PAGECACHE_BLOCK_LINK) +
+  blocks= use_mem / (sizeof(PAGECACHE_BLOCK_LINK) +
                               2 * sizeof(PAGECACHE_HASH_LINK) +
                               sizeof(PAGECACHE_HASH_LINK*) *
-                              5/4 + block_size));
+                              5/4 + block_size);
   /* Changed blocks hash needs to be a power of 2 */
   changed_blocks_hash_size= my_round_up_to_next_power(MY_MAX(changed_blocks_hash_size,
                                                              MIN_PAGECACHE_CHANGED_BLOCKS_HASH_SIZE));
@@ -826,7 +827,7 @@ ulong init_pagecache(PAGECACHE *pagecache, size_t use_mem,
       blocks--;
     /* Allocate memory for cache page buffers */
     if ((pagecache->block_mem=
-         my_large_malloc((ulong) blocks * pagecache->block_size,
+      my_large_malloc(blocks * pagecache->block_size,
                          MYF(MY_WME))))
     {
       /*
@@ -857,7 +858,7 @@ ulong init_pagecache(PAGECACHE *pagecache, size_t use_mem,
     blocks= blocks / 4*3;
   }
   pagecache->blocks_unused= blocks;
-  pagecache->disk_blocks= (long) blocks;
+  pagecache->disk_blocks= blocks;
   pagecache->hash_links= hash_links;
   pagecache->hash_links_used= 0;
   pagecache->free_hash_list= NULL;
@@ -887,14 +888,14 @@ ulong init_pagecache(PAGECACHE *pagecache, size_t use_mem,
   pagecache->waiting_for_hash_link.last_thread= NULL;
   pagecache->waiting_for_block.last_thread= NULL;
   DBUG_PRINT("exit",
-             ("disk_blocks: %ld  block_root: 0x%lx  hash_entries: %ld\
- hash_root: 0x%lx  hash_links: %ld  hash_link_root: 0x%lx",
+             ("disk_blocks: %zu  block_root: 0x%lx  hash_entries: %zu\
+ hash_root: 0x%lx  hash_links: %zu  hash_link_root: 0x%lx",
               pagecache->disk_blocks, (long) pagecache->block_root,
               pagecache->hash_entries, (long) pagecache->hash_root,
               pagecache->hash_links, (long) pagecache->hash_link_root));
 
   pagecache->blocks= pagecache->disk_blocks > 0 ? pagecache->disk_blocks : 0;
-  DBUG_RETURN((ulong) pagecache->disk_blocks);
+  DBUG_RETURN((size_t)pagecache->disk_blocks);
 
 err:
   error= my_errno;
@@ -985,11 +986,11 @@ static int flush_all_key_blocks(PAGECACHE *pagecache)
      So we disable it for now.
 */
 #if NOT_USED /* keep disabled until code is fixed see above !! */
-ulong resize_pagecache(PAGECACHE *pagecache,
+size_t resize_pagecache(PAGECACHE *pagecache,
                        size_t use_mem, uint division_limit,
                        uint age_threshold, uint changed_blocks_hash_size)
 {
-  ulong blocks;
+  size_t blocks;
   struct st_my_thread_var *thread;
   WQUEUE *wqueue;
   DBUG_ENTER("resize_pagecache");
@@ -1186,7 +1187,7 @@ void end_pagecache(PAGECACHE *pagecache, my_bool cleanup)
     pagecache->blocks_changed= 0;
   }
 
-  DBUG_PRINT("status", ("used: %lu  changed: %lu  w_requests: %lu  "
+  DBUG_PRINT("status", ("used: %zu  changed: %zu  w_requests: %lu  "
                         "writes: %lu  r_requests: %lu  reads: %lu",
                         pagecache->blocks_used,
                         pagecache->global_blocks_changed,
@@ -1385,7 +1386,7 @@ static void link_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block,
                       ("linked block: %u:%1u  status: %x  #requests: %u  #available: %u",
                        PCBLOCK_NUMBER(pagecache, block), at_end, block->status,
                        block->requests, pagecache->blocks_available));
-  KEYCACHE_DBUG_ASSERT((ulong) pagecache->blocks_available <=
+  KEYCACHE_DBUG_ASSERT(pagecache->blocks_available <=
                        pagecache->blocks_used);
 #endif
   DBUG_VOID_RETURN;
@@ -1521,7 +1522,7 @@ static void unreg_request(PAGECACHE *pagecache,
       if (block->temperature == PCBLOCK_WARM)
         pagecache->warm_blocks--;
       block->temperature= PCBLOCK_HOT;
-      KEYCACHE_DBUG_PRINT("unreg_request", ("#warm_blocks: %lu",
+      KEYCACHE_DBUG_PRINT("unreg_request", ("#warm_blocks: %zu",
                            pagecache->warm_blocks));
     }
     link_block(pagecache, block, hot, (my_bool)at_end);
@@ -1540,7 +1541,7 @@ static void unreg_request(PAGECACHE *pagecache,
         pagecache->warm_blocks++;
         block->temperature= PCBLOCK_WARM;
       }
-      KEYCACHE_DBUG_PRINT("unreg_request", ("#warm_blocks: %lu",
+      KEYCACHE_DBUG_PRINT("unreg_request", ("#warm_blocks: %zu",
                            pagecache->warm_blocks));
     }
   }
@@ -1943,7 +1944,7 @@ restart:
         removed from the cache as we set the PCBLOCK_REASSIGNED
         flag (see the code below that handles reading requests).
       */
-      free_block(pagecache, block);
+      free_block(pagecache, block, 0);
       return 0;
     }
     /* Wait until the page is flushed on disk */
@@ -1954,7 +1955,7 @@ restart:
     /* Invalidate page in the block if it has not been done yet */
     DBUG_ASSERT(block->status);                 /* Should always be true */
     if (block->status)
-      free_block(pagecache, block);
+      free_block(pagecache, block, 0);
     return 0;
   }
 
@@ -1979,8 +1980,13 @@ restart:
     }
     else
     {
-      DBUG_ASSERT(hash_link->requests > 0);
-      hash_link->requests--;
+      /*
+        When we come here either PCBLOCK_REASSIGNED or PCBLOCK_IN_SWITCH are
+        active. In both cases wqueue_release_queue() is called when the
+        state changes.
+      */
+      DBUG_ASSERT(block->hash_link == hash_link);
+      remove_reader(block);
       KEYCACHE_DBUG_PRINT("find_block",
                           ("request waiting for old page to be saved"));
       {
@@ -2024,7 +2030,7 @@ restart:
           /* There are some never used blocks, take first of them */
           block= &pagecache->block_root[pagecache->blocks_used];
           block->buffer= ADD_TO_PTR(pagecache->block_mem,
-                                    ((ulong) pagecache->blocks_used*
+                                    (pagecache->blocks_used*
                                      pagecache->block_size),
                                     uchar*);
           pagecache->blocks_used++;
@@ -3478,6 +3484,7 @@ restart:
                             lock_to_read[lock].unlock_lock,
                             unlock_pin, FALSE))
       {
+        pagecache_pthread_mutex_unlock(&pagecache->cache_lock);
         DBUG_ASSERT(0);
         return (uchar*) 0;
       }
@@ -3648,7 +3655,7 @@ static my_bool pagecache_delete_internal(PAGECACHE *pagecache,
   DBUG_ASSERT(block->hash_link->requests > 0);
   page_link->requests--;
   /* See NOTE for pagecache_unlock() about registering requests. */
-  free_block(pagecache, block);
+  free_block(pagecache, block, 0);
   dec_counter_for_resize_op(pagecache);
   return 0;
 
@@ -4230,7 +4237,8 @@ end:
   and add it to the free list.
 */
 
-static void free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block)
+static my_bool free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block,
+                          my_bool abort_if_pinned)
 {
   uint status= block->status;
   KEYCACHE_THREAD_TRACE("free block");
@@ -4244,11 +4252,27 @@ static void free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block)
     /*
       While waiting for readers to finish, new readers might request the
       block. But since we set block->status|= PCBLOCK_REASSIGNED, they
-      will wait on block->wqueue[COND_FOR_SAVED]. They must be signalled
+      will wait on block->wqueue[COND_FOR_SAVED]. They must be signaled
       later.
     */
     block->status|= PCBLOCK_REASSIGNED;
     wait_for_readers(pagecache, block);
+    if (unlikely(abort_if_pinned) && unlikely(block->pins))
+    {
+      /*
+        Block got pinned while waiting for readers.
+        This can only happens when called from flush_pagecache_blocks_int()
+        when flushing blocks as part of prepare for maria_close() or from
+        flush_cached_blocks()
+      */
+      block->status&= ~PCBLOCK_REASSIGNED;
+      unreg_request(pagecache, block, 0);
+
+      /* All pending requests for this page must be resubmitted. */
+      if (block->wqueue[COND_FOR_SAVED].last_thread)
+        wqueue_release_queue(&block->wqueue[COND_FOR_SAVED]);
+      return 1;
+    }
     unlink_hash(pagecache, block->hash_link);
   }
 
@@ -4299,6 +4323,8 @@ static void free_block(PAGECACHE *pagecache, PAGECACHE_BLOCK_LINK *block)
   /* All pending requests for this page must be resubmitted. */
   if (block->wqueue[COND_FOR_SAVED].last_thread)
     wqueue_release_queue(&block->wqueue[COND_FOR_SAVED]);
+
+  return 0;
 }
 
 
@@ -4434,9 +4460,16 @@ static int flush_cached_blocks(PAGECACHE *pagecache,
     if (! (type == FLUSH_KEEP || type == FLUSH_KEEP_LAZY ||
            type == FLUSH_FORCE_WRITE))
     {
-      pagecache->blocks_changed--;
-      pagecache->global_blocks_changed--;
-      free_block(pagecache, block);
+      if (!free_block(pagecache, block, 1))
+      {
+        pagecache->blocks_changed--;
+        pagecache->global_blocks_changed--;
+      }
+      else
+      {
+        block->status&= ~PCBLOCK_IN_FLUSH;
+        link_to_file_list(pagecache, block, file, 1);
+      }
     }
     else
     {
@@ -4494,7 +4527,7 @@ static int flush_pagecache_blocks_int(PAGECACHE *pagecache,
   int rc= PCFLUSH_OK;
   DBUG_ENTER("flush_pagecache_blocks_int");
   DBUG_PRINT("enter",
-             ("fd: %d  blocks_used: %lu  blocks_changed: %lu  type: %d",
+             ("fd: %d  blocks_used: %zu  blocks_changed: %zu  type: %d",
               file->file, pagecache->blocks_used, pagecache->blocks_changed,
               type));
 
@@ -4674,7 +4707,7 @@ restart:
             /* It's a temporary file */
             pagecache->blocks_changed--;
 	    pagecache->global_blocks_changed--;
-            free_block(pagecache, block);
+            free_block(pagecache, block, 0);
           }
         }
         else if (type != FLUSH_KEEP_LAZY)
@@ -4744,11 +4777,12 @@ restart:
 #endif
         next= block->next_changed;
         if (block->hash_link->file.file == file->file &&
+            !block->pins &&
             (! (block->status & PCBLOCK_CHANGED)
              || type == FLUSH_IGNORE_CHANGED))
         {
           reg_requests(pagecache, block, 1);
-          free_block(pagecache, block);
+          free_block(pagecache, block, 1);
         }
       }
     }
@@ -4875,7 +4909,7 @@ my_bool pagecache_collect_changed_blocks_with_lsn(PAGECACHE *pagecache,
                                                   LSN *min_rec_lsn)
 {
   my_bool error= 0;
-  ulong stored_list_size= 0;
+  size_t stored_list_size= 0;
   uint file_hash;
   char *ptr;
   LSN minimum_rec_lsn= LSN_MAX;
@@ -4959,7 +4993,7 @@ my_bool pagecache_collect_changed_blocks_with_lsn(PAGECACHE *pagecache,
   ptr= str->str;
   int8store(ptr, (ulonglong)stored_list_size);
   ptr+= 8;
-  DBUG_PRINT("info", ("found %lu dirty pages", stored_list_size));
+  DBUG_PRINT("info", ("found %zu dirty pages", stored_list_size));
   if (stored_list_size == 0)
     goto end;
   for (file_hash= 0; file_hash < pagecache->changed_blocks_hash_size; file_hash++)

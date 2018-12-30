@@ -47,7 +47,7 @@ int wsrep_show_bf_aborts (THD *thd, SHOW_VAR *var, char *buff,
   return 0;
 }
 
-/* must have (&thd->LOCK_wsrep_thd) */
+/* must have (&thd->LOCK_thd_data) */
 void wsrep_client_rollback(THD *thd)
 {
   WSREP_DEBUG("client rollback due to BF abort for (%ld), query: %s",
@@ -56,7 +56,7 @@ void wsrep_client_rollback(THD *thd)
   WSREP_ATOMIC_ADD_LONG(&wsrep_bf_aborts_counter, 1);
 
   thd->wsrep_conflict_state= ABORTING;
-  mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
+  mysql_mutex_unlock(&thd->LOCK_thd_data);
   trans_rollback(thd);
 
   if (thd->locked_tables_mode && thd->lock)
@@ -83,7 +83,7 @@ void wsrep_client_rollback(THD *thd)
     WSREP_DEBUG("clearing binlog table map for BF abort (%ld)", thd->thread_id);
     thd->clear_binlog_table_maps();
   }
-  mysql_mutex_lock(&thd->LOCK_wsrep_thd);
+  mysql_mutex_lock(&thd->LOCK_thd_data);
   thd->wsrep_conflict_state= ABORTED;
 }
 
@@ -140,6 +140,9 @@ static void wsrep_prepare_bf_thd(THD *thd, struct wsrep_thd_shadow* shadow)
   shadow->wsrep_exec_mode = thd->wsrep_exec_mode;
   shadow->vio           = thd->net.vio;
 
+  // Disable general logging on applier threads
+  thd->variables.option_bits |= OPTION_LOG_OFF;
+  // Enable binlogging if opt_log_slave_updates is set
   if (opt_log_slave_updates)
     thd->variables.option_bits|= OPTION_BIN_LOG;
   else
@@ -161,6 +164,8 @@ static void wsrep_prepare_bf_thd(THD *thd, struct wsrep_thd_shadow* shadow)
 
   shadow->db            = thd->db;
   shadow->db_length     = thd->db_length;
+  shadow->user_time     = thd->user_time;
+  shadow->row_count_func= thd->get_row_count_func();
   thd->reset_db(NULL, 0);
 }
 
@@ -171,6 +176,7 @@ static void wsrep_return_from_bf_mode(THD *thd, struct wsrep_thd_shadow* shadow)
   thd->wsrep_exec_mode        = shadow->wsrep_exec_mode;
   thd->net.vio                = shadow->vio;
   thd->variables.tx_isolation = shadow->tx_isolation;
+  thd->user_time              = shadow->user_time;
   thd->reset_db(shadow->db, shadow->db_length);
 
   delete thd->system_thread_info.rpl_sql_info;
@@ -180,10 +186,12 @@ static void wsrep_return_from_bf_mode(THD *thd, struct wsrep_thd_shadow* shadow)
   thd->wsrep_rgi->cleanup_after_session();
   delete thd->wsrep_rgi;
   thd->wsrep_rgi = NULL;
+  thd->set_row_count_func(shadow->row_count_func);
 }
 
 void wsrep_replay_transaction(THD *thd)
 {
+  DBUG_ENTER("wsrep_replay_transaction");
   /* checking if BF trx must be replayed */
   if (thd->wsrep_conflict_state== MUST_REPLAY) {
     DBUG_ASSERT(wsrep_thd_trx_seqno(thd));
@@ -192,13 +200,39 @@ void wsrep_replay_transaction(THD *thd)
       {
         WSREP_ERROR("replay issue, thd has reported status already");
       }
+
+
+      /*
+        PS reprepare observer should have been removed already.
+        open_table() will fail if we have dangling observer here.
+      */
+      DBUG_ASSERT(thd->m_reprepare_observer == NULL);
+
+      struct da_shadow
+      {
+          enum Diagnostics_area::enum_diagnostics_status status;
+          ulonglong affected_rows;
+          ulonglong last_insert_id;
+          char message[MYSQL_ERRMSG_SIZE];
+      };
+      struct da_shadow da_status;
+      da_status.status= thd->get_stmt_da()->status();
+      if (da_status.status == Diagnostics_area::DA_OK)
+      {
+        da_status.affected_rows= thd->get_stmt_da()->affected_rows();
+        da_status.last_insert_id= thd->get_stmt_da()->last_insert_id();
+        strmake(da_status.message,
+                thd->get_stmt_da()->message(),
+                sizeof(da_status.message)-1);
+      }
+
       thd->get_stmt_da()->reset_diagnostics_area();
 
       thd->wsrep_conflict_state= REPLAYING;
-      mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
+      mysql_mutex_unlock(&thd->LOCK_thd_data);
 
       thd->reset_for_next_command();
-      thd->killed= NOT_KILLED;
+      thd->reset_killed();
       close_thread_tables(thd);
       if (thd->locked_tables_mode && thd->lock)
       {
@@ -235,7 +269,7 @@ void wsrep_replay_transaction(THD *thd)
       if (thd->wsrep_conflict_state!= REPLAYING)
         WSREP_WARN("lost replaying mode: %d", thd->wsrep_conflict_state );
 
-      mysql_mutex_lock(&thd->LOCK_wsrep_thd);
+      mysql_mutex_lock(&thd->LOCK_thd_data);
 
       switch (rcode)
       {
@@ -258,7 +292,17 @@ void wsrep_replay_transaction(THD *thd)
         }
         else
         {
-          my_ok(thd);
+          if (da_status.status == Diagnostics_area::DA_OK)
+          {
+            my_ok(thd,
+                  da_status.affected_rows,
+                  da_status.last_insert_id,
+                  da_status.message);
+          }
+          else
+          {
+            my_ok(thd);
+          }
         }
         break;
       case WSREP_TRX_FAIL:
@@ -282,7 +326,7 @@ void wsrep_replay_transaction(THD *thd)
         /* we're now in inconsistent state, must abort */
 
         /* http://bazaar.launchpad.net/~codership/codership-mysql/5.6/revision/3962#sql/wsrep_thd.cc */
-        mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
+        mysql_mutex_unlock(&thd->LOCK_thd_data);
 
         unireg_abort(1);
         break;
@@ -298,6 +342,7 @@ void wsrep_replay_transaction(THD *thd)
       mysql_mutex_unlock(&LOCK_wsrep_replaying);
     }
   }
+  DBUG_VOID_RETURN;
 }
 
 static void wsrep_replication_process(THD *thd)
@@ -337,7 +382,8 @@ static void wsrep_replication_process(THD *thd)
   case WSREP_TRX_MISSING:
     /* these suggests a bug in provider code */
     WSREP_WARN("bad return from recv() call: %d", rcode);
-    /* fall through to node shutdown */
+    /* Shut down this node. */
+    /* fall through */
   case WSREP_FATAL:
     /* Cluster connectivity is lost.
      *
@@ -450,29 +496,29 @@ static void wsrep_rollback_process(THD *thd)
        */
       mysql_mutex_unlock(&LOCK_wsrep_rollback);
 
-      mysql_mutex_lock(&aborting->LOCK_wsrep_thd);
+      mysql_mutex_lock(&aborting->LOCK_thd_data);
       if (aborting->wsrep_conflict_state== ABORTED)
       {
         WSREP_DEBUG("WSREP, thd already aborted: %llu state: %d",
                     (long long)aborting->real_id,
                     aborting->wsrep_conflict_state);
 
-        mysql_mutex_unlock(&aborting->LOCK_wsrep_thd);
+        mysql_mutex_unlock(&aborting->LOCK_thd_data);
         mysql_mutex_lock(&LOCK_wsrep_rollback);
         continue;
       }
       aborting->wsrep_conflict_state= ABORTING;
 
-      mysql_mutex_unlock(&aborting->LOCK_wsrep_thd);
+      mysql_mutex_unlock(&aborting->LOCK_thd_data);
 
       set_current_thd(aborting); 
       aborting->store_globals();
 
-      mysql_mutex_lock(&aborting->LOCK_wsrep_thd);
+      mysql_mutex_lock(&aborting->LOCK_thd_data);
       wsrep_client_rollback(aborting);
       WSREP_DEBUG("WSREP rollbacker aborted thd: (%lu %llu)",
                   aborting->thread_id, (long long)aborting->real_id);
-      mysql_mutex_unlock(&aborting->LOCK_wsrep_thd);
+      mysql_mutex_unlock(&aborting->LOCK_thd_data);
 
       set_current_thd(thd); 
       thd->store_globals();
@@ -512,10 +558,10 @@ enum wsrep_conflict_state wsrep_thd_conflict_state(THD *thd, my_bool sync)
   enum wsrep_conflict_state state = NO_CONFLICT;
   if (thd)
   {
-    if (sync) mysql_mutex_lock(&thd->LOCK_wsrep_thd);
+    if (sync) mysql_mutex_lock(&thd->LOCK_thd_data);
     
     state = thd->wsrep_conflict_state;
-    if (sync) mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
+    if (sync) mysql_mutex_unlock(&thd->LOCK_thd_data);
   }
   return state;
 }
@@ -539,12 +585,12 @@ my_bool wsrep_thd_is_BF(THD *thd, my_bool sync)
     if (wsrep_thd_is_wsrep(thd))
     {
       if (sync)
-	mysql_mutex_lock(&thd->LOCK_wsrep_thd);
+	mysql_mutex_lock(&thd->LOCK_thd_data);
 
       status = ((thd->wsrep_exec_mode == REPL_RECV)    ||
       	        (thd->wsrep_exec_mode == TOTAL_ORDER));
       if (sync)
-        mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
+        mysql_mutex_unlock(&thd->LOCK_thd_data);
     }
   }
   return status;
@@ -557,12 +603,12 @@ my_bool wsrep_thd_is_BF_or_commit(void *thd_ptr, my_bool sync)
   if (thd_ptr) 
   {
     THD* thd = (THD*)thd_ptr;
-    if (sync) mysql_mutex_lock(&thd->LOCK_wsrep_thd);
+    if (sync) mysql_mutex_lock(&thd->LOCK_thd_data);
     
     status = ((thd->wsrep_exec_mode == REPL_RECV)    ||
 	      (thd->wsrep_exec_mode == TOTAL_ORDER)  ||
 	      (thd->wsrep_exec_mode == LOCAL_COMMIT));
-    if (sync) mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
+    if (sync) mysql_mutex_unlock(&thd->LOCK_thd_data);
   }
   return status;
 }
@@ -574,10 +620,10 @@ my_bool wsrep_thd_is_local(void *thd_ptr, my_bool sync)
   if (thd_ptr) 
   {
     THD* thd = (THD*)thd_ptr;
-    if (sync) mysql_mutex_lock(&thd->LOCK_wsrep_thd);
+    if (sync) mysql_mutex_lock(&thd->LOCK_thd_data);
 
     status = (thd->wsrep_exec_mode == LOCAL_STATE);
-    if (sync) mysql_mutex_unlock(&thd->LOCK_wsrep_thd);
+    if (sync) mysql_mutex_unlock(&thd->LOCK_thd_data);
   }
   return status;
 }

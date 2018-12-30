@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2012, 2013, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2012, 2017, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -38,10 +39,17 @@ Created Apr 25, 2012 Vasil Dimov
 /** Minimum time interval between stats recalc for a given table */
 #define MIN_RECALC_INTERVAL	10 /* seconds */
 
-#define SHUTTING_DOWN()		(srv_shutdown_state != SRV_SHUTDOWN_NONE)
+/** Event to wake up dict_stats_thread on dict_stats_recalc_pool_add()
+or shutdown. Not protected by any mutex. */
+UNIV_INTERN os_event_t		dict_stats_event;
 
-/** Event to wake up the stats thread */
-UNIV_INTERN os_event_t		dict_stats_event = NULL;
+/** Variable to initiate shutdown the dict stats thread. Note we don't
+use 'srv_shutdown_state' because we want to shutdown dict stats thread
+before purge thread. */
+static bool			dict_stats_start_shutdown;
+
+/** Event to wait for shutdown of the dict stats thread */
+static os_event_t		dict_stats_shutdown_event;
 
 /** This mutex protects the "recalc_pool" variable. */
 static ib_mutex_t		recalc_pool_mutex;
@@ -87,10 +95,7 @@ dict_stats_pool_init()
 /*****************************************************************//**
 Free the resources occupied by the recalc pool, called once during
 thread de-initialization. */
-static
-void
-dict_stats_pool_deinit()
-/*====================*/
+static void dict_stats_pool_deinit()
 {
 	ut_ad(!srv_read_only_mode);
 
@@ -106,9 +111,7 @@ dict_stats_pool_deinit()
         */
 	recalc_pool_t recalc_empty_pool;
 	defrag_pool_t defrag_empty_pool;
-	memset(&recalc_empty_pool, 0, sizeof(recalc_pool_t));
-	memset(&defrag_empty_pool, 0, sizeof(defrag_pool_t));
-        recalc_pool.swap(recalc_empty_pool);
+	recalc_pool.swap(recalc_empty_pool);
 	defrag_pool.swap(defrag_empty_pool);
 }
 
@@ -328,7 +331,7 @@ dict_stats_wait_bg_to_stop_using_table(
 				unlocking/locking the data dict */
 {
 	while (!dict_stats_stop_bg(table)) {
-		DICT_STATS_BG_YIELD(trx);
+		DICT_BG_YIELD(trx);
 	}
 }
 
@@ -338,11 +341,11 @@ Must be called before dict_stats_thread() is started. */
 UNIV_INTERN
 void
 dict_stats_thread_init()
-/*====================*/
 {
 	ut_a(!srv_read_only_mode);
 
 	dict_stats_event = os_event_create();
+	dict_stats_shutdown_event = os_event_create();
 
 	/* The recalc_pool_mutex is acquired from:
 	1) the background stats gathering thread before any other latch
@@ -387,6 +390,9 @@ dict_stats_thread_deinit()
 
 	os_event_free(dict_stats_event);
 	dict_stats_event = NULL;
+	os_event_free(dict_stats_shutdown_event);
+	dict_stats_shutdown_event = NULL;
+	dict_stats_start_shutdown = false;
 }
 
 /*****************************************************************//**
@@ -467,7 +473,6 @@ stats and eventually save its stats. */
 static
 void
 dict_stats_process_entry_from_defrag_pool()
-/*=======================================*/
 {
 	table_id_t	table_id;
 	index_id_t	index_id;
@@ -489,31 +494,19 @@ dict_stats_process_entry_from_defrag_pool()
 	table = dict_table_open_on_id(table_id, TRUE,
 				      DICT_TABLE_OP_OPEN_ONLY_IF_CACHED);
 
-	if (table == NULL) {
+	dict_index_t* index = table && !table->corrupted
+		? dict_table_find_index_on_id(table, index_id)
+		: NULL;
+
+	if (!index || dict_index_is_corrupted(index)) {
+		if (table) {
+			dict_table_close(table, TRUE, FALSE);
+		}
 		mutex_exit(&dict_sys->mutex);
 		return;
 	}
 
-	/* Check whether table is corrupted */
-	if (table->corrupted) {
-		dict_table_close(table, TRUE, FALSE);
-		mutex_exit(&dict_sys->mutex);
-		return;
-	}
 	mutex_exit(&dict_sys->mutex);
-
-	dict_index_t*	index = dict_table_find_index_on_id(table, index_id);
-
-	if (index == NULL) {
-		return;
-	}
-
-	/* Check whether index is corrupted */
-	if (dict_index_is_corrupted(index)) {
-		dict_table_close(table, FALSE, FALSE);
-		return;
-	}
-
 	dict_stats_save_defrag_stats(index);
 	dict_table_close(table, FALSE, FALSE);
 }
@@ -525,16 +518,12 @@ statistics.
 @return this function does not return, it calls os_thread_exit() */
 extern "C" UNIV_INTERN
 os_thread_ret_t
-DECLARE_THREAD(dict_stats_thread)(
-/*==============================*/
-	void*	arg __attribute__((unused)))	/*!< in: a dummy parameter
-						required by os_thread_create */
+DECLARE_THREAD(dict_stats_thread)(void*)
 {
+	my_thread_init();
 	ut_a(!srv_read_only_mode);
 
-	srv_dict_stats_thread_active = TRUE;
-
-	while (!SHUTTING_DOWN()) {
+	while (!dict_stats_start_shutdown) {
 
 		/* Wake up periodically even if not signaled. This is
 		because we may lose an event - if the below call to
@@ -544,7 +533,7 @@ DECLARE_THREAD(dict_stats_thread)(
 		os_event_wait_time(
 			dict_stats_event, MIN_RECALC_INTERVAL * 1000000);
 
-		if (SHUTTING_DOWN()) {
+		if (dict_stats_start_shutdown) {
 			break;
 		}
 
@@ -556,11 +545,22 @@ DECLARE_THREAD(dict_stats_thread)(
 		os_event_reset(dict_stats_event);
 	}
 
-	srv_dict_stats_thread_active = FALSE;
+	srv_dict_stats_thread_active = false;
 
+	os_event_set(dict_stats_shutdown_event);
+	my_thread_end();
 	/* We count the number of threads in os_thread_exit(). A created
 	thread should always use that to exit instead of return(). */
 	os_thread_exit(NULL);
 
 	OS_THREAD_DUMMY_RETURN;
+}
+
+/** Shut down the dict_stats_thread. */
+void
+dict_stats_shutdown()
+{
+	dict_stats_start_shutdown = true;
+	os_event_set(dict_stats_event);
+	os_event_wait(dict_stats_shutdown_event);
 }

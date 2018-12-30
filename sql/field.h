@@ -618,7 +618,7 @@ public:
   { return alloc_root(mem_root, size); }
   static void *operator new(size_t size) throw ()
   { return sql_alloc(size); }
-  static void operator delete(void *ptr_arg, size_t size) { TRASH(ptr_arg, size); }
+  static void operator delete(void *ptr_arg, size_t size) { TRASH_FREE(ptr_arg, size); }
   static void operator delete(void *ptr, MEM_ROOT *mem_root)
   { DBUG_ASSERT(0); }
 
@@ -745,6 +745,10 @@ public:
   { return store(ls->str, ls->length, cs); }
   virtual double val_real(void)=0;
   virtual longlong val_int(void)=0;
+  virtual ulonglong val_uint(void)
+  {
+    return (ulonglong) val_int();
+  }
   virtual bool val_bool(void)= 0;
   virtual my_decimal *val_decimal(my_decimal *);
   inline String *val_str(String *str) { return val_str(str, str); }
@@ -1215,11 +1219,12 @@ public:
   { return binary() ? &my_charset_bin : charset(); }
   virtual CHARSET_INFO *sort_charset(void) const { return charset(); }
   virtual bool has_charset(void) const { return FALSE; }
-  virtual void set_charset(CHARSET_INFO *charset_arg) { }
   virtual enum Derivation derivation(void) const
   { return DERIVATION_IMPLICIT; }
   virtual uint repertoire(void) const { return MY_REPERTOIRE_UNICODE30; }
-  virtual void set_derivation(enum Derivation derivation_arg) { }
+  virtual void set_derivation(enum Derivation derivation_arg,
+                              uint repertoire_arg)
+  { }
   virtual int set_time() { return 1; }
   bool set_warning(Sql_condition::enum_warning_level, unsigned int code,
                    int cuted_increment) const;
@@ -1471,6 +1476,10 @@ protected:
 
 class Field_num :public Field {
 protected:
+  int check_edom_and_important_data_truncation(const char *type, bool edom,
+                                               CHARSET_INFO *cs,
+                                               const char *str, uint length,
+                                               const char *end_of_num);
   int check_edom_and_truncation(const char *type, bool edom,
                                 CHARSET_INFO *cs,
                                 const char *str, uint length,
@@ -1533,8 +1542,10 @@ public:
 
 class Field_str :public Field {
 protected:
+  // TODO-10.2: Reuse DTCollation instead of these three members
   CHARSET_INFO *field_charset;
   enum Derivation field_derivation;
+  uint field_repertoire;
 public:
   bool can_be_substituted_to_equal_item(const Context &ctx,
                                         const Item_equal *item_equal);
@@ -1547,15 +1558,15 @@ public:
   int  store(longlong nr, bool unsigned_val)=0;
   int  store_decimal(const my_decimal *);
   int  store(const char *to,uint length,CHARSET_INFO *cs)=0;
-  uint repertoire(void) const
-  {
-    return my_charset_repertoire(field_charset);
-  }
+  uint repertoire(void) const { return field_repertoire; }
   CHARSET_INFO *charset(void) const { return field_charset; }
-  void set_charset(CHARSET_INFO *charset_arg) { field_charset= charset_arg; }
   enum Derivation derivation(void) const { return field_derivation; }
-  virtual void set_derivation(enum Derivation derivation_arg)
-  { field_derivation= derivation_arg; }
+  void set_derivation(enum Derivation derivation_arg,
+                      uint repertoire_arg)
+  {
+    field_derivation= derivation_arg;
+    field_repertoire= repertoire_arg;
+  }
   bool binary() const { return field_charset == &my_charset_bin; }
   uint32 max_display_length() { return field_length; }
   friend class Create_field;
@@ -1708,6 +1719,7 @@ public:
   Item_result result_type () const { return DECIMAL_RESULT; }
   int  reset(void);
   bool store_value(const my_decimal *decimal_value);
+  bool store_value(const my_decimal *decimal_value, int *native_error);
   void set_value_on_overflow(my_decimal *decimal_value, bool sign);
   int  store(const char *to, uint length, CHARSET_INFO *charset);
   int  store(double nr);
@@ -1991,6 +2003,7 @@ private:
 
 
 class Field_double :public Field_real {
+  longlong val_int_from_real(bool want_unsigned_result);
 public:
   Field_double(uchar *ptr_arg, uint32 len_arg, uchar *null_ptr_arg,
 	       uchar null_bit_arg,
@@ -2017,7 +2030,8 @@ public:
   int  store(longlong nr, bool unsigned_val);
   int reset(void) { bzero(ptr,sizeof(double)); return 0; }
   double val_real(void);
-  longlong val_int(void);
+  longlong val_int(void) { return val_int_from_real(false); }
+  ulonglong val_uint(void) { return (ulonglong) val_int_from_real(true); }
   String *val_str(String*,String *);
   bool send_binary(Protocol *protocol);
   int cmp(const uchar *,const uchar *);
@@ -2178,6 +2192,7 @@ public:
   int  store(longlong nr, bool unsigned_val);
   int  store_time_dec(MYSQL_TIME *ltime, uint dec);
   int  store_decimal(const my_decimal *);
+  int  store_timestamp(Field_timestamp *from);
   double val_real(void);
   longlong val_int(void);
   String *val_str(String*,String *);
@@ -2987,10 +3002,9 @@ public:
     packlength= 4;
     if (set_packlength)
     {
-      uint32 l_char_length= len_arg/cs->mbmaxlen;
-      packlength= l_char_length <= 255 ? 1 :
-                  l_char_length <= 65535 ? 2 :
-                  l_char_length <= 16777215 ? 3 : 4;
+      packlength= len_arg <= 255 ? 1 :
+                  len_arg <= 65535 ? 2 :
+                  len_arg <= 16777215 ? 3 : 4;
     }
   }
   Field_blob(uint32 packlength_arg)

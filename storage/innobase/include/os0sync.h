@@ -2,6 +2,7 @@
 
 Copyright (c) 1995, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, Google Inc.
+Copyright (c) 2017, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -36,14 +37,13 @@ Created 9/6/1995 Heikki Tuuri
 
 #include "univ.i"
 #include "ut0lst.h"
-#include "sync0types.h"
 
-#if defined __i386__ || defined __x86_64__ || defined _M_IX86 \
-    || defined _M_X64 || defined __WIN__
-
-#define IB_STRONG_MEMORY_MODEL
-
-#endif /* __i386__ || __x86_64__ || _M_IX86 || _M_X64 || __WIN__ */
+/** CPU cache line size */
+#ifdef __powerpc__
+#define CACHE_LINE_SIZE		128
+#else
+#define CACHE_LINE_SIZE		64
+#endif
 
 #ifdef HAVE_WINDOWS_ATOMICS
 typedef LONG lock_word_t;	/*!< On Windows, InterlockedExchange operates
@@ -466,7 +466,7 @@ amount to decrement. */
 # define os_atomic_decrement_uint64(ptr, amount) \
 	os_atomic_decrement(ptr, amount)
 
-# if defined(IB_STRONG_MEMORY_MODEL)
+# if defined(HAVE_ATOMIC_BUILTINS)
 
 /** Do an atomic test and set.
 @param[in,out]	ptr		Memory location to set to non-zero
@@ -479,20 +479,13 @@ os_atomic_test_and_set(volatile lock_word_t* ptr)
 }
 
 /** Do an atomic release.
-
-In theory __sync_lock_release should be used to release the lock.
-Unfortunately, it does not work properly alone. The workaround is
-that more conservative __sync_lock_test_and_set is used instead.
-
-Performance regression was observed at some conditions for Intel
-architecture. Disable release barrier on Intel architecture for now.
 @param[in,out]	ptr		Memory location to write to
 @return the previous value */
 inline
-lock_word_t
+void
 os_atomic_clear(volatile lock_word_t* ptr)
 {
-	return(__sync_lock_test_and_set(ptr, 0));
+	__sync_lock_release(ptr);
 }
 
 # elif defined(HAVE_IB_GCC_ATOMIC_TEST_AND_SET)
@@ -674,10 +667,7 @@ os_atomic_clear(volatile lock_word_t* ptr)
 
 # define HAVE_ATOMIC_BUILTINS
 # define HAVE_ATOMIC_BUILTINS_BYTE
-
-# ifndef _WIN32
-#  define HAVE_ATOMIC_BUILTINS_64
-# endif
+# define HAVE_ATOMIC_BUILTINS_64
 
 /**********************************************************//**
 Atomic compare and exchange of signed integers (both 32 and 64 bit).
@@ -856,15 +846,7 @@ for synchronization */
 	} while (0);
 
 /** barrier definitions for memory ordering */
-#ifdef IB_STRONG_MEMORY_MODEL
-/* Performance regression was observed at some conditions for Intel
-architecture. Disable memory barrier for Intel architecture for now. */
-# define os_rmb do { } while(0)
-# define os_wmb do { } while(0)
-# define os_isync do { } while(0)
-# define IB_MEMORY_BARRIER_STARTUP_MSG \
-	"Memory barrier is not used"
-#elif defined(HAVE_IB_GCC_ATOMIC_THREAD_FENCE)
+#if defined(HAVE_IB_GCC_ATOMIC_THREAD_FENCE)
 # define HAVE_MEMORY_BARRIER
 # define os_rmb	__atomic_thread_fence(__ATOMIC_ACQUIRE)
 # define os_wmb	__atomic_thread_fence(__ATOMIC_RELEASE)
@@ -906,6 +888,58 @@ architecture. Disable memory barrier for Intel architecture for now. */
 # define IB_MEMORY_BARRIER_STARTUP_MSG \
 	"Memory barrier is not used"
 #endif
+
+
+/** Simple counter aligned to CACHE_LINE_SIZE
+@tparam	Type	the integer type of the counter
+@tparam	atomic	whether to use atomic memory access */
+template <typename Type = ulint, bool atomic = false>
+struct MY_ALIGNED(CACHE_LINE_SIZE) simple_counter
+{
+	/** Increment the counter */
+	Type inc() { return add(1); }
+	/** Decrement the counter */
+	Type dec() { return sub(1); }
+
+	/** Add to the counter
+	@param[in]	i	amount to be added
+	@return	the value of the counter after adding */
+	Type add(Type i)
+	{
+		compile_time_assert(!atomic || sizeof(Type) == sizeof(ulint));
+		if (atomic) {
+			/* GCC would perform a type check in this code
+			also in case the template is instantiated with
+			simple_counter<Type=not_ulint, atomic=false>.
+			On Solaris, os_atomic_increment_ulint() maps
+			to atomic_add_long_nv(), which expects the
+			parameter to be correctly typed. */
+			return os_atomic_increment_ulint(
+				reinterpret_cast<ulint*>(&m_counter), i);
+		} else {
+			return m_counter += i;
+		}
+	}
+	/** Subtract from the counter
+	@param[in]	i	amount to be subtracted
+	@return	the value of the counter after adding */
+	Type sub(Type i)
+	{
+		compile_time_assert(!atomic || sizeof(Type) == sizeof(ulint));
+		if (atomic) {
+			return os_atomic_decrement_ulint(&m_counter, i);
+		} else {
+			return m_counter -= i;
+		}
+	}
+
+	/** @return the value of the counter (non-atomic access)! */
+	operator Type() const { return m_counter; }
+
+private:
+	/** The counter */
+	Type	m_counter;
+};
 
 #ifndef UNIV_NONINL
 #include "os0sync.ic"

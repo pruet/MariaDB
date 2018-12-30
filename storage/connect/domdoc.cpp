@@ -13,6 +13,7 @@
 #elif defined(MSX4)
 #import "msxml4.dll"  //Causes error C2872: DOMNodeType: ambiguous symbol  ??
 #elif defined(MSX6)
+#pragma warning(suppress : 4192)
 #import "msxml6.dll"  //Causes error C2872: DOMNodeType: ambiguous symbol  ??
 #else       // MSX4
 #error MSX? is not defined
@@ -58,13 +59,15 @@ void CloseXMLFile(PGLOBAL g, PFBLOCK fp, bool all)
   if (xp && xp->Count > 1 && !all) {
     xp->Count--;
   } else if (xp && xp->Count > 0) {
-    try  {
+    try {
       if (xp->Docp)
         xp->Docp->Release();
 
-    }  catch(_com_error e)  {
-      sprintf(g->Message, "%s %s", MSG(COM_ERROR), e.Description());
-    }  catch(...) {}
+    } catch(_com_error e)  {
+			char *p = _com_util::ConvertBSTRToString(e.Description());
+      sprintf(g->Message, "%s %s", MSG(COM_ERROR), p);
+			delete[] p;
+    } catch(...) {}
 
     CoUninitialize();
     xp->Count = 0;
@@ -81,38 +84,53 @@ DOMDOC::DOMDOC(char *nsl, char *nsdf, char *enc, PFBLOCK fp)
       : XMLDOCUMENT(nsl, nsdf, enc)
   {
   assert (!fp || fp->Type == TYPE_FB_XML);
-  Docp = (fp) ? ((PXBLOCK)fp)->Docp : NULL;
-  Nlist = NULL;
+	Docp = (fp) ? ((PXBLOCK)fp)->Docp : (MSXML2::IXMLDOMDocumentPtr)NULL;
+	Nlist = NULL;
   Hr = 0;
   } // end of DOMDOC constructor
 
 /******************************************************************/
 /*  Initialize XML parser and check library compatibility.        */
 /******************************************************************/
-bool DOMDOC::Initialize(PGLOBAL g)
-  {
-  if (TestHr(g, CoInitialize(NULL)))
+bool DOMDOC::Initialize(PGLOBAL g, PCSZ entry, bool zipped)
+{
+	if (zipped && InitZip(g, entry))
+		return true;
+
+	if (TestHr(g, CoInitialize(NULL)))
     return true;
 
   if (TestHr(g, Docp.CreateInstance("msxml2.domdocument")))
     return true;
 
   return MakeNSlist(g);
-  } // end of Initialize
+} // end of Initialize
 
 /******************************************************************/
 /* Parse the XML file and construct node tree in memory.          */
 /******************************************************************/
-bool DOMDOC::ParseFile(char *fn)
-  {
-  // Load the document
+bool DOMDOC::ParseFile(PGLOBAL g, char *fn)
+{
+	bool b;
+
   Docp->async = false;
 
-  if (!(bool)Docp->load((_bstr_t)fn))
+	if (zip) {
+		// Parse an in memory document
+		char *xdoc = GetMemDoc(g, fn);
+
+		// This is not equivalent to load for UTF8 characters
+		// It is why get node content is not the same
+  	b = (xdoc) ? (bool)Docp->loadXML((_bstr_t)xdoc) : false;
+	} else
+		// Load the document
+		b = (bool)Docp->load((_bstr_t)fn);
+
+	if (!b)
     return true;
 
   return false;
-  } // end of ParseFile
+} // end of ParseFile
 
 /******************************************************************/
 /* Create or reuse an Xblock for this document.                   */
@@ -140,7 +158,7 @@ PFBLOCK DOMDOC::LinkXblock(PGLOBAL g, MODE m, int rc, char *fn)
 /******************************************************************/
 /* Create the XML node.                                           */
 /******************************************************************/
-bool DOMDOC::NewDoc(PGLOBAL g, char *ver)
+bool DOMDOC::NewDoc(PGLOBAL g, PCSZ ver)
   {
   char buf[64];
   MSXML2::IXMLDOMProcessingInstructionPtr pip;
@@ -239,6 +257,7 @@ int DOMDOC::DumpDoc(PGLOBAL g, char *ofn)
 void DOMDOC::CloseDoc(PGLOBAL g, PFBLOCK xp)
   {
   CloseXMLFile(g, xp, false);
+	CloseZip();
   } // end of Close
 
 /* ----------------------- class DOMNODE ------------------------ */
@@ -252,6 +271,7 @@ DOMNODE::DOMNODE(PXDOC dp, MSXML2::IXMLDOMNodePtr np) : XMLNODE(dp)
   Nodep = np;
   Ws = NULL;
   Len = 0;
+	Zip = (bool)dp->zip;
   } // end of DOMNODE constructor
 
 /******************************************************************/
@@ -302,8 +322,10 @@ RCODE DOMNODE::GetContent(PGLOBAL g, char *buf, int len)
   RCODE rc = RC_OK;
 
   // Nodep can be null for a missing HTML table column
-  if (Nodep) {                                                
-    if (!WideCharToMultiByte(CP_UTF8, 0, Nodep->text, -1,
+  if (Nodep) {
+		if (Zip) {
+			strcpy(buf, Nodep->text);
+		} else if (!WideCharToMultiByte(CP_UTF8, 0, Nodep->text, -1,
                              buf, len, NULL, NULL)) {
       DWORD lsr = GetLastError();
 
@@ -471,9 +493,9 @@ PXATTR DOMNODE::GetAttribute(PGLOBAL g, char *name, PXATTR ap)
 /******************************************************************/
 /*  Add a new element child node to this node and return it.      */
 /******************************************************************/
-PXNODE DOMNODE::AddChildNode(PGLOBAL g, char *name, PXNODE np)
+PXNODE DOMNODE::AddChildNode(PGLOBAL g, PCSZ name, PXNODE np)
   {
-  char *p, *pn;
+  const char *p, *pn;
 //  char *p, *pn, *epf, *pf = NULL;
   MSXML2::IXMLDOMNodePtr ep;
 //  _bstr_t   uri((wchar_t*)NULL);
@@ -519,7 +541,7 @@ PXNODE DOMNODE::AddChildNode(PGLOBAL g, char *name, PXNODE np)
 
   // If name has the format m[n] only m is taken as node name
   if ((p = strchr(name, '[')))
-    pn = BufAlloc(g, name, p - name);
+    pn = BufAlloc(g, name, (int)(p - name));
   else
     pn = name;
 
@@ -566,7 +588,7 @@ PXATTR DOMNODE::AddProperty(PGLOBAL g, char *name, PXATTR ap)
 /******************************************************************/
 /*  Add a new text node to this node.                             */
 /******************************************************************/
-void DOMNODE::AddText(PGLOBAL g, char *txtp)
+void DOMNODE::AddText(PGLOBAL g, PCSZ txtp)
   {
   MSXML2::IXMLDOMTextPtr tp= Docp->createTextNode((_bstr_t)txtp);
 
@@ -616,13 +638,13 @@ PXNODE DOMNODELIST::GetItem(PGLOBAL g, int n, PXNODE np)
 /*  Reset the pointer on the deleted item.                        */
 /******************************************************************/
 bool DOMNODELIST::DropItem(PGLOBAL g, int n)
-  {
-  if (Listp == NULL || Listp->length <= n)
-    return true;
+{
+	if (Listp == NULL || Listp->length < n)
+		return true;
 
 //Listp->item[n] = NULL;  La propriété n'a pas de méthode 'set'
   return false;
-  }  // end of DeleteItem
+}  // end of DeleteItem
 
 /* ----------------------- class DOMATTR ------------------------ */
 

@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #ifdef _WIN32_WINNT
 #undef _WIN32_WINNT
@@ -613,7 +613,7 @@ static VOID CALLBACK timer_callback(PTP_CALLBACK_INSTANCE instance,
 
   if (timeout <= now())
   {
-    con->thd->killed = KILL_CONNECTION;
+    con->thd->set_killed(KILL_CONNECTION);
     if(con->thd->net.vio)
       vio_shutdown(con->thd->net.vio, SD_BOTH);
   }

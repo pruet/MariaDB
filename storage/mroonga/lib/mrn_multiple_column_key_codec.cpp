@@ -89,11 +89,13 @@ namespace mrn {
     for (int i = 0; i < n_key_parts && current_mysql_key < mysql_key_end; i++) {
       KEY_PART_INFO *key_part = &(key_info_->key_part[i]);
       Field *field = key_part->field;
+      bool is_null = false;
       DBUG_PRINT("info", ("mroonga: key_part->length=%u", key_part->length));
 
       if (field->null_bit) {
         DBUG_PRINT("info", ("mroonga: field has null bit"));
         *current_grn_key = 0;
+        is_null = *current_mysql_key;
         current_mysql_key += 1;
         current_grn_key += 1;
         (*grn_key_length)++;
@@ -164,7 +166,7 @@ namespace mrn {
         {
           Field_datetimef *datetimef_field =
             static_cast<Field_datetimef *>(field);
-          long long int mysql_datetime_packed =
+          long long int mysql_datetime_packed = is_null ? 0 :
             my_datetime_packed_from_binary(current_mysql_key,
                                            datetimef_field->decimals());
           MYSQL_TIME mysql_time;
@@ -288,6 +290,7 @@ namespace mrn {
           decode_long_long_int(current_grn_key, &grn_time);
           TimeConverter time_converter;
           MYSQL_TIME mysql_time;
+          mysql_time.neg = FALSE;
           mysql_time.time_type = MYSQL_TIMESTAMP_DATETIME;
           time_converter.grn_time_to_mysql_time(grn_time, &mysql_time);
           long long int mysql_datetime_packed =
@@ -518,6 +521,14 @@ namespace mrn {
       *data_type = TYPE_BYTE_SEQUENCE;
       *data_size = key_part->length;
       break;
+#ifdef MRN_HAVE_MYSQL_TYPE_JSON
+    case MYSQL_TYPE_JSON:
+      // TODO
+      DBUG_PRINT("info", ("mroonga: MYSQL_TYPE_JSON"));
+      *data_type = TYPE_BYTE_SEQUENCE;
+      *data_size = key_part->length;
+      break;
+#endif
     }
     DBUG_VOID_RETURN;
   }

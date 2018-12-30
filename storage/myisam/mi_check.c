@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2013, Oracle and/or its affiliates.
+/* Copyright (c) 2000, 2018, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -75,7 +75,7 @@ static int sort_delete_record(MI_SORT_PARAM *sort_param);
 static SORT_KEY_BLOCKS	*alloc_key_blocks(HA_CHECK *, uint, uint);
 static ha_checksum mi_byte_checksum(const uchar *buf, uint length);
 static void set_data_file_type(MI_SORT_INFO *sort_info, MYISAM_SHARE *share);
-static int replace_data_file(HA_CHECK *, MI_INFO *, const char *, File);
+static int replace_data_file(HA_CHECK *param, MI_INFO *info, File new_file);
 
 void myisamchk_init(HA_CHECK *param)
 {
@@ -1708,7 +1708,7 @@ err:
     /* Replace the actual file with the temporary file */
     if (new_file >= 0)
     {
-      got_error= replace_data_file(param, info, name, new_file);
+      got_error= replace_data_file(param, info, new_file);
       new_file= -1;
       param->retry_repair= 0;
     }
@@ -2522,7 +2522,7 @@ err:
     /* Replace the actual file with the temporary file */
     if (new_file >= 0)
     {
-      got_error= replace_data_file(param, info, name, new_file);
+      got_error= replace_data_file(param, info, new_file);
       new_file= -1;
     }
   }
@@ -2536,7 +2536,7 @@ err:
       (void) mysql_file_delete(mi_key_file_datatmp,
                                param->temp_filename, MYF(MY_WME));
       if (info->dfile == new_file) /* Retry with key cache */
-        if (unlikely(mi_open_datafile(info, share, name, -1)))
+        if (unlikely(mi_open_datafile(info, share)))
           param->retry_repair= 0; /* Safety */
     }
     mi_mark_crashed_on_repair(info);
@@ -2675,6 +2675,8 @@ int mi_repair_parallel(HA_CHECK *param, register MI_INFO *info,
   */
   DBUG_PRINT("info", ("is quick repair: %d", rep_quick));
   bzero((char*)&sort_info,sizeof(sort_info));
+  if (!rep_quick)
+    my_b_clear(&new_data_cache);
   /* Initialize pthread structures before goto err. */
   mysql_mutex_init(mi_key_mutex_MI_SORT_INFO_mutex,
                    &sort_info.mutex, MY_MUTEX_INIT_FAST);
@@ -3054,14 +3056,14 @@ err:
     already or they were not yet started (if the error happend before
     creating the threads).
   */
-  if (!rep_quick)
+  if (!rep_quick && my_b_inited(&new_data_cache))
     (void) end_io_cache(&new_data_cache);
   if (!got_error)
   {
     /* Replace the actual file with the temporary file */
     if (new_file >= 0)
     {
-      got_error= replace_data_file(param, info, name, new_file);
+      got_error= replace_data_file(param, info, new_file);
       new_file= -1;
     }
   }
@@ -3075,7 +3077,7 @@ err:
       (void) mysql_file_delete(mi_key_file_datatmp,
                                param->temp_filename, MYF(MY_WME));
       if (info->dfile == new_file) /* Retry with key cache */
-        if (unlikely(mi_open_datafile(info, share, name, -1)))
+        if (unlikely(mi_open_datafile(info, share)))
           param->retry_repair= 0; /* Safety */
     }
     mi_mark_crashed_on_repair(info);
@@ -4468,6 +4470,10 @@ int update_state_info(HA_CHECK *param, MI_INFO *info,uint update)
     int error;
     uint r_locks=share->r_locks,w_locks=share->w_locks;
     share->r_locks= share->w_locks= share->tot_locks= 0;
+
+    DBUG_EXECUTE_IF("simulate_incorrect_share_wlock_value",
+                    DEBUG_SYNC_C("after_share_wlock_set_to_0"););
+
     error=_mi_writeinfo(info,WRITEINFO_NO_UNLOCK);
     share->r_locks=r_locks;
     share->w_locks=w_locks;
@@ -4757,8 +4763,7 @@ int mi_make_backup_of_index(MI_INFO *info, time_t backup_time, myf flags)
 }
 
 
-static int replace_data_file(HA_CHECK *param, MI_INFO *info,
-                             const char *name, File new_file)
+static int replace_data_file(HA_CHECK *param, MI_INFO *info, File new_file)
 {
   MYISAM_SHARE *share=info->s;
 
@@ -4794,7 +4799,7 @@ static int replace_data_file(HA_CHECK *param, MI_INFO *info,
                         DATA_TMP_EXT, param->backup_time,
                         (param->testflag & T_BACKUP_DATA ?
                          MYF(MY_REDEL_MAKE_BACKUP): MYF(0))) ||
-      mi_open_datafile(info, share, name, -1))
+      mi_open_datafile(info, share))
     return 1;
   return 0;
 }

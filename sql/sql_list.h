@@ -41,12 +41,12 @@ public:
   { return alloc_root(mem_root, size); }
   static void *operator new(size_t size, MEM_ROOT *mem_root) throw ()
   { return alloc_root(mem_root, size); }
-  static void operator delete(void *ptr, size_t size) { TRASH(ptr, size); }
+  static void operator delete(void *ptr, size_t size) { TRASH_FREE(ptr, size); }
   static void operator delete(void *ptr, MEM_ROOT *mem_root)
   { /* never called */ }
   static void operator delete[](void *ptr, MEM_ROOT *mem_root)
   { /* never called */ }
-  static void operator delete[](void *ptr, size_t size) { TRASH(ptr, size); }
+  static void operator delete[](void *ptr, size_t size) { TRASH_FREE(ptr, size); }
 #ifdef HAVE_valgrind
   bool dummy_for_valgrind;
   inline Sql_alloc() :dummy_for_valgrind(0) {}
@@ -309,10 +309,13 @@ public:
   */
   inline void swap(base_list &rhs)
   {
+    list_node **rhs_last=rhs.last;
     swap_variables(list_node *, first, rhs.first);
-    swap_variables(list_node **, last, rhs.last);
     swap_variables(uint, elements, rhs.elements);
+    rhs.last= last == &first ? &rhs.first : last;
+    last = rhs_last == &rhs.first ? &first : rhs_last;
   }
+
   inline list_node* last_node() { return *last; }
   inline list_node* first_node() { return first;}
   inline void *head() { return first->info; }

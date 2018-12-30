@@ -297,6 +297,9 @@ void *toku_cachefile_get_userdata(CACHEFILE);
 CACHETABLE toku_cachefile_get_cachetable(CACHEFILE cf);
 // Effect: Get the cachetable.
 
+CACHEFILE toku_pair_get_cachefile(PAIR);
+// Effect: Get the cachefile of the pair
+
 void toku_cachetable_swap_pair_values(PAIR old_pair, PAIR new_pair);
 // Effect: Swaps the value_data of old_pair and new_pair. 
 // Requires: both old_pair and new_pair to be pinned with write locks.
@@ -349,7 +352,6 @@ int toku_cachetable_get_and_pin_with_dep_pairs (
     CACHEKEY key,
     uint32_t fullhash,
     void**value,
-    long *sizep,
     CACHETABLE_WRITE_CALLBACK write_callback,
     CACHETABLE_FETCH_CALLBACK fetch_callback,
     CACHETABLE_PARTIAL_FETCH_REQUIRED_CALLBACK pf_req_callback,
@@ -371,7 +373,6 @@ int toku_cachetable_get_and_pin (
     CACHEKEY key, 
     uint32_t fullhash, 
     void**value, 
-    long *sizep,
     CACHETABLE_WRITE_CALLBACK write_callback,
     CACHETABLE_FETCH_CALLBACK fetch_callback, 
     CACHETABLE_PARTIAL_FETCH_REQUIRED_CALLBACK pf_req_callback,
@@ -405,7 +406,6 @@ int toku_cachetable_get_and_pin_nonblocking (
     CACHEKEY key,
     uint32_t fullhash,
     void**value,
-    long *sizep,
     CACHETABLE_WRITE_CALLBACK write_callback,
     CACHETABLE_FETCH_CALLBACK fetch_callback,
     CACHETABLE_PARTIAL_FETCH_REQUIRED_CALLBACK pf_req_callback,
@@ -424,6 +424,11 @@ int toku_cachetable_maybe_get_and_pin (CACHEFILE, CACHEKEY, uint32_t /*fullhash*
 
 int toku_cachetable_maybe_get_and_pin_clean (CACHEFILE, CACHEKEY, uint32_t /*fullhash*/, pair_lock_type, void**);
 // Effect: Like maybe get and pin, but may pin a clean pair.
+
+int toku_cachetable_get_attr(CACHEFILE, CACHEKEY, uint32_t /*fullhash*/, PAIR_ATTR *);
+// Effect: get the attributes for cachekey
+// Returns: 0 if success, non-zero if cachekey is not cached
+// Notes: this function exists for tests
 
 int toku_cachetable_unpin(CACHEFILE, PAIR, enum cachetable_dirty dirty, PAIR_ATTR size);
 // Effect: Unpin a memory object
@@ -500,11 +505,17 @@ int toku_cachefile_get_fd (CACHEFILE);
 // Return the filename
 char * toku_cachefile_fname_in_env (CACHEFILE cf);
 
+void toku_cachefile_set_fname_in_env(CACHEFILE cf, char *new_fname_in_env);
+
 // Make it so when the cachefile closes, the underlying file is unlinked
 void toku_cachefile_unlink_on_close(CACHEFILE cf);
 
 // is this cachefile marked as unlink on close?
 bool toku_cachefile_is_unlink_on_close(CACHEFILE cf);
+
+void toku_cachefile_skip_log_recover_on_close(CACHEFILE cf);
+void toku_cachefile_do_log_recover_on_close(CACHEFILE cf);
+bool toku_cachefile_is_skip_log_recover_on_close(CACHEFILE cf);
 
 // Return the logger associated with the cachefile
 struct tokulogger *toku_cachefile_logger(CACHEFILE cf);

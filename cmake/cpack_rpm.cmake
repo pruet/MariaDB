@@ -23,13 +23,22 @@ SET(CPACK_COMPONENT_SHAREDLIBRARIES_GROUP "shared")
 SET(CPACK_COMPONENT_COMMON_GROUP "common")
 SET(CPACK_COMPONENT_CLIENTPLUGINS_GROUP "common")
 SET(CPACK_COMPONENT_COMPAT_GROUP "compat")
+SET(CPACK_COMPONENT_BACKUP_GROUP "backup")
+
 SET(CPACK_COMPONENTS_ALL Server ManPagesServer IniFiles Server_Scripts
                          SupportFiles Development ManPagesDevelopment
                          ManPagesTest Readme ManPagesClient Test 
-                         Common Client SharedLibraries ClientPlugins)
+                         Common Client SharedLibraries ClientPlugins
+                         backup
+)
 
 SET(CPACK_RPM_PACKAGE_NAME ${CPACK_PACKAGE_NAME})
-SET(CPACK_PACKAGE_FILE_NAME "${CPACK_RPM_PACKAGE_NAME}-${VERSION}-${RPM}-${CMAKE_SYSTEM_PROCESSOR}")
+IF(CMAKE_VERSION VERSION_LESS "3.6.0")
+  SET(CPACK_PACKAGE_FILE_NAME "${CPACK_RPM_PACKAGE_NAME}-${VERSION}-${RPM}-${CMAKE_SYSTEM_PROCESSOR}")
+ELSE()
+  SET(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
+  SET(CPACK_RPM_DEBUGINFO_PACKAGE ON)
+ENDIF()
 
 SET(CPACK_RPM_PACKAGE_RELEASE "1%{?dist}")
 SET(CPACK_RPM_PACKAGE_LICENSE "GPLv2")
@@ -74,12 +83,15 @@ SET(ignored
   "%ignore /etc"
   "%ignore /etc/init.d"
   "%ignore /etc/logrotate.d"
+  "%ignore /etc/systemd"
+  "%ignore /etc/systemd/system"
   "%ignore ${CMAKE_INSTALL_PREFIX}"
   "%ignore ${CMAKE_INSTALL_PREFIX}/bin"
   "%ignore ${CMAKE_INSTALL_PREFIX}/include"
   "%ignore ${CMAKE_INSTALL_PREFIX}/lib"
   "%ignore ${CMAKE_INSTALL_PREFIX}/lib/systemd"
   "%ignore ${CMAKE_INSTALL_PREFIX}/lib/systemd/system"
+  "%ignore ${CMAKE_INSTALL_PREFIX}/lib/tmpfiles.d"
   "%ignore ${CMAKE_INSTALL_PREFIX}/lib64"
   "%ignore ${CMAKE_INSTALL_PREFIX}/sbin"
   "%ignore ${CMAKE_INSTALL_PREFIX}/share"
@@ -98,6 +110,7 @@ SET(CPACK_RPM_client_USER_FILELIST ${ignored} "%config(noreplace) ${INSTALL_SYSC
 SET(CPACK_RPM_compat_USER_FILELIST ${ignored})
 SET(CPACK_RPM_devel_USER_FILELIST ${ignored})
 SET(CPACK_RPM_test_USER_FILELIST ${ignored})
+SET(CPACK_RPM_backup_USER_FILELIST ${ignored})
 
 # "set/append array" - append a set of strings, separated by a space
 MACRO(SETA var)
@@ -158,9 +171,14 @@ SETA(CPACK_RPM_server_PACKAGE_REQUIRES
   "MariaDB-client")
 
 IF(WITH_WSREP)
-SETA(CPACK_RPM_server_PACKAGE_REQUIRES
-  "galera" "rsync" "lsof" "grep" "gawk" "iproute"
-  "coreutils" "findutils" "tar")
+  SETA(CPACK_RPM_server_PACKAGE_REQUIRES
+    "galera" "rsync" "lsof" "grep" "gawk" "iproute"
+    "coreutils" "findutils" "tar")
+  IF (RPM MATCHES "sles11")
+    SETA(CPACK_RPM_server_PACKAGE_REQUIRES "util-linux")
+  ELSE()
+    SETA(CPACK_RPM_server_PACKAGE_REQUIRES "which")
+  ENDIF()
 ENDIF()
 
 SET(CPACK_RPM_server_PRE_INSTALL_SCRIPT_FILE ${CMAKE_SOURCE_DIR}/support-files/rpm/server-prein.sh)
@@ -230,6 +248,9 @@ SETA(CPACK_RPM_test_PACKAGE_PROVIDES
   "perl(mtr_io.pl)"
   "perl(mtr_match)"
   "perl(mtr_misc.pl)"
+  "perl(mtr_gcov.pl)"
+  "perl(mtr_gprof.pl)"
+  "perl(mtr_process.pl)"
   "perl(mtr_report)"
   "perl(mtr_results)"
   "perl(mtr_unique)")

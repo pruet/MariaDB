@@ -621,13 +621,13 @@ SELECT f3 FROM t2 HAVING f3 >= 8
 );
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	<derived2>	system	NULL	NULL	NULL	NULL	1	100.00	
-1	PRIMARY	<subquery4>	eq_ref	distinct_key	distinct_key	4	sq.f2	1	100.00	
+1	PRIMARY	<subquery4>	eq_ref	distinct_key	distinct_key	4	const	1	100.00	
 1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where; FirstMatch(<subquery4>); Using join buffer (flat, BNL join)
 4	MATERIALIZED	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	
 2	DERIVED	t1	system	NULL	NULL	NULL	NULL	1	100.00	
 Warnings:
 Note	1276	Field or reference 'sq.f2' of SELECT #3 was resolved in SELECT #1
-Note	1003	select 6 AS `f1` from  <materialize> (select `test`.`t2`.`f3` from `test`.`t2` having (`test`.`t2`.`f3` >= 8)) semi join (`test`.`t2`) where ((`test`.`t2`.`f3` = 6) and (9 = `<subquery4>`.`f3`))
+Note	1003	select 6 AS `f1` from  <materialize> (select `test`.`t2`.`f3` from `test`.`t2` having (`test`.`t2`.`f3` >= 8)) semi join (`test`.`t2`) where ((`test`.`t2`.`f3` = 6) and (`<subquery4>`.`f3` = 9))
 DROP TABLE t2,t1;
 #
 # MDEV-9462: Out of memory using explain on 2 empty tables 
@@ -949,6 +949,168 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 2	DERIVED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no matching row in const table
 DROP TABLES t1,t2;
 set optimizer_switch=@save_derived_optimizer_switch;
+#
+# MDEV-10663: Use of Inline table columns in HAVING clause
+# throws 1463 Error
+#
+set @save_sql_mode = @@sql_mode;
+set sql_mode='ONLY_FULL_GROUP_BY,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+CREATE TABLE `example1463` (
+`Customer` varchar(255) NOT NULL,
+`DeliveryStatus` varchar(255) NOT NULL,
+`OrderSize` int(11) NOT NULL
+);
+INSERT INTO example1463 VALUES ('Charlie', 'Success', 100);
+INSERT INTO example1463 VALUES ('David', 'Success', 110);
+INSERT INTO example1463 VALUES ('Charlie', 'Failed', 200);
+INSERT INTO example1463 VALUES ('David', 'Success', 100);
+INSERT INTO example1463 VALUES ('David', 'Unknown', 100);
+INSERT INTO example1463 VALUES ('Edward', 'Success', 150);
+INSERT INTO example1463 VALUES ('Edward', 'Pending', 150);
+SELECT Customer, Success, SUM(OrderSize)
+FROM (SELECT Customer,
+CASE WHEN DeliveryStatus='Success' THEN 'Yes' ELSE 'No' END AS Success,
+OrderSize
+FROM example1463) as subQ
+GROUP BY Success, Customer
+WITH ROLLUP;
+Customer	Success	SUM(OrderSize)
+Charlie	No	200
+David	No	100
+Edward	No	150
+NULL	No	450
+Charlie	Yes	100
+David	Yes	210
+Edward	Yes	150
+NULL	Yes	460
+NULL	NULL	910
+SELECT Customer, Success, SUM(OrderSize)
+FROM (SELECT Customer,
+CASE WHEN DeliveryStatus='Success' THEN 'Yes' ELSE 'No' END AS Success,
+OrderSize
+FROM example1463) as subQ
+GROUP BY Success, Customer;
+Customer	Success	SUM(OrderSize)
+Charlie	No	200
+David	No	100
+Edward	No	150
+Charlie	Yes	100
+David	Yes	210
+Edward	Yes	150
+SELECT Customer, Success, SUM(OrderSize)
+FROM (SELECT Customer,
+CASE WHEN DeliveryStatus='Success' THEN 'Yes' ELSE 'No' END AS Success,
+OrderSize
+FROM example1463) as subQ
+GROUP BY Success, Customer
+HAVING Success IS NOT NULL;
+Customer	Success	SUM(OrderSize)
+Charlie	No	200
+David	No	100
+Edward	No	150
+Charlie	Yes	100
+David	Yes	210
+Edward	Yes	150
+DROP TABLE example1463;
+set sql_mode= @save_sql_mode;
+#
+# MDEV-9028: SELECT DISTINCT constant column of  derived  table
+#            used as the second operand of LEFT JOIN
+#
+create table t1 (id int, data varchar(255));
+insert into t1 values (1,'yes'),(2,'yes');
+select distinct t1.id, tt.id, tt.data
+from t1
+left join
+(select t1.id, 'yes' as data from t1) as tt
+on t1.id = tt.id;
+id	id	data
+1	1	yes
+2	2	yes
+select distinct t1.id, tt.id, tt.data
+from t1
+left join
+(select t1.id, 'yes' as data from t1 where id > 1) as tt
+on t1.id = tt.id;
+id	id	data
+2	2	yes
+1	NULL	NULL
+drop table t1;
+#
+# MDEV-14241: Server crash in key_copy / get_matching_chain_by_join_key
+# or valgrind warnings
+#
+CREATE TABLE t1 (a VARCHAR(10)) ENGINE=MyISAM;
+CREATE OR REPLACE ALGORITHM=TEMPTABLE VIEW v1 AS SELECT * FROM t1;
+INSERT INTO t1 VALUES ('foo'),('bar');
+CREATE TABLE t2 (b integer auto_increment primary key) ENGINE=MyISAM;
+INSERT INTO t2 VALUES (NULL),(NULL);
+CREATE TABLE t3 (c VARCHAR(1024) CHARACTER SET utf8, d INT) ENGINE=MyISAM;
+CREATE OR REPLACE ALGORITHM=TEMPTABLE VIEW v3 AS SELECT * FROM t3;
+INSERT INTO t3 VALUES ('abc',NULL),('def',4);
+set @save_join_cache_level= @@join_cache_level;
+SET join_cache_level= 8;
+explain
+SELECT * FROM v1, t2, v3 WHERE a = c AND b = d;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	2	
+1	PRIMARY	<derived3>	hash_ALL	NULL	#hash#$hj	3075	func	2	Using where; Using join buffer (flat, BNLH join)
+1	PRIMARY	t2	eq_ref	PRIMARY	PRIMARY	4	v3.d	1	Using index
+3	DERIVED	t3	ALL	NULL	NULL	NULL	NULL	2	
+2	DERIVED	t1	ALL	NULL	NULL	NULL	NULL	2	
+SELECT * FROM v1, t2, v3 WHERE a = c AND b = d;
+a	b	c	d
+DROP VIEW v1, v3;
+DROP TABLE t1, t2, t3;
+#
+# MDEV-14786: Server crashes in Item_cond::transform on 2nd
+# execution of SP querying from a view
+#
+create table t1 (i int, row_start timestamp(6) not null default now(),
+row_end timestamp(6) not null default '2030-01-01 0:0:0');
+create view v1 as select i from t1 where i < 5 and (row_end =
+TIMESTAMP'2030-01-01 0:0:0' or row_end is null);
+create procedure pr(x int) select i from v1;
+call pr(1);
+i
+call pr(2);
+i
+drop procedure pr;
+drop view v1;
+drop table t1;
+set @@join_cache_level= @save_join_cache_level;
+#
+# MDEV-16307: Incorrect results when using BNLH join instead of BNL join with views
+#
+CREATE TABLE t1 (c1 text, c2 int);
+INSERT INTO t1 VALUES ('a',1), ('c',3), ('g',7), ('d',4), ('c',3);
+CREATE TABLE t2 (c1 text, c2 int);
+INSERT INTO t2 VALUES ('b',2), ('c',3);
+CREATE ALGORITHM=TEMPTABLE VIEW v1 AS SELECT * FROM t1;
+explain SELECT v1.c1, v1.c2, t2.c1, t2.c2 FROM v1, t2 WHERE v1.c1=t2.c1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	5	Using where; Using join buffer (flat, BNL join)
+2	DERIVED	t1	ALL	NULL	NULL	NULL	NULL	5	
+SELECT v1.c1, v1.c2, t2.c1, t2.c2 FROM v1, t2 WHERE v1.c1=t2.c1;
+c1	c2	c1	c2
+c	3	c	3
+c	3	c	3
+set @save_join_cache_level= @@join_cache_level;
+set @@join_cache_level=4;
+explain SELECT v1.c1, v1.c2, t2.c1, t2.c2 FROM v1, t2 WHERE v1.c1=t2.c1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	Using where
+1	PRIMARY	<derived2>	hash_ALL	NULL	#hash#$hj	3	test.t2.c1	5	Using where; Using join buffer (flat, BNLH join)
+2	DERIVED	t1	ALL	NULL	NULL	NULL	NULL	5	
+SELECT v1.c1, v1.c2, t2.c1, t2.c2 FROM v1, t2 WHERE v1.c1=t2.c1;
+c1	c2	c1	c2
+c	3	c	3
+c	3	c	3
+drop table t1,t2;
+drop view v1;
+set @@join_cache_level= @save_join_cache_level;
+# end of 5.5
 #
 # Start of 10.1 tests
 #

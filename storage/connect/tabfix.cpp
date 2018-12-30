@@ -1,11 +1,11 @@
 /************* TabFix C++ Program Source Code File (.CPP) **************/
 /* PROGRAM NAME: TABFIX                                                */
 /* -------------                                                       */
-/*  Version 4.9                                                        */
+/*  Version 4.9.2                                                      */
 /*                                                                     */
 /* COPYRIGHT:                                                          */
 /* ----------                                                          */
-/*  (C) Copyright to the author Olivier BERTRAND          1998-2015    */
+/*  (C) Copyright to the author Olivier BERTRAND          1998-2017    */
 /*                                                                     */
 /* WHAT THIS PROGRAM DOES:                                             */
 /* -----------------------                                             */
@@ -77,7 +77,7 @@ TDBFIX::TDBFIX(PGLOBAL g, PTDBFIX tdbp) : TDBDOS(g, tdbp)
   } // end of TDBFIX copy constructor
 
 // Method
-PTDB TDBFIX::CopyOne(PTABS t)
+PTDB TDBFIX::Clone(PTABS t)
   {
   PTDB    tp;
   PGLOBAL g = t->G;
@@ -105,7 +105,7 @@ PTDB TDBFIX::CopyOne(PTABS t)
   } // endif Ftype
 
   return tp;
-  } // end of CopyOne
+  } // end of Clone
 
 /***********************************************************************/
 /*  Reset read/write position values.                                  */
@@ -291,7 +291,7 @@ bool TDBFIX::IsUsingTemp(PGLOBAL)
 /***********************************************************************/
 bool TDBFIX::OpenDB(PGLOBAL g)
   {
-  if (trace)
+  if (trace(1))
     htrc("FIX OpenDB: tdbp=%p tdb=R%d use=%d key=%p mode=%d Ftype=%d\n",
       this, Tdb_No, Use, To_Key_Col, Mode, Ftype);
 
@@ -345,7 +345,7 @@ bool TDBFIX::OpenDB(PGLOBAL g)
   /*********************************************************************/
   To_BlkFil = InitBlockFilter(g, To_Filter);
 
-  if (trace)
+  if (trace(1))
     htrc("OpenFix: R%hd mode=%d BlkFil=%p\n", Tdb_No, Mode, To_BlkFil);
 
   /*********************************************************************/
@@ -373,7 +373,7 @@ int TDBFIX::WriteDB(PGLOBAL g)
 /***********************************************************************/
 /*  BINCOL public constructor.                                         */
 /***********************************************************************/
-BINCOL::BINCOL(PGLOBAL g, PCOLDEF cdp, PTDB tp, PCOL cp, int i, PSZ am)
+BINCOL::BINCOL(PGLOBAL g, PCOLDEF cdp, PTDB tp, PCOL cp, int i, PCSZ am)
   : DOSCOL(g, cdp, tp, cp, i, am)
   {
   char c, *fmt = cdp->GetFmt();
@@ -411,8 +411,8 @@ BINCOL::BINCOL(PGLOBAL g, PCOLDEF cdp, PTDB tp, PCOL cp, int i, PSZ am)
       case 'D': M = sizeof(double);   break;
       default:
         sprintf(g->Message, MSG(BAD_BIN_FMT), Fmt, Name);
-        longjmp(g->jumper[g->jump_level], 11);
-        } // endswitch Fmt
+				throw 11;
+		} // endswitch Fmt
 
   } else if (IsTypeChar(Buf_Type))
     Eds = 0;
@@ -474,7 +474,7 @@ void BINCOL::ReadColumn(PGLOBAL g)
   int     rc;
   PTDBFIX tdbp = (PTDBFIX)To_Tdb;
 
-  if (trace > 1)
+  if (trace(2))
     htrc("BIN ReadColumn: col %s R%d coluse=%.4X status=%.4X buf_type=%d\n",
       Name, tdbp->GetTdb_No(), ColUse, Status, Buf_Type);
 
@@ -486,8 +486,8 @@ void BINCOL::ReadColumn(PGLOBAL g)
       if (rc == RC_EF)
         sprintf(g->Message, MSG(INV_DEF_READ), rc);
 
-      longjmp(g->jumper[g->jump_level], 11);
-      } // endif
+			throw 11;
+		} // endif
 
   p = tdbp->To_Line + Deplac;
 
@@ -545,8 +545,8 @@ void BINCOL::ReadColumn(PGLOBAL g)
       break;
     default:
       sprintf(g->Message, MSG(BAD_BIN_FMT), Fmt, Name);
-      longjmp(g->jumper[g->jump_level], 11);
-      } // endswitch Fmt
+			throw 11;
+	} // endswitch Fmt
 
   // Set null when applicable
   if (Nullable)
@@ -565,7 +565,7 @@ void BINCOL::WriteColumn(PGLOBAL g)
   longlong n;
   PTDBFIX  tdbp = (PTDBFIX)To_Tdb;
 
-  if (trace) {
+  if (trace(1)) {
     htrc("BIN WriteColumn: col %s R%d coluse=%.4X status=%.4X",
           Name, tdbp->GetTdb_No(), ColUse, Status);
     htrc(" Lrecl=%d\n", tdbp->Lrecl);
@@ -589,13 +589,14 @@ void BINCOL::WriteColumn(PGLOBAL g)
   switch (Fmt) {
     case 'X':
       // Standard not converted values
-      if (Eds && IsTypeChar(Buf_Type))
-        *(longlong *)p = Value->GetBigintValue();
-      else if (Value->GetBinValue(p, Long, Status)) {
+			if (Eds && IsTypeChar(Buf_Type)) {
+				if (Status)
+					Value->GetValueNonAligned<longlong>(p, Value->GetBigintValue());
+			} else if (Value->GetBinValue(p, Long, Status)) {
         sprintf(g->Message, MSG(BIN_F_TOO_LONG),
                             Name, Value->GetSize(), Long);
-        longjmp(g->jumper[g->jump_level], 31);
-      } // endif p
+				throw 31;
+			} // endif p
 
       break;
     case 'S':                 // Short integer
@@ -603,9 +604,9 @@ void BINCOL::WriteColumn(PGLOBAL g)
 
       if (n > 32767LL || n < -32768LL) {
         sprintf(g->Message, MSG(VALUE_TOO_BIG), n, Name);
-        longjmp(g->jumper[g->jump_level], 31);
-      } else if (Status)
-        *(short *)p = (short)n;
+				throw 31;
+			} else if (Status)
+				Value->GetValueNonAligned<short>(p, (short)n);
 
       break;
     case 'T':                 // Tiny integer
@@ -613,8 +614,8 @@ void BINCOL::WriteColumn(PGLOBAL g)
 
       if (n > 255LL || n < -256LL) {
         sprintf(g->Message, MSG(VALUE_TOO_BIG), n, Name);
-        longjmp(g->jumper[g->jump_level], 31);
-      } else if (Status)
+				throw 31;
+			} else if (Status)
         *p = (char)n;
 
       break;
@@ -623,9 +624,9 @@ void BINCOL::WriteColumn(PGLOBAL g)
 
       if (n > INT_MAX || n < INT_MIN) {
         sprintf(g->Message, MSG(VALUE_TOO_BIG), n, Name);
-        longjmp(g->jumper[g->jump_level], 31);
-      } else if (Status)
-        *(int *)p = Value->GetIntValue();
+				throw 31;
+			} else if (Status)
+				Value->GetValueNonAligned<int>(p, (int)n);
 
       break;
     case 'G':                 // Large (great) integer
@@ -636,19 +637,19 @@ void BINCOL::WriteColumn(PGLOBAL g)
     case 'F':                 // Float
     case 'R':                 // Real
       if (Status)
-        *(float *)p = (float)Value->GetFloatValue();
+				Value->GetValueNonAligned<float>(p, (float)Value->GetFloatValue());
 
       break;
     case 'D':                 // Double
       if (Status)
-        *(double *)p = Value->GetFloatValue();
+				Value->GetValueNonAligned<double>(p, Value->GetFloatValue());
 
       break;
     case 'C':                 // Characters
       if ((n = (signed)strlen(Value->GetCharString(Buf))) > Long) {
         sprintf(g->Message, MSG(BIN_F_TOO_LONG), Name, (int) n, Long);
-        longjmp(g->jumper[g->jump_level], 31);
-        } // endif n
+				throw 31;
+			} // endif n
 
       if (Status) {
         s = Value->GetCharString(Buf);
@@ -659,8 +660,8 @@ void BINCOL::WriteColumn(PGLOBAL g)
       break;
     default:
       sprintf(g->Message, MSG(BAD_BIN_FMT), Fmt, Name);
-      longjmp(g->jumper[g->jump_level], 11);
-    } // endswitch Fmt
+			throw 31;
+	} // endswitch Fmt
 
   if (Eds && Status) {
     p = tdbp->To_Line + Deplac;

@@ -27,7 +27,7 @@
 #include "sql_partition.h"                 // partition_info.h: LIST_PART_ENTRY
                                            // NOT_A_PARTITION_ID
 #include "partition_info.h"
-#include "sql_parse.h"                        // test_if_data_home_dir
+#include "sql_parse.h"
 #include "sql_acl.h"                          // *_ACL
 #include "sql_base.h"                         // fill_record
 
@@ -39,9 +39,6 @@ partition_info *partition_info::get_clone(THD *thd)
 {
   MEM_ROOT *mem_root= thd->mem_root;
   DBUG_ENTER("partition_info::get_clone");
-
-  if (!this)
-    DBUG_RETURN(NULL);
   List_iterator<partition_element> part_it(partitions);
   partition_element *part;
   partition_info *clone= new (mem_root) partition_info();
@@ -889,6 +886,7 @@ char* partition_info::find_duplicate_field()
 */
 partition_element *partition_info::get_part_elem(const char *partition_name,
                                                  char *file_name,
+                                                 size_t file_name_size,
                                                  uint32 *part_id)
 {
   List_iterator<partition_element> part_it(partitions);
@@ -910,10 +908,10 @@ partition_element *partition_info::get_part_elem(const char *partition_name,
                            sub_part_elem->partition_name, partition_name))
         {
           if (file_name)
-            create_subpartition_name(file_name, "",
-                                     part_elem->partition_name,
-                                     partition_name,
-                                     NORMAL_PART_NAME);
+            if (create_subpartition_name(file_name, file_name_size, "",
+                                         part_elem->partition_name,
+                                         partition_name, NORMAL_PART_NAME))
+              DBUG_RETURN(NULL);
           *part_id= j + (i * num_subparts);
           DBUG_RETURN(sub_part_elem);
         }
@@ -928,8 +926,9 @@ partition_element *partition_info::get_part_elem(const char *partition_name,
                             part_elem->partition_name, partition_name))
     {
       if (file_name)
-        create_partition_name(file_name, "", partition_name,
-                              NORMAL_PART_NAME, TRUE);
+        if (create_partition_name(file_name, file_name_size, "",
+                                  partition_name, NORMAL_PART_NAME, TRUE))
+          DBUG_RETURN(NULL);
       *part_id= i;
       DBUG_RETURN(part_elem);
     }
@@ -2744,6 +2743,7 @@ end:
   DBUG_RETURN(result);
 }
 
+
 /**
   Fix partition data from parser.
 
@@ -2833,6 +2833,8 @@ bool partition_info::fix_parser_data(THD *thd)
     part_elem= it++;
     List_iterator<part_elem_value> list_val_it(part_elem->list_val_list);
     num_elements= part_elem->list_val_list.elements;
+    if (!num_elements && error_if_requires_values())
+      DBUG_RETURN(true);
     DBUG_ASSERT(part_type == RANGE_PARTITION ?
                 num_elements == 1U : TRUE);
     for (j= 0; j < num_elements; j++)
@@ -3141,6 +3143,23 @@ void partition_info::print_debug(const char *str, uint *value)
     DBUG_PRINT("info", ("parser: %s", str));
   DBUG_VOID_RETURN;
 }
+
+bool partition_info::field_in_partition_expr(Field *field) const
+{
+  uint i;
+  for (i= 0; i < num_part_fields; i++)
+  {
+    if (field->eq(part_field_array[i]))
+      return TRUE;
+  }
+  for (i= 0; i < num_subpart_fields; i++)
+  {
+    if (field->eq(subpart_field_array[i]))
+      return TRUE;
+  }
+  return FALSE;
+}
+
 #else /* WITH_PARTITION_STORAGE_ENGINE */
  /*
    For builds without partitioning we need to define these functions
@@ -3192,3 +3211,19 @@ bool check_partition_dirs(partition_info *part_info)
 }
 
 #endif /* WITH_PARTITION_STORAGE_ENGINE */
+
+bool partition_info::error_if_requires_values() const
+{
+  switch (part_type) {
+  case NOT_A_PARTITION:
+  case HASH_PARTITION:
+    break;
+  case RANGE_PARTITION:
+    my_error(ER_PARTITION_REQUIRES_VALUES_ERROR, MYF(0), "RANGE", "LESS THAN");
+    return true;
+  case LIST_PARTITION:
+    my_error(ER_PARTITION_REQUIRES_VALUES_ERROR, MYF(0), "LIST", "IN");
+    return true;
+  }
+  return false;
+}

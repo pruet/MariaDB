@@ -127,7 +127,7 @@ public:
         paranoid_invariant(index != NODE_NULL);
         m_index = index;
     }
-} __attribute__((__packed__,aligned(4)));
+} ;
 
 template<>
 class subtree_templated<true> {
@@ -184,7 +184,7 @@ public:
     inline void disable_bit(void) {
         m_bitfield &= MASK_INDEX;
     }
-} __attribute__((__packed__)) ;
+} ;
 
 template<typename omtdata_t, bool subtree_supports_marks>
 class omt_node_templated {
@@ -197,7 +197,7 @@ public:
     // this needs to be in both implementations because we don't have
     // a "static if" the caller can use
     inline void clear_stolen_bits(void) {}
-} __attribute__((__packed__,aligned(4)));
+} ;
 
 template<typename omtdata_t>
 class omt_node_templated<omtdata_t, true> {
@@ -234,7 +234,7 @@ public:
         this->unset_marked_bit();
         this->unset_marks_below_bit();
     }
-} __attribute__((__packed__,aligned(4)));
+} ;
 
 }
 
@@ -284,7 +284,6 @@ public:
      *               By taking ownership of the array, we save a malloc and memcpy,
      *               and possibly a free (if the caller is done with the array).
      */
-    __attribute__((nonnull))
     void create_steal_sorted_array(omtdata_t **const values, const uint32_t numvalues, const uint32_t new_capacity);
 
     /**
@@ -667,7 +666,6 @@ private:
 
     void set_at_internal(const subtree &subtree, const omtdata_t &value, const uint32_t idx);
 
-    __attribute__((nonnull(2,5)))
     void delete_internal(subtree *const subtreep, const uint32_t idx, omt_node *const copyn, subtree **const rebalance_subtree);
 
     template<typename iterate_extra_t,

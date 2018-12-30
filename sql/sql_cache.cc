@@ -961,7 +961,7 @@ inline void Query_cache_query::unlock_reading()
 void Query_cache_query::init_n_lock()
 {
   DBUG_ENTER("Query_cache_query::init_n_lock");
-  res=0; wri = 0; len = 0;
+  res=0; wri = 0; len = 0; ready= 0;
   mysql_rwlock_init(key_rwlock_query_cache_query_lock, &lock);
   lock_writing();
   DBUG_PRINT("qcache", ("inited & locked query for block 0x%lx",
@@ -1187,7 +1187,11 @@ void Query_cache::end_of_result(THD *thd)
 #endif
 
   if (try_lock(thd, Query_cache::WAIT))
+  {
+    if (is_disabled())
+      query_cache_tls->first_query_block= NULL; // do not try again with QC
     DBUG_VOID_RETURN;
+  }
 
   query_block= query_cache_tls->first_query_block;
   if (query_block)
@@ -1226,6 +1230,7 @@ void Query_cache::end_of_result(THD *thd)
       query_cache.split_block(last_result_block,len);
 
     header->found_rows(limit_found_rows);
+    header->set_results_ready(); // signal for plugin
     header->result()->type= Query_cache_block::RESULT;
 
     /* Drop the writer. */
@@ -1551,6 +1556,8 @@ def_week_frmt: %lu, in_trans: %d, autocommit: %d",
 
         unlock();
 
+        DEBUG_SYNC(thd, "wait_in_query_cache_store_query");
+
 	// init_n_lock make query block locked
 	BLOCK_UNLOCK_WR(query_block);
       }
@@ -1787,7 +1794,7 @@ Query_cache::send_result_to_client(THD *thd, char *org_sql, uint query_length)
           sql++;
           continue;
         }
-        /* fall trough */
+        /* fall through */
       default:
         break;
       }
@@ -2159,8 +2166,7 @@ lookup:
     response, we can't handle it anyway.
   */
   (void) trans_commit_stmt(thd);
-  if (!thd->get_stmt_da()->is_set())
-    thd->get_stmt_da()->disable_status();
+  thd->get_stmt_da()->disable_status();
 
   BLOCK_UNLOCK_RD(query_block);
   MYSQL_QUERY_CACHE_HIT(thd->query(), (ulong) thd->limit_found_rows);
@@ -2541,6 +2547,7 @@ void Query_cache::init()
   */
   if (global_system_variables.query_cache_type == 0)
   {
+    m_cache_status= DISABLE_REQUEST;
     free_cache();
     m_cache_status= DISABLED;
   }
@@ -2749,12 +2756,16 @@ void Query_cache::make_disabled()
 
   This function frees all resources allocated by the cache.  You
   have to call init_cache() before using the cache again. This function
-  requires the structure_guard_mutex to be locked.
+  requires the cache to be locked (LOCKED_NO_WAIT, lock_and_suspend) or
+  disabling.
 */
 
 void Query_cache::free_cache()
 {
   DBUG_ENTER("Query_cache::free_cache");
+
+  DBUG_ASSERT(m_cache_lock_status == LOCKED_NO_WAIT ||
+              m_cache_status == DISABLE_REQUEST);
 
   /* Destroy locks */
   Query_cache_block *block= queries_blocks;
@@ -2763,6 +2774,13 @@ void Query_cache::free_cache()
     do
     {
       Query_cache_query *query= block->query();
+      /*
+         There will not be new requests but some maybe not finished yet,
+         so wait for them by trying lock/unlock
+      */
+      BLOCK_LOCK_WR(block);
+      BLOCK_UNLOCK_WR(block);
+
       mysql_rwlock_destroy(&query->lock);
       block= block->next;
     } while (block != queries_blocks);
@@ -4614,7 +4632,7 @@ void Query_cache::wreck(uint line, const char *message)
   DBUG_PRINT("warning", ("%5d QUERY CACHE WRECK => DISABLED",line));
   DBUG_PRINT("warning", ("=================================="));
   if (thd)
-    thd->killed= KILL_CONNECTION;
+    thd->set_killed(KILL_CONNECTION);
   cache_dump();
   /* check_integrity(0); */ /* Can't call it here because of locks */
   bins_dump();

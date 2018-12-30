@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /* This file is included by all internal maria files */
 
@@ -67,7 +67,8 @@ typedef struct st_maria_sort_info
   pgcache_page_no_t page;
   ha_rows max_records;
   uint current_key, total_keys;
-  uint got_error, threads_running;
+  volatile uint got_error;
+  uint threads_running;
   myf myf_rw;
   enum data_file_type new_data_file_type, org_data_file_type;
 } MARIA_SORT_INFO;
@@ -138,7 +139,7 @@ typedef struct st_maria_state_info
     uchar unique_key_parts[2];		/* Key parts + unique parts */
     uchar keys;				/* number of keys in file */
     uchar uniques;			/* number of UNIQUE definitions */
-    uchar language;			/* Language for indexes */
+    uchar not_used;			/* Language for indexes */
     uchar fulltext_keys;
     uchar data_file_type;
     /* Used by mariapack to store the original data_file_type */
@@ -148,6 +149,8 @@ typedef struct st_maria_state_info
   MARIA_STATUS_INFO state;
   /* maria_ha->state points here for crash-safe but not versioned tables */
   MARIA_STATUS_INFO common;
+  /* State for a versioned table that is temporary non versioned */
+  MARIA_STATUS_INFO no_logging;
   ha_rows split;			/* number of split blocks */
   my_off_t dellink;			/* Link to next removed block */
   pgcache_page_no_t first_bitmap_with_space;
@@ -208,6 +211,7 @@ typedef struct st_maria_state_info
 } MARIA_STATE_INFO;
 
 
+/* Number of bytes written be _ma_state_info_write_sub() */
 #define MARIA_STATE_INFO_SIZE	\
   (24 + 2 + LSN_STORE_SIZE*3 + 4 + 11*8 + 4*4 + 8 + 3*4 + 5*8)
 #define MARIA_FILE_OPEN_COUNT_OFFSET 0
@@ -290,6 +294,8 @@ typedef struct st_ma_base_info
   uint extra_rec_buff_size;
   /* Tuning flags that can be ignored by older Maria versions */
   uint extra_options;
+  /* default language, not really used but displayed by maria_chk */
+  uint language;
 
   /* The following are from the header */
   uint key_parts, all_key_parts;
@@ -327,7 +333,10 @@ typedef struct st_maria_file_bitmap
   pgcache_page_no_t last_bitmap_page; /* Last possible bitmap page */
   my_bool changed;                     /* 1 if page needs to be written */
   my_bool changed_not_flushed;         /* 1 if some bitmap is not flushed */
+  my_bool return_first_match;          /* Shortcut find_head() */
   uint used_size;                      /* Size of bitmap head that is not 0 */
+  uint full_head_size;                 /* Where to start search for head */
+  uint full_tail_size;                 /* Where to start search for tail */
   uint flush_all_requested;            /**< If _ma_bitmap_flush_all waiting */
   uint waiting_for_flush_all_requested; /* If someone is waiting for above */
   uint non_flushable;                  /**< 0 if bitmap and log are in sync */
@@ -594,8 +603,10 @@ struct st_maria_handler
 {
   MARIA_SHARE *s;			/* Shared between open:s */
   struct st_ma_transaction *trn;        /* Pointer to active transaction */
+  struct st_maria_handler *trn_next;
   MARIA_STATUS_INFO *state, state_save;
   MARIA_STATUS_INFO *state_start;       /* State at start of transaction */
+  MARIA_USED_TABLES *used_tables;
   MARIA_ROW cur_row;                    /* The active row that we just read */
   MARIA_ROW new_row;			/* Storage for a row during update */
   MARIA_KEY last_key;                   /* Last found key */
@@ -852,19 +863,6 @@ struct st_maria_handler
 #define get_pack_length(length) ((length) >= 255 ? 3 : 1)
 #define _ma_have_versioning(info) ((info)->row_flag & ROW_FLAG_TRANSID)
 
-/**
-   Sets table's trn and prints debug information
-   @param tbl              MARIA_HA of table
-   @param newtrn           what to put into tbl->trn
-   @note cast of newtrn is because %p of NULL gives warning (NULL is int)
-*/
-#define _ma_set_trn_for_table(tbl, newtrn) do {                         \
-    DBUG_PRINT("info",("table: %p  trn: %p -> %p",                      \
-                       (tbl), (tbl)->trn, (void *)(newtrn)));           \
-    (tbl)->trn= (newtrn);                                               \
-  } while (0)
-
-
 #define MARIA_MIN_BLOCK_LENGTH	20		/* Because of delete-link */
 /* Don't use to small record-blocks */
 #define MARIA_EXTEND_BLOCK_LENGTH	20
@@ -885,7 +883,7 @@ struct st_maria_handler
 #define PACK_TYPE_SELECTED	1	/* Bits in field->pack_type */
 #define PACK_TYPE_SPACE_FIELDS	2
 #define PACK_TYPE_ZERO_FILL	4
-#define MARIA_FOUND_WRONG_KEY 32738	/* Impossible value from ha_key_cmp */
+#define MARIA_FOUND_WRONG_KEY 32768	/* Impossible value from ha_key_cmp */
 
 #define MARIA_BLOCK_SIZE(key_length,data_pointer,key_pointer,block_size)  (((((key_length)+(data_pointer)+(key_pointer))*4+(key_pointer)+2)/(block_size)+1)*(block_size))
 #define MARIA_MAX_KEYPTR_SIZE	5	/* For calculating block lengths */
@@ -914,7 +912,6 @@ extern mysql_mutex_t THR_LOCK_maria;
 /* Keep a small buffer for tables only using small blobs */
 #define MARIA_SMALL_BLOB_BUFFER 1024
 #define MARIA_MAX_CONTROL_FILE_LOCK_RETRY 30     /* Retry this many times */
-
 
 /* Some extern variables */
 extern LIST *maria_open_list;
@@ -1178,7 +1175,7 @@ extern ulonglong transid_get_packed(MARIA_SHARE *share, const uchar *from);
 #ifdef IDENTICAL_PAGES_AFTER_RECOVERY
 void page_cleanup(MARIA_SHARE *share, MARIA_PAGE *page)
 #else
-#define page_cleanup(A,B) while (0)
+#define page_cleanup(A,B) do { } while (0)
 #endif
 
 extern MARIA_KEY *_ma_make_key(MARIA_HA *info, MARIA_KEY *int_key, uint keynr,
@@ -1343,8 +1340,7 @@ int _ma_def_scan_restore_pos(MARIA_HA *info, MARIA_RECORD_POS lastpos);
 
 extern MARIA_HA *_ma_test_if_reopen(const char *filename);
 my_bool _ma_check_table_is_closed(const char *name, const char *where);
-int _ma_open_datafile(MARIA_HA *info, MARIA_SHARE *share, const char *org_name,
-                      File file_to_dup);
+int _ma_open_datafile(MARIA_HA *info, MARIA_SHARE *share);
 int _ma_open_keyfile(MARIA_SHARE *share);
 void _ma_setup_functions(register MARIA_SHARE *share);
 my_bool _ma_dynmap_file(MARIA_HA *info, my_off_t size);

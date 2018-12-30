@@ -77,7 +77,9 @@ IF(WITH_INNOBASE_STORAGE_ENGINE OR WITH_XTRADB_STORAGE_ENGINE)
       ../storage/innobase/buf/buf0checksum.cc
       ../storage/innobase/ut/ut0crc32.cc
       ../storage/innobase/ut/ut0ut.cc
+      ../storage/innobase/buf/buf0buf.cc
       ../storage/innobase/page/page0zip.cc
+      ../storage/innobase/fil/fil0crypt.cc
       )
 
   IF(CMAKE_SYSTEM_PROCESSOR MATCHES "ppc64le")
@@ -102,4 +104,7 @@ IF(UNIX)
 
   MYSQL_ADD_EXECUTABLE(mysql_waitpid mysql_waitpid.c COMPONENT Client)
   TARGET_LINK_LIBRARIES(mysql_waitpid mysys)
+
+  MYSQL_ADD_EXECUTABLE(mysqld_safe_helper mysqld_safe_helper.c COMPONENT Server)
+  TARGET_LINK_LIBRARIES(mysqld_safe_helper mysys)
 ENDIF()

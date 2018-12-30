@@ -38,14 +38,14 @@ typedef class BLOCK *PBLOCK;
 class DllExport BLOCK {
  public:
   void * operator new(size_t size, PGLOBAL g, void *p = NULL) {
-//  if (trace > 3)
-//    htrc("New BLOCK: size=%d g=%p p=%p\n", size, g, p);
+	  if (trace(256))
+	    htrc("New BLOCK: size=%d g=%p p=%p\n", size, g, p);
 
     return (PlugSubAlloc(g, p, size));
     } // end of new
 
-  virtual void Print(PGLOBAL, FILE *, uint) {}   // Produce file desc
-  virtual void Print(PGLOBAL, char *, uint) {}   // Produce string desc
+  virtual void Printf(PGLOBAL, FILE *, uint) {}   // Produce file desc
+  virtual void Prints(PGLOBAL, char *, uint) {}   // Produce string desc
   
 #if !defined(__BORLANDC__)
   // Avoid warning C4291 by defining a matching dummy delete operator

@@ -24,12 +24,12 @@ endif ()
 
 ## add TOKU_PTHREAD_DEBUG for debug builds
 if (CMAKE_VERSION VERSION_LESS 3.0)
-  set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS_DEBUG TOKU_PTHREAD_DEBUG=1)
-  set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS_DRD TOKU_PTHREAD_DEBUG=1)
+  set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS_DEBUG TOKU_PTHREAD_DEBUG=1 TOKU_DEBUG_TXN_SYNC=1)
+  set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS_DRD TOKU_PTHREAD_DEBUG=1 TOKU_DEBUG_TXN_SYNC=1)
   set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS_DRD _FORTIFY_SOURCE=2)
 else ()
   set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS
-    $<$<OR:$<CONFIG:DEBUG>,$<CONFIG:DRD>>:TOKU_PTHREAD_DEBUG=1>
+    $<$<OR:$<CONFIG:DEBUG>,$<CONFIG:DRD>>:TOKU_PTHREAD_DEBUG=1 TOKU_DEBUG_TXN_SYNC=1>
     $<$<CONFIG:DRD>:_FORTIFY_SOURCE=2>
     )
 endif ()
@@ -53,7 +53,13 @@ macro(set_cflags_if_supported)
   endforeach(flag)
 endmacro(set_cflags_if_supported)
 
+if (NOT DEFINED MYSQL_PROJECT_NAME_DOCSTRING)
+  set (OPTIONAL_CFLAGS "${OPTIONAL_CFLAGS} -Wmissing-format-attribute")
+endif()
+
 ## disable some warnings
+## missing-format-attribute causes warnings in some MySQL include files
+## if the library is built as a part of TokuDB MySQL storage engine
 set_cflags_if_supported(
   -Wno-missing-field-initializers
   -Wstrict-null-sentinel
@@ -61,14 +67,15 @@ set_cflags_if_supported(
   -Wswitch
   -Wtrampolines
   -Wlogical-op
-  -Wmissing-format-attribute
+  ${OPTIONAL_CFLAGS}
   -Wno-error=missing-format-attribute
   -Wno-error=address-of-array-temporary
   -Wno-error=tautological-constant-out-of-range-compare
-  -Wno-ignored-attributes
+  -Wno-error=maybe-uninitialized
   -Wno-error=extern-c-compat
   -fno-rtti
   -fno-exceptions
+  -Wno-error=nonnull-compare
   )
 ## set_cflags_if_supported_named("-Weffc++" -Weffcpp)
 
@@ -100,6 +107,9 @@ set_cflags_if_supported(
   -Wno-error=strict-overflow
   )
 
+# new flag sets in MySQL 8.0 seem to explicitly disable this
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions")
+
 ## set extra debugging flags and preprocessor definitions
 set(CMAKE_C_FLAGS_DEBUG "-g3 -O0 ${CMAKE_C_FLAGS_DEBUG}")
 set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O0 ${CMAKE_CXX_FLAGS_DEBUG}")
@@ -119,13 +129,18 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL Clang)
   set(CMAKE_C_FLAGS_RELEASE "-g -O3 ${CMAKE_C_FLAGS_RELEASE} -UNDEBUG")
   set(CMAKE_CXX_FLAGS_RELEASE "-g -O3 ${CMAKE_CXX_FLAGS_RELEASE} -UNDEBUG")
 else ()
+  if (APPLE)
+    set(FLTO_OPTS "-fwhole-program")
+  else ()
+    set(FLTO_OPTS "-fuse-linker-plugin")
+  endif()
   # we overwrite this because the default passes -DNDEBUG and we don't want that
-  set(CMAKE_C_FLAGS_RELWITHDEBINFO "-flto -fuse-linker-plugin ${CMAKE_C_FLAGS_RELWITHDEBINFO} -g -O3 -UNDEBUG")
-  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-flto -fuse-linker-plugin ${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g -O3 -UNDEBUG")
-  set(CMAKE_C_FLAGS_RELEASE "-g -O3 -flto -fuse-linker-plugin ${CMAKE_C_FLAGS_RELEASE} -UNDEBUG")
-  set(CMAKE_CXX_FLAGS_RELEASE "-g -O3 -flto -fuse-linker-plugin ${CMAKE_CXX_FLAGS_RELEASE} -UNDEBUG")
-  set(CMAKE_EXE_LINKER_FLAGS "-g -fuse-linker-plugin ${CMAKE_EXE_LINKER_FLAGS}")
-  set(CMAKE_SHARED_LINKER_FLAGS "-g -fuse-linker-plugin ${CMAKE_SHARED_LINKER_FLAGS}")
+  set(CMAKE_C_FLAGS_RELWITHDEBINFO "-flto ${FLTO_OPTS} ${CMAKE_C_FLAGS_RELWITHDEBINFO} -g -O3 -UNDEBUG")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-flto ${FLTO_OPTS} ${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g -O3 -UNDEBUG")
+  set(CMAKE_C_FLAGS_RELEASE "-g -O3 -flto ${FLTO_OPTS} ${CMAKE_C_FLAGS_RELEASE} -UNDEBUG")
+  set(CMAKE_CXX_FLAGS_RELEASE "-g -O3 -flto ${FLTO_OPTS} ${CMAKE_CXX_FLAGS_RELEASE} -UNDEBUG")
+  set(CMAKE_EXE_LINKER_FLAGS "-g ${FLTO_OPTS} ${CMAKE_EXE_LINKER_FLAGS}")
+  set(CMAKE_SHARED_LINKER_FLAGS "-g ${FLTO_OPTS} ${CMAKE_SHARED_LINKER_FLAGS}")
 endif ()
 
 ## set warnings
@@ -137,8 +152,8 @@ set_cflags_if_supported(
   -Wmissing-prototypes
   -Wmissing-declarations
   -Wpointer-arith
-  -Wmissing-format-attribute
-  -Wshadow
+  #-Wshadow will fail with GCC-8
+  ${OPTIONAL_CFLAGS}
   ## other flags to try:
   #-Wunsafe-loop-optimizations
   #-Wpointer-arith
@@ -155,18 +170,9 @@ if (NOT CMAKE_CXX_COMPILER_ID STREQUAL Clang)
   set_cflags_if_supported(-Wcast-align)
 endif ()
 
-## always want these
-set(CMAKE_C_FLAGS "-Wall -Werror ${CMAKE_C_FLAGS}")
-set(CMAKE_CXX_FLAGS "-Wall -Werror ${CMAKE_CXX_FLAGS}")
-
-## need to set -stdlib=libc++ to get real c++11 support on darwin
-if (APPLE)
-  if (CMAKE_GENERATOR STREQUAL Xcode)
-    set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
-  else ()
-    add_definitions(-stdlib=libc++)
-  endif ()
-endif ()
+## always want these in debug builds
+set(CMAKE_C_FLAGS_DEBUG "-Wall -Werror ${CMAKE_C_FLAGS_DEBUG}")
+set(CMAKE_CXX_FLAGS_DEBUG "-Wall -Werror ${CMAKE_CXX_FLAGS_DEBUG}")
 
 # pick language dialect
 set(CMAKE_C_FLAGS "-std=c99 ${CMAKE_C_FLAGS}")

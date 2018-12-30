@@ -11,7 +11,7 @@
 
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #define MYSQL_SERVER 1
 #include "my_config.h"
@@ -42,12 +42,6 @@ static const LEX_STRING metadata_lock_info_lock_mode[] = {
   { C_STRING_WITH_LEN("MDL_SHARED_NO_WRITE") },
   { C_STRING_WITH_LEN("MDL_SHARED_NO_READ_WRITE") },
   { C_STRING_WITH_LEN("MDL_EXCLUSIVE") },
-};
-
-static const LEX_STRING metadata_lock_info_duration[] = {
-  { C_STRING_WITH_LEN("MDL_STATEMENT") },
-  { C_STRING_WITH_LEN("MDL_TRANSACTION") },
-  { C_STRING_WITH_LEN("MDL_EXPLICIT") },
 };
 
 static ST_FIELD_INFO i_s_metadata_lock_info_fields_info[] =
@@ -81,25 +75,17 @@ int i_s_metadata_lock_info_fill_row(
   THD *thd = param->thd;
   TABLE *table = param->table;
   DBUG_ENTER("i_s_metadata_lock_info_fill_row");
-  MDL_request mdl_request;
-  enum_mdl_duration mdl_duration;
   MDL_context *mdl_ctx = mdl_ticket->get_ctx();
   enum_mdl_type mdl_ticket_type = mdl_ticket->get_type();
   MDL_key *mdl_key = mdl_ticket->get_key();
   MDL_key::enum_mdl_namespace mdl_namespace = mdl_key->mdl_namespace();
-  mdl_request.init(mdl_key, mdl_ticket_type, MDL_STATEMENT);
-  mdl_ctx->find_ticket(&mdl_request, &mdl_duration);
   table->field[0]->store((longlong) mdl_ctx->get_thread_id(), TRUE);
   table->field[1]->set_notnull();
   table->field[1]->store(
     metadata_lock_info_lock_mode[(int) mdl_ticket_type].str,
     metadata_lock_info_lock_mode[(int) mdl_ticket_type].length,
     system_charset_info);
-  table->field[2]->set_notnull();
-  table->field[2]->store(
-    metadata_lock_info_duration[(int) mdl_duration].str,
-    metadata_lock_info_duration[(int) mdl_duration].length,
-    system_charset_info);
+  table->field[2]->set_null();
   table->field[3]->set_notnull();
   table->field[3]->store(
     metadata_lock_info_lock_name[(int) mdl_namespace].str,
@@ -136,8 +122,6 @@ static int i_s_metadata_lock_info_init(
                       == MDL_key::NAMESPACE_END);
   compile_time_assert(sizeof(metadata_lock_info_lock_mode)/sizeof(LEX_STRING)
                       == MDL_TYPE_END);
-  compile_time_assert(sizeof(metadata_lock_info_duration)/sizeof(LEX_STRING)
-                      == MDL_DURATION_END);
 
   ST_SCHEMA_TABLE *schema = (ST_SCHEMA_TABLE *) p;
   DBUG_ENTER("i_s_metadata_lock_info_init");

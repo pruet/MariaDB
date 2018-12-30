@@ -1,4 +1,4 @@
-/* Copyright (C) Olivier Bertrand 2004 - 2015
+/* Copyright (C) MariaDB Corporation Ab
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -11,9 +11,10 @@
 
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /** @file ha_connect.h
+	Author Olivier Bertrand
 
     @brief
   The ha_connect engine is a prototype storage engine to access external data.
@@ -30,8 +31,6 @@
 /*  mycat.h contains the TOS, PTOS, ha_table_option_struct declarations.    */
 /****************************************************************************/
 #include "mycat.h"
-
-static char *strz(PGLOBAL g, LEX_STRING &ls);
 
 /****************************************************************************/
 /*  Structures used to pass info between CONNECT and ha_connect.            */
@@ -61,7 +60,7 @@ public:
               oldopn= newopn= NULL;
               oldpix= newpix= NULL;}
 
-  inline char *SetName(PGLOBAL g, char *name) {return PlugDup(g, name);}
+  inline char *SetName(PGLOBAL g, PCSZ name) {return PlugDup(g, name);}
 
   bool         oldsep;              // Sepindex before create/alter
   bool         newsep;              // Sepindex after create/alter
@@ -83,42 +82,9 @@ extern handlerton *connect_hton;
 
   These can be specified in the CREATE TABLE:
   CREATE TABLE ( ... ) {...here...}
-*/
-#if 0  // moved to mycat.h
-typedef struct ha_table_option_struct TOS, *PTOS;
 
-struct ha_table_option_struct {
-  const char *type;
-  const char *filename;
-  const char *optname;
-  const char *tabname;
-  const char *tablist;
-  const char *dbname;
-  const char *separator;
-//const char *connect;
-  const char *qchar;
-  const char *module;
-  const char *subtype;
-  const char *catfunc;
-  const char *srcdef;
-  const char *colist;
-  const char *oplist;
-  const char *data_charset;
-  ulonglong lrecl;
-  ulonglong elements;
-//ulonglong estimate;
-  ulonglong multiple;
-  ulonglong header;
-  ulonglong quoted;
-  ulonglong ending;
-  ulonglong compressed;
-  bool mapped;
-  bool huge;
-  bool split;
-  bool readonly;
-  bool sepindex;
-  };
-#endif // 0
+	------ Was moved to mycat.h ------
+	*/
 
 /**
   structure for CREATE TABLE options (field options)
@@ -198,21 +164,21 @@ public:
   ~ha_connect();
 
   // CONNECT Implementation
-  static   bool connect_init(void);
-  static   bool connect_end(void);
+//static   bool connect_init(void);
+//static   bool connect_end(void);
   TABTYPE  GetRealType(PTOS pos= NULL);
-  char    *GetRealString(const char *s);
-  char    *GetStringOption(char *opname, char *sdef= NULL);
+  char    *GetRealString(PCSZ s);
+	PCSZ     GetStringOption(PCSZ opname, PCSZ sdef= NULL);
   PTOS     GetTableOptionStruct(TABLE_SHARE *s= NULL);
-  bool     GetBooleanOption(char *opname, bool bdef);
-  bool     SetBooleanOption(char *opname, bool b);
-  int      GetIntegerOption(char *opname);
-  bool     GetIndexOption(KEY *kp, char *opname);
-  bool     CheckString(const char *str1, const char *str2);
-  bool     SameString(TABLE *tab, char *opn);
-  bool     SetIntegerOption(char *opname, int n);
-  bool     SameInt(TABLE *tab, char *opn);
-  bool     SameBool(TABLE *tab, char *opn);
+  bool     GetBooleanOption(PCSZ opname, bool bdef);
+  bool     SetBooleanOption(PCSZ opname, bool b);
+  int      GetIntegerOption(PCSZ opname);
+  bool     GetIndexOption(KEY *kp, PCSZ opname);
+  bool     CheckString(PCSZ str1, PCSZ str2);
+  bool     SameString(TABLE *tab, PCSZ opn);
+  bool     SetIntegerOption(PCSZ opname, int n);
+  bool     SameInt(TABLE *tab, PCSZ opn);
+  bool     SameBool(TABLE *tab, PCSZ opn);
   bool     FileExists(const char *fn, bool bf);
   bool     NoFieldOptionChange(TABLE *tab);
   PFOS     GetFieldOptionStruct(Field *fp);
@@ -220,8 +186,8 @@ public:
   PXOS     GetIndexOptionStruct(KEY *kp);
   PIXDEF   GetIndexInfo(TABLE_SHARE *s= NULL);
   bool     CheckVirtualIndex(TABLE_SHARE *s);
-  const char *GetDBName(const char *name);
-  const char *GetTableName(void);
+  PCSZ     GetDBName(PCSZ name);
+  PCSZ     GetTableName(void);
   char    *GetPartName(void);
 //int      GetColNameLen(Field *fp);
 //char    *GetColName(Field *fp);
@@ -230,22 +196,22 @@ public:
   bool     IsSameIndex(PIXDEF xp1, PIXDEF xp2);
   bool     IsPartitioned(void);
   bool     IsUnique(uint n);
-  char    *GetDataPath(void) {return (char*)datapath;}
+  PCSZ     GetDataPath(void) {return datapath;}
 
-  void     SetDataPath(PGLOBAL g, const char *path); 
+  bool     SetDataPath(PGLOBAL g, PCSZ path);
   PTDB     GetTDB(PGLOBAL g);
   int      OpenTable(PGLOBAL g, bool del= false);
   bool     CheckColumnList(PGLOBAL g);
   bool     IsOpened(void);
   int      CloseTable(PGLOBAL g);
   int      MakeRecord(char *buf);
-  int      ScanRecord(PGLOBAL g, uchar *buf);
-  int      CheckRecord(PGLOBAL g, const uchar *oldbuf, uchar *newbuf);
+  int      ScanRecord(PGLOBAL g, const uchar *buf);
+  int      CheckRecord(PGLOBAL g, const uchar *oldbuf, const uchar *newbuf);
 	int      ReadIndexed(uchar *buf, OPVAL op, const key_range *kr= NULL);
 	bool     IsIndexed(Field *fp);
   bool     MakeKeyWhere(PGLOBAL g, PSTRG qry, OPVAL op, char q,
                                    const key_range *kr);
-  inline char *Strz(LEX_STRING &ls);
+//inline char *Strz(LEX_STRING &ls);
 	key_range start_key;
 
 
@@ -263,7 +229,7 @@ public:
   /** @brief
     The file extensions.
    */
-  const char **bas_ext() const;
+//const char **bas_ext() const;
 
  /**
     Check if a storage engine supports a particular alter table in-place
@@ -379,6 +345,9 @@ PCFIL CheckCond(PGLOBAL g, PCFIL filp, const Item *cond);
 const char *GetValStr(OPVAL vop, bool neg);
 PFIL  CondFilter(PGLOBAL g, Item *cond);
 //PFIL  CheckFilter(PGLOBAL g);
+
+/** admin commands - called from mysql_admin_table */
+virtual int check(THD* thd, HA_CHECK_OPT* check_opt);
 
  /**
    Number of rows in table. It will only be called if
@@ -546,7 +515,7 @@ protected:
   ulong         hnum;                 // The number of this handler
   query_id_t    valid_query_id;       // The one when tdbp was allocated
   query_id_t    creat_query_id;       // The one when handler was allocated
-  char         *datapath;             // Is the Path of DB data directory
+  PCSZ          datapath;             // Is the Path of DB data directory
   PTDB          tdbp;                 // To table class object
   PVAL          sdvalin1;             // Used to convert date values
   PVAL          sdvalin2;             // Used to convert date values

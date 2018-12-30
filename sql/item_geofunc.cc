@@ -1,6 +1,5 @@
-/*
-   Copyright (c) 2003-2007 MySQL AB, 2009, 2010 Sun Microsystems, Inc.
-   Use is subject to license terms.
+/* Copyright (c) 2003, 2016, Oracle and/or its affiliates.
+   Copyright (c) 2011, 2016, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -41,7 +40,7 @@
 #include "opt_range.h"
 
 
-Field *Item_geometry_func::tmp_table_field(TABLE *t_arg)
+Field *Item_geometry_func::create_field_for_create_select(TABLE *t_arg)
 {
   Field *result;
   if ((result= new Field_geom(max_length, maybe_null, name, t_arg->s,
@@ -1195,6 +1194,8 @@ static int setup_relate_func(Geometry *g1, Geometry *g2,
     }
     else
       func->repeat_expression(shape_a);
+    if (func->reserve_op_buffer(1))
+      return 1;
     func->add_operation(op_matrix(nc%3), 1);
     if (do_store_shapes)
     {
@@ -1365,11 +1366,13 @@ longlong Item_func_spatial_precise_rel::val_int()
                          Gcalc_function::op_intersection, 2);
       func.add_operation(Gcalc_function::op_internals, 1);
       shape_a= func.get_next_expression_pos();
-      if ((null_value= g1.store_shapes(&trn)))
+      if ((null_value= g1.store_shapes(&trn)) ||
+          func.reserve_op_buffer(1))
         break;
       func.add_operation(Gcalc_function::op_internals, 1);
       shape_b= func.get_next_expression_pos();
-      if ((null_value= g2.store_shapes(&trn)))
+      if ((null_value= g2.store_shapes(&trn)) ||
+          func.reserve_op_buffer(1))
         break;
       func.add_operation(Gcalc_function::v_find_t |
                          Gcalc_function::op_intersection, 2);
@@ -1604,6 +1607,8 @@ int Item_func_buffer::Transporter::single_point(double x, double y)
 {
   if (buffer_op == Gcalc_function::op_difference)
   {
+    if (m_fn->reserve_op_buffer(1))
+      return 1;
     m_fn->add_operation(Gcalc_function::op_false, 0);
     return 0;
   }
@@ -1860,7 +1865,7 @@ String *Item_func_buffer::val_str(String *str_value)
 {
   DBUG_ENTER("Item_func_buffer::val_str");
   DBUG_ASSERT(fixed == 1);
-  String *obj= args[0]->val_str(&tmp_value);
+  String *obj= args[0]->val_str(str_value);
   double dist= args[1]->val_real();
   Geometry_buffer buffer;
   Geometry *g;

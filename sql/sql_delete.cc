@@ -27,7 +27,6 @@
 #include "sql_delete.h"
 #include "sql_cache.h"                          // query_cache_*
 #include "sql_base.h"                           // open_temprary_table
-#include "sql_table.h"                         // build_table_filename
 #include "lock.h"                              // unlock_table_name
 #include "sql_view.h"             // check_key_in_view, mysql_frm_type
 #include "sql_parse.h"            // mysql_init_select
@@ -484,6 +483,9 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
   DBUG_EXECUTE_IF("show_explain_probe_delete_exec_start", 
                   dbug_serve_apcs(thd, 1););
 
+  if (!(select && select->quick))
+    status_var_increment(thd->status_var.delete_scan_count);
+
   if (query_plan.using_filesort)
   {
     ha_rows examined_rows;
@@ -499,7 +501,7 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
       Filesort_tracker *fs_tracker= 
         thd->lex->explain->get_upd_del_plan()->filesort_tracker;
 
-      if (!(sortorder= make_unireg_sortorder(thd, order, &length, NULL)) ||
+      if (!(sortorder= make_unireg_sortorder(thd, NULL, 0, order, &length, NULL)) ||
 	  (table->sort.found_records= filesort(thd, table, sortorder, length,
                                                select, HA_POS_ERROR,
                                                true,
@@ -570,9 +572,7 @@ bool mysql_delete(THD *thd, TABLE_LIST *table_list, COND *conds,
   {
     explain->tracker.on_record_read();
     if (table->vfield)
-      update_virtual_fields(thd, table,
-                            table->triggers ? VCOL_UPDATE_ALL :
-                                              VCOL_UPDATE_FOR_READ);
+      update_virtual_fields(thd, table, VCOL_UPDATE_FOR_READ);
     thd->inc_examined_row_count(1);
     // thd->is_error() is tested to disallow delete row on error
     if (!select || select->skip_record(thd) > 0)
@@ -766,7 +766,7 @@ send_nothing_and_leave:
                                     DELETE_ACL, SELECT_ACL, TRUE))
     DBUG_RETURN(TRUE);
   if ((wild_num && setup_wild(thd, table_list, field_list, NULL, wild_num)) ||
-      setup_fields(thd, NULL, field_list, MARK_COLUMNS_READ, NULL, 0) ||
+      setup_fields(thd, NULL, field_list, MARK_COLUMNS_READ, NULL, NULL, 0) ||
       setup_conds(thd, table_list, select_lex->leaf_tables, conds) ||
       setup_ftfuncs(select_lex))
     DBUG_RETURN(TRUE);
@@ -945,7 +945,7 @@ multi_delete::initialize_tables(JOIN *join)
     TABLE_LIST *tbl= walk->correspondent_table->find_table_for_update();
     tables_to_delete_from|= tbl->table->map;
     if (delete_while_scanning &&
-        unique_table(thd, tbl, join->tables_list, false))
+        unique_table(thd, tbl, join->tables_list, 0))
     {
       /*
         If the table we are going to delete from appears
@@ -1021,6 +1021,7 @@ multi_delete::~multi_delete()
   {
     TABLE *table= table_being_deleted->table;
     table->no_keyread=0;
+    table->no_cache= 0;
   }
 
   for (uint counter= 0; counter < num_of_tables; counter++)
@@ -1341,4 +1342,3 @@ bool multi_delete::send_eof()
   }
   return 0;
 }
-

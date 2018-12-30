@@ -1,5 +1,5 @@
-/* Copyright (c) 2006, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2013, Monty Program Ab
+/* Copyright (c) 2006, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2011, 2017, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -54,8 +54,8 @@ Relay_log_info::Relay_log_info(bool is_slave_recovery)
    sync_counter(0), is_relay_log_recovery(is_slave_recovery),
    save_temporary_tables(0), mi(0),
    inuse_relaylog_list(0), last_inuse_relaylog(0),
-   cur_log_old_open_count(0), group_relay_log_pos(0), 
-   event_relay_log_pos(0),
+   cur_log_old_open_count(0), error_on_rli_init_info(false),
+   group_relay_log_pos(0), event_relay_log_pos(0),
 #if HAVE_valgrind
    is_fake(FALSE),
 #endif
@@ -119,16 +119,21 @@ int init_relay_log_info(Relay_log_info* rli,
 			const char* info_fname)
 {
   char fname[FN_REFLEN+128];
-  int info_fd;
+  int info_fd= -1;
   const char* msg = 0;
   int error = 0;
+  mysql_mutex_t *log_lock;
   DBUG_ENTER("init_relay_log_info");
   DBUG_ASSERT(!rli->no_storage);         // Don't init if there is no storage
 
   if (rli->inited)                       // Set if this function called
     DBUG_RETURN(0);
+
+  log_lock= rli->relay_log.get_log_lock();
   fn_format(fname, info_fname, mysql_data_home, "", 4+32);
   mysql_mutex_lock(&rli->data_lock);
+  if (rli->error_on_rli_init_info)
+    goto err;
   info_fd = rli->info_fd;
   rli->cur_log_fd = -1;
   rli->slave_skip_counter=0;
@@ -227,14 +232,17 @@ a file name for --relay-log-index option", opt_relaylog_index_name);
       note, that if open() fails, we'll still have index file open
       but a destructor will take care of that
     */
+    mysql_mutex_lock(log_lock);
     if (rli->relay_log.open_index_file(buf_relaylog_index_name, ln, TRUE) ||
         rli->relay_log.open(ln, LOG_BIN, 0, 0, SEQ_READ_APPEND,
                             mi->rli.max_relay_log_size, 1, TRUE))
     {
+      mysql_mutex_unlock(log_lock);
       mysql_mutex_unlock(&rli->data_lock);
       sql_print_error("Failed when trying to open logs for '%s' in init_relay_log_info(). Error: %M", ln, my_errno);
       DBUG_RETURN(1);
     }
+    mysql_mutex_unlock(log_lock);
   }
 
   /* if file does not exist */
@@ -249,8 +257,8 @@ a file name for --relay-log-index option", opt_relaylog_index_name);
     if ((info_fd= mysql_file_open(key_file_relay_log_info,
                                   fname, O_CREAT|O_RDWR|O_BINARY, MYF(MY_WME))) < 0)
     {
-      sql_print_error("Failed to create a new relay log info file (\
-file '%s', errno %d)", fname, my_errno);
+      sql_print_error("Failed to create a new relay log info file ("
+                      "file '%s', errno %d)", fname, my_errno);
       msg= current_thd->get_stmt_da()->message();
       goto err;
     }
@@ -301,7 +309,9 @@ Failed to open the existing relay log info file '%s' (errno %d)",
         if (info_fd >= 0)
           mysql_file_close(info_fd, MYF(0));
         rli->info_fd= -1;
+        mysql_mutex_lock(log_lock);
         rli->relay_log.close(LOG_CLOSE_INDEX | LOG_CLOSE_STOP_EVENT);
+        mysql_mutex_unlock(log_lock);
         mysql_mutex_unlock(&rli->data_lock);
         DBUG_RETURN(1);
       }
@@ -423,17 +433,24 @@ Failed to open the existing relay log info file '%s' (errno %d)",
     goto err;
   }
   rli->inited= 1;
+  rli->error_on_rli_init_info= false;
   mysql_mutex_unlock(&rli->data_lock);
-  DBUG_RETURN(error);
+  DBUG_RETURN(0);
 
 err:
-  sql_print_error("%s", msg);
+  rli->error_on_rli_init_info= true;
+  if (msg)
+    sql_print_error("%s", msg);
   end_io_cache(&rli->info_file);
   if (info_fd >= 0)
     mysql_file_close(info_fd, MYF(0));
   rli->info_fd= -1;
+
+  mysql_mutex_lock(log_lock);
   rli->relay_log.close(LOG_CLOSE_INDEX | LOG_CLOSE_STOP_EVENT);
+  mysql_mutex_unlock(log_lock);
   mysql_mutex_unlock(&rli->data_lock);
+
   DBUG_RETURN(1);
 }
 
@@ -1096,6 +1113,8 @@ int purge_relay_logs(Relay_log_info* rli, THD *thd, bool just_reset,
                      const char** errmsg)
 {
   int error=0;
+  const char *ln;
+  char name_buf[FN_REFLEN];
   DBUG_ENTER("purge_relay_logs");
 
   /*
@@ -1122,12 +1141,37 @@ int purge_relay_logs(Relay_log_info* rli, THD *thd, bool just_reset,
   if (!rli->inited)
   {
     DBUG_PRINT("info", ("rli->inited == 0"));
-    DBUG_RETURN(0);
+    if (rli->error_on_rli_init_info)
+    {
+      ln= rli->relay_log.generate_name(opt_relay_logname, "-relay-bin",
+                                       1, name_buf);
+
+      if (rli->relay_log.open_index_file(opt_relaylog_index_name, ln, TRUE))
+      {
+        sql_print_error("Unable to purge relay log files. Failed to open relay "
+                        "log index file:%s.", rli->relay_log.get_index_fname());
+        DBUG_RETURN(1);
+      }
+      mysql_mutex_lock(rli->relay_log.get_log_lock());
+      if (rli->relay_log.open(ln, LOG_BIN, 0, 0, SEQ_READ_APPEND,
+                             (rli->max_relay_log_size ? rli->max_relay_log_size :
+                              max_binlog_size), 1, TRUE))
+      {
+        sql_print_error("Unable to purge relay log files. Failed to open relay "
+                        "log file:%s.", rli->relay_log.get_log_fname());
+        mysql_mutex_unlock(rli->relay_log.get_log_lock());
+        DBUG_RETURN(1);
+      }
+      mysql_mutex_unlock(rli->relay_log.get_log_lock());
+    }
+    else
+      DBUG_RETURN(0);
   }
-
-  DBUG_ASSERT(rli->slave_running == 0);
-  DBUG_ASSERT(rli->mi->slave_running == 0);
-
+  else
+  {
+    DBUG_ASSERT(rli->slave_running == 0);
+    DBUG_ASSERT(rli->mi->slave_running == 0);
+  }
   mysql_mutex_lock(&rli->data_lock);
 
   /*
@@ -1174,6 +1218,12 @@ int purge_relay_logs(Relay_log_info* rli, THD *thd, bool just_reset,
     rli->group_relay_log_name[0]= rli->event_relay_log_name[0]= 0;
   }
 
+  if (!rli->inited && rli->error_on_rli_init_info)
+  {
+    mysql_mutex_lock(rli->relay_log.get_log_lock());
+    rli->relay_log.close(LOG_CLOSE_INDEX | LOG_CLOSE_STOP_EVENT);
+    mysql_mutex_unlock(rli->relay_log.get_log_lock());
+  }
 err:
   DBUG_PRINT("info",("log_space_total: %llu",rli->log_space_total));
   mysql_mutex_unlock(&rli->data_lock);
@@ -1222,8 +1272,8 @@ bool Relay_log_info::is_until_satisfied(my_off_t master_beg_pos)
 
   if (until_condition == UNTIL_MASTER_POS)
   {
-    log_name= (mi->using_parallel() ?
-               future_event_master_log_name : group_master_log_name);
+    log_name= (mi->using_parallel() ? future_event_master_log_name
+                                    : group_master_log_name);
     log_pos= master_beg_pos;
   }
   else
@@ -1289,9 +1339,10 @@ bool Relay_log_info::is_until_satisfied(my_off_t master_beg_pos)
 }
 
 
-void Relay_log_info::stmt_done(my_off_t event_master_log_pos, THD *thd,
+bool Relay_log_info::stmt_done(my_off_t event_master_log_pos, THD *thd,
                                rpl_group_info *rgi)
 {
+  int error= 0;
   DBUG_ENTER("Relay_log_info::stmt_done");
 
   DBUG_ASSERT(rgi->rli == this);
@@ -1343,10 +1394,11 @@ void Relay_log_info::stmt_done(my_off_t event_master_log_pos, THD *thd,
     }
     DBUG_EXECUTE_IF("inject_crash_before_flush_rli", DBUG_SUICIDE(););
     if (mi->using_gtid == Master_info::USE_GTID_NO)
-      flush_relay_log_info(this);
+      if (flush_relay_log_info(this))
+        error= 1;
     DBUG_EXECUTE_IF("inject_crash_after_flush_rli", DBUG_SUICIDE(););
   }
-  DBUG_VOID_RETURN;
+  DBUG_RETURN(error);
 }
 
 
@@ -1628,6 +1680,7 @@ rpl_group_info::reinit(Relay_log_info *rli)
   long_find_row_note_printed= false;
   did_mark_start_commit= false;
   gtid_ev_flags2= 0;
+  pending_gtid_delete_list= NULL;
   last_master_timestamp = 0;
   gtid_ignore_duplicate_state= GTID_DUPLICATE_NULL;
   speculation= SPECULATE_NO;
@@ -1752,6 +1805,12 @@ void rpl_group_info::cleanup_context(THD *thd, bool error)
       erroneously update the GTID position.
     */
     gtid_pending= false;
+
+    /*
+      Rollback will have undone any deletions of old rows we might have made
+      in mysql.gtid_slave_pos. Put those rows back on the list to be deleted.
+    */
+    pending_gtid_deletes_put_back();
   }
   m_table_map.clear_tables();
   slave_close_thread_tables(thd);
@@ -1906,8 +1965,8 @@ rpl_group_info::mark_start_commit_no_lock()
 {
   if (did_mark_start_commit)
     return;
-  mark_start_commit_inner(parallel_entry, gco, this);
   did_mark_start_commit= true;
+  mark_start_commit_inner(parallel_entry, gco, this);
 }
 
 
@@ -1918,12 +1977,12 @@ rpl_group_info::mark_start_commit()
 
   if (did_mark_start_commit)
     return;
+  did_mark_start_commit= true;
 
   e= this->parallel_entry;
   mysql_mutex_lock(&e->LOCK_parallel_entry);
   mark_start_commit_inner(e, gco, this);
   mysql_mutex_unlock(&e->LOCK_parallel_entry);
-  did_mark_start_commit= true;
 }
 
 
@@ -1966,12 +2025,84 @@ rpl_group_info::unmark_start_commit()
 
   if (!did_mark_start_commit)
     return;
+  did_mark_start_commit= false;
 
   e= this->parallel_entry;
   mysql_mutex_lock(&e->LOCK_parallel_entry);
   --e->count_committing_event_groups;
   mysql_mutex_unlock(&e->LOCK_parallel_entry);
-  did_mark_start_commit= false;
+}
+
+
+/*
+  When record_gtid() has deleted any old rows from the table
+  mysql.gtid_slave_pos as part of a replicated transaction, save the list of
+  rows deleted here.
+
+  If later the transaction fails (eg. optimistic parallel replication), the
+  deletes will be undone when the transaction is rolled back. Then we can
+  put back the list of rows into the rpl_global_gtid_slave_state, so that
+  we can re-do the deletes and avoid accumulating old rows in the table.
+*/
+void
+rpl_group_info::pending_gtid_deletes_save(uint32 domain_id,
+                                          rpl_slave_state::list_element *list)
+{
+  /*
+    We should never get to a state where we try to save a new pending list of
+    gtid deletes while we still have an old one. But make sure we handle it
+    anyway just in case, so we avoid leaving stray entries in the
+    mysql.gtid_slave_pos table.
+  */
+  DBUG_ASSERT(!pending_gtid_delete_list);
+  if (unlikely(pending_gtid_delete_list))
+    pending_gtid_deletes_put_back();
+
+  pending_gtid_delete_list= list;
+  pending_gtid_delete_list_domain= domain_id;
+}
+
+
+/*
+  Take the list recorded by pending_gtid_deletes_save() and put it back into
+  rpl_global_gtid_slave_state. This is needed if deletion of the rows was
+  rolled back due to transaction failure.
+*/
+void
+rpl_group_info::pending_gtid_deletes_put_back()
+{
+  if (pending_gtid_delete_list)
+  {
+    rpl_global_gtid_slave_state->put_back_list(pending_gtid_delete_list_domain,
+                                               pending_gtid_delete_list);
+    pending_gtid_delete_list= NULL;
+  }
+}
+
+
+/*
+  Free the list recorded by pending_gtid_deletes_save(). Done when the deletes
+  in the list have been permanently committed.
+*/
+void
+rpl_group_info::pending_gtid_deletes_clear()
+{
+  pending_gtid_deletes_free(pending_gtid_delete_list);
+  pending_gtid_delete_list= NULL;
+}
+
+
+void
+rpl_group_info::pending_gtid_deletes_free(rpl_slave_state::list_element *list)
+{
+  rpl_slave_state::list_element *next;
+
+  while (list)
+  {
+    next= list->next;
+    my_free(list);
+    list= next;
+  }
 }
 
 

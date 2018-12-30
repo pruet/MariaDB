@@ -1,3 +1,4 @@
+FLUSH TABLES;
 CREATE TABLE t1 (a INT PRIMARY KEY, b TEXT) ENGINE=InnoDB;
 CREATE TABLE t2 (a INT PRIMARY KEY) ENGINE=InnoDB;
 CREATE TABLE t3 (a INT PRIMARY KEY, b TEXT, c TEXT) ENGINE=InnoDB;
@@ -33,9 +34,9 @@ a
 1
 2
 3
-SET DEBUG_DBUG='+d,crash_commit_before';
+BEGIN;
 INSERT INTO t2 VALUES (42);
-ERROR HY000: Lost connection to MySQL server during query
+# Kill and restart
 ERROR HY000: Lost connection to MySQL server during query
 CHECK TABLE t1;
 Table	Op	Msg_type	Msg_text
@@ -70,9 +71,7 @@ SELECT info FROM information_schema.processlist
 WHERE state = 'debug sync point: before_row_upd_extern';
 info
 UPDATE t3 SET c=REPEAT('i',3000) WHERE a=2
-SET DEBUG_DBUG='+d,crash_commit_before';
-COMMIT;
-ERROR HY000: Lost connection to MySQL server during query
+# Kill and restart
 ERROR HY000: Lost connection to MySQL server during query
 CHECK TABLE t1,t2,t3;
 Table	Op	Msg_type	Msg_text
@@ -97,9 +96,7 @@ SELECT info FROM information_schema.processlist
 WHERE state = 'debug sync point: after_row_upd_extern';
 info
 UPDATE t3 SET c=REPEAT('j',3000) WHERE a=2
-SET DEBUG_DBUG='+d,crash_commit_before';
-COMMIT;
-ERROR HY000: Lost connection to MySQL server during query
+# Kill and restart
 ERROR HY000: Lost connection to MySQL server during query
 CHECK TABLE t1,t2,t3;
 Table	Op	Msg_type	Msg_text

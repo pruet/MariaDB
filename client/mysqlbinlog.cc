@@ -71,7 +71,7 @@ ulong bytes_sent = 0L, bytes_received = 0L;
 ulong mysqld_net_retry_count = 10L;
 ulong open_files_limit;
 ulong opt_binlog_rows_event_max_size;
-uint test_flags = 0; 
+ulonglong test_flags = 0;
 static uint opt_protocol= 0;
 static FILE *result_file;
 static char *result_file_name= 0;
@@ -110,7 +110,7 @@ static const char* sock= 0;
 static char *opt_plugindir= 0, *opt_default_auth= 0;
 
 #ifdef HAVE_SMEM
-static char *shared_memory_base_name= 0;
+static const char *shared_memory_base_name= 0;
 #endif
 static char* user = 0;
 static char* pass = 0;
@@ -1257,6 +1257,9 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
         goto err;
       break;
     }
+    case START_ENCRYPTION_EVENT:
+      glob_description_event->start_decryption((Start_encryption_log_event*)ev);
+      /* fall through */
     default:
       print_skip_replication_statement(print_event_info, ev);
       ev->print(result_file, print_event_info);
@@ -1646,8 +1649,12 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
     remote_opt= 1;
     break;
   case OPT_MYSQL_PROTOCOL:
-    opt_protocol= find_type_or_exit(argument, &sql_protocol_typelib,
-                                    opt->name);
+    if ((opt_protocol= find_type_with_warning(argument, &sql_protocol_typelib,
+                                              opt->name)) <= 0)
+    {
+      sf_leaking_memory= 1; /* no memory leak reports here */
+      exit(1);
+    }
     break;
   case OPT_START_DATETIME:
     start_datetime= convert_str_to_timestamp(start_datetime_str);
@@ -1660,8 +1667,15 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
       opt_base64_output_mode= BASE64_OUTPUT_ALWAYS;
     else
     {
-      opt_base64_output_mode= (enum_base64_output_mode)
-        (find_type_or_exit(argument, &base64_output_mode_typelib, opt->name)-1);
+      int val;
+
+      if ((val= find_type_with_warning(argument, &base64_output_mode_typelib,
+                                       opt->name)) <= 0)
+      {
+        sf_leaking_memory= 1; /* no memory leak reports here */
+        exit(1);
+      }
+      opt_base64_output_mode= (enum_base64_output_mode) (val - 1);
     }
     break;
   case OPT_REWRITE_DB:    // db_from->db_to
@@ -2249,7 +2263,7 @@ static Exit_status dump_remote_log_entries(PRINT_EVENT_INFO *print_event_info,
   int2store(buf + BIN_LOG_HEADER_SIZE, binlog_flags);
 
   size_t tlen = strlen(logname);
-  if (tlen > UINT_MAX) 
+  if (tlen > sizeof(buf) - 10)
   {
     error("Log name too long.");
     DBUG_RETURN(ERROR_STOP);
@@ -2539,7 +2553,7 @@ static Exit_status dump_local_log_entries(PRINT_EVENT_INFO *print_event_info,
     /* read from stdin */
     /*
       Windows opens stdin in text mode by default. Certain characters
-      such as CTRL-Z are interpeted as events and the read() method
+      such as CTRL-Z are interpreted as events and the read() method
       will stop. CTRL-Z is the EOF marker in Windows. to get past this
       you have to open stdin in binary mode. Setmode() is used to set
       stdin in binary mode. Errors on setting this mode result in 
@@ -2652,9 +2666,7 @@ int main(int argc, char** argv)
   tzset(); // set tzname
 
   init_alloc_root(&s_mem_root, 16384, 0, MYF(0));
-  if (load_defaults("my", load_groups, &argc, &argv))
-    exit(1);
-
+  load_defaults_or_exit("my", load_groups, &argc, &argv);
   defaults_argv= argv;
 
   if (!(binlog_filter= new Rpl_filter))
@@ -2667,10 +2679,11 @@ int main(int argc, char** argv)
 
   if (!argc || opt_version)
   {
-    if (!argc)
-      usage();
     if (!opt_version)
+    {
+      usage();
       retval= ERROR_STOP;
+    }
     goto err;
   }
 
@@ -2837,9 +2850,16 @@ void *sql_alloc(size_t size)
   return alloc_root(&s_mem_root, size);
 }
 
+uint dummy1() { return 1; }
 struct encryption_service_st encryption_handler=
 {
-  0, 0, 0, 0, 0, 0, 0
+  (uint(*)(uint))dummy1,
+  (uint(*)(uint, uint, uchar*, uint*))dummy1,
+  (uint(*)(uint, uint))dummy1,
+  (int (*)(void*, const uchar*, uint, const uchar*, uint, int, uint, uint))dummy1,
+  (int (*)(void*, const uchar*, uint, uchar*, uint*))dummy1,
+  (int (*)(void*, uchar*, uint*))dummy1,
+  (uint (*)(uint, uint, uint))dummy1
 };
 
 /*

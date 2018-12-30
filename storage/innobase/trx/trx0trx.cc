@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2015, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -141,7 +142,7 @@ trx_create(void)
 
 	trx->global_read_view_heap = mem_heap_create(256);
 
-	trx->xid.formatID = -1;
+	trx->xid.null();
 
 	trx->op_info = "";
 
@@ -312,7 +313,12 @@ trx_free_prepared(
 /*==============*/
 	trx_t*	trx)	/*!< in, own: trx object */
 {
-	ut_a(trx_state_eq(trx, TRX_STATE_PREPARED));
+	ut_a(trx_state_eq(trx, TRX_STATE_PREPARED)
+	     || (trx->is_recovered
+		 && (trx_state_eq(trx, TRX_STATE_ACTIVE)
+		     || trx_state_eq(trx, TRX_STATE_COMMITTED_IN_MEMORY))
+		 && (srv_read_only_mode
+		     || srv_force_recovery >= SRV_FORCE_NO_TRX_UNDO)));
 	ut_a(trx->magic_n == TRX_MAGIC_N);
 
 	lock_trx_release_locks(trx);
@@ -479,7 +485,7 @@ trx_resurrect_table_locks(
 	     i != tables.end(); i++) {
 		if (dict_table_t* table = dict_table_open_on_id(
 			    *i, FALSE, DICT_TABLE_OP_LOAD_TABLESPACE)) {
-			if (table->ibd_file_missing
+			if (table->file_unreadable
 			    || dict_table_is_temporary(table)) {
 				mutex_enter(&dict_sys->mutex);
 				dict_table_close(table, TRUE, FALSE);
@@ -537,18 +543,9 @@ trx_resurrect_insert(
 				"InnoDB: Transaction " TRX_ID_FMT " was in the"
 				" XA prepared state.\n", trx->id);
 
-			if (srv_force_recovery == 0) {
-
-				trx->state = TRX_STATE_PREPARED;
-				trx_sys->n_prepared_trx++;
-				trx_sys->n_prepared_recovered_trx++;
-			} else {
-				fprintf(stderr,
-					"InnoDB: Since innodb_force_recovery"
-					" > 0, we will rollback it anyway.\n");
-
-				trx->state = TRX_STATE_ACTIVE;
-			}
+			trx->state = TRX_STATE_PREPARED;
+			trx_sys->n_prepared_trx++;
+			trx_sys->n_prepared_recovered_trx++;
 		} else {
 			trx->state = TRX_STATE_COMMITTED_IN_MEMORY;
 		}
@@ -606,22 +603,14 @@ trx_resurrect_update_in_prepared_state(
 			"InnoDB: Transaction " TRX_ID_FMT
 			" was in the XA prepared state.\n", trx->id);
 
-		if (srv_force_recovery == 0) {
-			if (trx_state_eq(trx, TRX_STATE_NOT_STARTED)) {
-				trx_sys->n_prepared_trx++;
-				trx_sys->n_prepared_recovered_trx++;
-			} else {
-				ut_ad(trx_state_eq(trx, TRX_STATE_PREPARED));
-			}
-
-			trx->state = TRX_STATE_PREPARED;
+		if (trx_state_eq(trx, TRX_STATE_NOT_STARTED)) {
+			trx_sys->n_prepared_trx++;
+			trx_sys->n_prepared_recovered_trx++;
 		} else {
-			fprintf(stderr,
-				"InnoDB: Since innodb_force_recovery"
-				" > 0, we will rollback it anyway.\n");
-
-			trx->state = TRX_STATE_ACTIVE;
+			ut_ad(trx_state_eq(trx, TRX_STATE_PREPARED));
 		}
+
+		trx->state = TRX_STATE_PREPARED;
 	} else {
 		trx->state = TRX_STATE_COMMITTED_IN_MEMORY;
 	}
@@ -862,8 +851,7 @@ trx_start_low(
 	}
 
 #ifdef WITH_WSREP
-        memset(&trx->xid, 0, sizeof(trx->xid));
-        trx->xid.formatID = -1;
+        trx->xid.null();
 #endif /* WITH_WSREP */
 
 	/* The initial value for trx->no: TRX_ID_MAX is used in
@@ -919,6 +907,9 @@ trx_start_low(
 
 	trx->start_time = ut_time();
 
+	trx->start_time_micro =
+		trx->mysql_thd ? thd_query_start_micro(trx->mysql_thd) : 0;
+
 	MONITOR_INC(MONITOR_TRX_ACTIVE);
 }
 
@@ -973,7 +964,7 @@ trx_serialisation_number_get(
 /****************************************************************//**
 Assign the transaction its history serialisation number and write the
 update UNDO log record to the assigned rollback segment. */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 void
 trx_write_serialisation_history(
 /*============================*/
@@ -1060,7 +1051,7 @@ trx_write_serialisation_history(
 
 /********************************************************************
 Finalize a transaction containing updates for a FTS table. */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 void
 trx_finalize_for_fts_table(
 /*=======================*/
@@ -1093,7 +1084,7 @@ trx_finalize_for_fts_table(
 
 /******************************************************************//**
 Finalize a transaction containing updates to FTS tables. */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 void
 trx_finalize_for_fts(
 /*=================*/
@@ -1161,7 +1152,7 @@ trx_flush_log_if_needed_low(
 /**********************************************************************//**
 If required, flushes the log to disk based on the value of
 innodb_flush_log_at_trx_commit. */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 void
 trx_flush_log_if_needed(
 /*====================*/
@@ -1176,7 +1167,7 @@ trx_flush_log_if_needed(
 
 /****************************************************************//**
 Commits a transaction in memory. */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 void
 trx_commit_in_memory(
 /*=================*/
@@ -1264,6 +1255,8 @@ trx_commit_in_memory(
 	trx->read_view = NULL;
 
 	if (lsn) {
+		DEBUG_SYNC_C("after_trx_committed_in_memory");
+
 		if (trx->insert_undo != NULL) {
 
 			trx_undo_insert_cleanup(trx);
@@ -1347,7 +1340,7 @@ trx_commit_in_memory(
 	ut_ad(!trx->in_rw_trx_list);
 
 #ifdef WITH_WSREP
-	if (wsrep_on(trx->mysql_thd)) {
+	if (trx->mysql_thd && wsrep_on(trx->mysql_thd)) {
 		trx->lock.was_chosen_as_deadlock_victim = FALSE;
 	}
 #endif
@@ -1878,6 +1871,118 @@ trx_print_latched(
 		      mem_heap_get_size(trx->lock.lock_heap));
 }
 
+#ifdef WITH_WSREP
+/**********************************************************************//**
+Prints info about a transaction.
+Transaction information may be retrieved without having trx_sys->mutex acquired
+so it may not be completely accurate. The caller must own lock_sys->mutex
+and the trx must have some locks to make sure that it does not escape
+without locking lock_sys->mutex. */
+UNIV_INTERN
+void
+wsrep_trx_print_locking(
+/*==========*/
+	FILE*		f,
+			/*!< in: output stream */
+	const trx_t*	trx,
+			/*!< in: transaction */
+	ulint		max_query_len)
+			/*!< in: max query length to print,
+			or 0 to use the default max length */
+{
+	ibool		newline;
+	const char*	op_info;
+
+	ut_ad(lock_mutex_own());
+	ut_ad(trx->lock.trx_locks.count > 0);
+
+	fprintf(f, "TRANSACTION " TRX_ID_FMT, trx->id);
+
+	/* trx->state may change since trx_sys->mutex is not required */
+	switch (trx->state) {
+	case TRX_STATE_NOT_STARTED:
+		fputs(", not started", f);
+		goto state_ok;
+	case TRX_STATE_ACTIVE:
+		fprintf(f, ", ACTIVE %lu sec",
+			(ulong) difftime(time(NULL), trx->start_time));
+		goto state_ok;
+	case TRX_STATE_PREPARED:
+		fprintf(f, ", ACTIVE (PREPARED) %lu sec",
+			(ulong) difftime(time(NULL), trx->start_time));
+		goto state_ok;
+	case TRX_STATE_COMMITTED_IN_MEMORY:
+		fputs(", COMMITTED IN MEMORY", f);
+		goto state_ok;
+	}
+	fprintf(f, ", state %lu", (ulong) trx->state);
+	ut_ad(0);
+state_ok:
+
+	/* prevent a race condition */
+	op_info = trx->op_info;
+
+	if (*op_info) {
+		putc(' ', f);
+		fputs(op_info, f);
+	}
+
+	if (trx->is_recovered) {
+		fputs(" recovered trx", f);
+	}
+
+	if (trx->declared_to_be_inside_innodb) {
+		fprintf(f, ", thread declared inside InnoDB %lu",
+			(ulong) trx->n_tickets_to_enter_innodb);
+	}
+
+	putc('\n', f);
+
+	if (trx->n_mysql_tables_in_use > 0 || trx->mysql_n_tables_locked > 0) {
+		fprintf(f, "mysql tables in use %lu, locked %lu\n",
+			(ulong) trx->n_mysql_tables_in_use,
+			(ulong) trx->mysql_n_tables_locked);
+	}
+
+	newline = TRUE;
+
+	/* trx->lock.que_state of an ACTIVE transaction may change
+	while we are not holding trx->mutex. We perform a dirty read
+	for performance reasons. */
+
+	switch (trx->lock.que_state) {
+	case TRX_QUE_RUNNING:
+		newline = FALSE; break;
+	case TRX_QUE_LOCK_WAIT:
+		fputs("LOCK WAIT ", f); break;
+	case TRX_QUE_ROLLING_BACK:
+		fputs("ROLLING BACK ", f); break;
+	case TRX_QUE_COMMITTING:
+		fputs("COMMITTING ", f); break;
+	default:
+		fprintf(f, "que state %lu ", (ulong) trx->lock.que_state);
+	}
+
+	if (trx->has_search_latch) {
+		newline = TRUE;
+		fputs(", holds adaptive hash latch", f);
+	}
+
+	if (trx->undo_no != 0) {
+		newline = TRUE;
+		fprintf(f, ", undo log entries " TRX_ID_FMT, trx->undo_no);
+	}
+
+	if (newline) {
+		putc('\n', f);
+	}
+
+	if (trx->mysql_thd != NULL) {
+		innobase_mysql_print_thd(
+			f, trx->mysql_thd, static_cast<uint>(max_query_len));
+	}
+}
+#endif /* WITH_WSREP */
 /**********************************************************************//**
 Prints info about a transaction.
 Acquires and releases lock_sys->mutex and trx_sys->mutex. */
@@ -2165,7 +2270,7 @@ which is in the prepared state
 @return	trx on match, the trx->xid will be invalidated;
 note that the trx may have been committed, unless the caller is
 holding lock_sys->mutex */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 trx_t*
 trx_get_trx_by_xid_low(
 /*===================*/
@@ -2189,6 +2294,7 @@ trx_get_trx_by_xid_low(
 
 		if (trx->is_recovered
 		    && trx_state_eq(trx, TRX_STATE_PREPARED)
+		    && !trx->xid.is_null()
 		    && xid->gtrid_length == trx->xid.gtrid_length
 		    && xid->bqual_length == trx->xid.bqual_length
 		    && memcmp(xid->data, trx->xid.data,
@@ -2196,8 +2302,7 @@ trx_get_trx_by_xid_low(
 
 			/* Invalidate the XID, so that subsequent calls
 			will not find it. */
-			memset(&trx->xid, 0, sizeof(trx->xid));
-			trx->xid.formatID = -1;
+			trx->xid.null();
 			break;
 		}
 	}
@@ -2331,4 +2436,3 @@ trx_start_for_ddl_low(
 
 	ut_error;
 }
-

@@ -380,6 +380,16 @@ bool Item_sum::register_sum_func(THD *thd, Item **ref)
       sl->master_unit()->item->with_sum_func= 1;
   }
   thd->lex->current_select->mark_as_dependent(thd, aggr_sel, NULL);
+
+  if ((thd->lex->describe & DESCRIBE_EXTENDED) && aggr_sel)
+  {
+    push_warning_printf(thd, Sql_condition::WARN_LEVEL_NOTE,
+                        ER_WARN_AGGFUNC_DEPENDENCE,
+                        ER_THD(thd, ER_WARN_AGGFUNC_DEPENDENCE),
+                        func_name(),
+                        thd->lex->current_select->select_number,
+                        aggr_sel->select_number);
+  }
   return FALSE;
 }
 
@@ -1149,6 +1159,7 @@ Item_sum_num::fix_fields(THD *thd, Item **ref)
       return TRUE;
     set_if_bigger(decimals, args[i]->decimals);
     with_subselect|= args[i]->with_subselect;
+    with_param|= args[i]->with_param; 
   }
   result_field=0;
   max_length=float_length(decimals);
@@ -1180,6 +1191,7 @@ Item_sum_hybrid::fix_fields(THD *thd, Item **ref)
     return TRUE;
   Type_std_attributes::set(args[0]);
   with_subselect= args[0]->with_subselect;
+  with_param= args[0]->with_param;
 
   Item *item2= item->real_item();
   if (item2->type() == Item::FIELD_ITEM)
@@ -1450,7 +1462,7 @@ my_decimal *Item_sum_sum::val_decimal(my_decimal *val)
   if (aggr)
     aggr->endup();
   if (hybrid_type == DECIMAL_RESULT)
-    return (dec_buffs + curr_dec_buff);
+    return null_value ? NULL : (dec_buffs + curr_dec_buff);
   return val_decimal_from_real(val);
 }
 
@@ -1753,6 +1765,8 @@ double Item_sum_std::val_real()
 {
   DBUG_ASSERT(fixed == 1);
   double nr= Item_sum_variance::val_real();
+  if (my_isinf(nr))
+    return DBL_MAX;
   DBUG_ASSERT(nr >= 0.0);
   return sqrt(nr);
 }
@@ -3348,7 +3362,8 @@ Item_func_group_concat::fix_fields(THD *thd, Item **ref)
          args[i]->fix_fields(thd, args + i)) ||
         args[i]->check_cols(1))
       return TRUE;
-      with_subselect|= args[i]->with_subselect;
+    with_subselect|= args[i]->with_subselect;
+    with_param|= args[i]->with_param;
   }
 
   /* skip charset aggregation for order columns */
@@ -3582,7 +3597,7 @@ void Item_func_group_concat::print(String *str, enum_query_type query_type)
     }
   }
   str->append(STRING_WITH_LEN(" separator \'"));
-  str->append(*separator);
+  str->append_for_single_quote(separator->ptr(), separator->length());
   str->append(STRING_WITH_LEN("\')"));
 }
 

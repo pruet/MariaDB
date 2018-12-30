@@ -16,7 +16,6 @@
 
 #include <my_global.h>
 #include <my_sys.h>
-#include <base64.h>
 #include <tap.h>
 #include <string.h>
 
@@ -91,6 +90,9 @@ main(int argc __attribute__((unused)),char *argv[])
       diag("src length: %.8x, dst length: %.8x\n",
            (uint) src_len, (uint) dst_len);
     }
+    free(dst);
+    free(str);
+    free(src);
   }
   my_end(0);
   return exit_status();

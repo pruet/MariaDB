@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2014, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -33,7 +34,8 @@ Created 3/26/1996 Heikki Tuuri
 #include "mtr0mtr.h"
 #include "trx0sys.h"
 
-extern bool	trx_rollback_or_clean_is_active;
+extern bool		trx_rollback_or_clean_is_active;
+extern const trx_t*	trx_roll_crash_recv_trx;
 
 /*******************************************************************//**
 Determines if this transaction is rolling back an incomplete transaction
@@ -104,6 +106,11 @@ trx_undo_rec_release(
 /*=================*/
 	trx_t*		trx,	/*!< in/out: transaction */
 	undo_no_t	undo_no);/*!< in: undo number */
+/** Report progress when rolling back a row of a recovered transaction.
+@return	whether the rollback should be aborted due to pending shutdown */
+UNIV_INTERN
+bool
+trx_roll_must_shutdown();
 /*******************************************************************//**
 Rollback or clean up any incomplete transactions which were
 encountered in crash recovery.  If the transaction already was
@@ -126,7 +133,7 @@ extern "C" UNIV_INTERN
 os_thread_ret_t
 DECLARE_THREAD(trx_rollback_or_clean_all_recovered)(
 /*================================================*/
-	void*	arg __attribute__((unused)));
+	void*	arg MY_ATTRIBUTE((unused)));
 			/*!< in: a dummy parameter required by
 			os_thread_create */
 /*********************************************************************//**
@@ -153,7 +160,7 @@ dberr_t
 trx_rollback_for_mysql(
 /*===================*/
 	trx_t*	trx)	/*!< in/out: transaction */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /*******************************************************************//**
 Rollback the latest SQL statement for MySQL.
 @return	error code or DB_SUCCESS */
@@ -162,7 +169,7 @@ dberr_t
 trx_rollback_last_sql_stat_for_mysql(
 /*=================================*/
 	trx_t*	trx)	/*!< in/out: transaction */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /*******************************************************************//**
 Rollback a transaction to a given savepoint or do a complete rollback.
 @return	error code or DB_SUCCESS */
@@ -174,7 +181,7 @@ trx_rollback_to_savepoint(
 	trx_savept_t*	savept)	/*!< in: pointer to savepoint undo number, if
 				partial rollback requested, or NULL for
 				complete rollback */
-	__attribute__((nonnull(1)));
+	MY_ATTRIBUTE((nonnull(1)));
 /*******************************************************************//**
 Rolls back a transaction back to a named savepoint. Modifications after the
 savepoint are undone but InnoDB does NOT release the corresponding locks
@@ -196,7 +203,7 @@ trx_rollback_to_savepoint_for_mysql(
 						information to remove the
 						binlog entries of the queries
 						executed after the savepoint */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 /*******************************************************************//**
 Creates a named savepoint. If the transaction is not yet started, starts it.
 If there is already a savepoint of the same name, this call erases that old
@@ -213,7 +220,7 @@ trx_savepoint_for_mysql(
 						position corresponding to this
 						connection at the time of the
 						savepoint */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /*******************************************************************//**
 Releases a named savepoint. Savepoints which
 were set after this savepoint are deleted.
@@ -225,7 +232,7 @@ trx_release_savepoint_for_mysql(
 /*============================*/
 	trx_t*		trx,			/*!< in: transaction handle */
 	const char*	savepoint_name)		/*!< in: savepoint name */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 /*******************************************************************//**
 Frees savepoint structs starting from savep. */
 UNIV_INTERN

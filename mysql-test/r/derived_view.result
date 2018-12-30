@@ -79,6 +79,7 @@ Handler_read_key	0
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	0
@@ -93,6 +94,7 @@ Handler_read_key	0
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	12
@@ -166,6 +168,7 @@ Handler_read_key	0
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	0
@@ -180,6 +183,7 @@ Handler_read_key	0
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	12
@@ -232,6 +236,7 @@ Handler_read_key	0
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	0
@@ -248,6 +253,7 @@ Handler_read_key	11
 Handler_read_last	0
 Handler_read_next	3
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	11
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	36
@@ -323,6 +329,7 @@ Handler_read_key	22
 Handler_read_last	0
 Handler_read_next	22
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	60
@@ -340,6 +347,7 @@ Handler_read_key	0
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	0
@@ -356,6 +364,7 @@ Handler_read_key	11
 Handler_read_last	0
 Handler_read_next	3
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	11
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	36
@@ -451,6 +460,7 @@ Handler_read_key	2
 Handler_read_last	0
 Handler_read_next	2
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	8
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	39
@@ -1969,6 +1979,11 @@ GROUP BY TABLE_SCHEMA) AS UNIQUES
 ON ( COLUMNS.TABLE_SCHEMA = UNIQUES.TABLE_SCHEMA);
 COUNT(*) > 0
 1
+Warnings:
+Warning	1286	Unknown storage engine 'InnoDB'
+Warning	1286	Unknown storage engine 'InnoDB'
+Warning	1286	Unknown storage engine 'InnoDB'
+Warning	1286	Unknown storage engine 'InnoDB'
 DROP TABLE t1;
 SET SESSION optimizer_switch= @save_optimizer_switch;
 #
@@ -2490,5 +2505,149 @@ DROP TABLE t1,t2;
 #
 # end of 5.3 tests
 #
+#
+# Bug mdev-11161: The second execution of prepared statement
+#                 does not use generated key for materialized
+#                 derived table / view 
+# (actually this is a 5.3 bug.)               
+#
+create table t1 (
+mat_id MEDIUMINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+matintnum CHAR(6) NOT NULL,
+test MEDIUMINT UNSIGNED NULL
+);
+create table t2 (
+mat_id MEDIUMINT UNSIGNED NOT NULL,
+pla_id MEDIUMINT UNSIGNED NOT NULL
+);
+insert into t1 values
+(NULL, 'a', 1), (NULL, 'b', 2), (NULL, 'c', 3), (NULL, 'd', 4),
+(NULL, 'e', 5), (NULL, 'f', 6), (NULL, 'g', 7), (NULL, 'h', 8),
+(NULL, 'i', 9);
+insert into t2 values
+(1, 100), (1, 101), (1, 102), (2, 100), (2, 103), (2, 104), 
+(3, 101), (3, 102), (3, 105);
+explain
+SELECT STRAIGHT_JOIN d.pla_id, m2.mat_id
+FROM t1 m2 
+INNER JOIN
+(SELECT mp.pla_id, MIN(m1.matintnum) AS matintnum
+FROM t2 mp INNER JOIN t1 m1 ON mp.mat_id=m1.mat_id
+GROUP BY mp.pla_id) d
+ON d.matintnum=m2.matintnum;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PRIMARY	m2	ALL	NULL	NULL	NULL	NULL	9	
+1	PRIMARY	<derived2>	ref	key0	key0	7	test.m2.matintnum	2	
+2	DERIVED	mp	ALL	NULL	NULL	NULL	NULL	9	Using temporary; Using filesort
+2	DERIVED	m1	eq_ref	PRIMARY	PRIMARY	3	test.mp.mat_id	1	
+prepare stmt1 from
+"SELECT STRAIGHT_JOIN d.pla_id, m2.mat_id
+   FROM t1 m2 
+        INNER JOIN
+        (SELECT mp.pla_id, MIN(m1.matintnum) AS matintnum
+           FROM t2 mp INNER JOIN t1 m1 ON mp.mat_id=m1.mat_id
+         GROUP BY mp.pla_id) d
+        ON d.matintnum=m2.matintnum";
+flush status;
+execute stmt1;
+pla_id	mat_id
+102	1
+101	1
+100	1
+104	2
+103	2
+105	3
+show status like '%Handler_read%';
+Variable_name	Value
+Handler_read_first	0
+Handler_read_key	21
+Handler_read_last	0
+Handler_read_next	6
+Handler_read_prev	0
+Handler_read_retry	0
+Handler_read_rnd	6
+Handler_read_rnd_deleted	0
+Handler_read_rnd_next	27
+flush status;
+execute stmt1;
+pla_id	mat_id
+102	1
+101	1
+100	1
+104	2
+103	2
+105	3
+show status like '%Handler_read%';
+Variable_name	Value
+Handler_read_first	0
+Handler_read_key	21
+Handler_read_last	0
+Handler_read_next	6
+Handler_read_prev	0
+Handler_read_retry	0
+Handler_read_rnd	6
+Handler_read_rnd_deleted	0
+Handler_read_rnd_next	27
+deallocate prepare stmt1;
+drop table t1,t2;
+#
+# Bug mdev-12670: mergeable derived / view with subqueries
+#                 subject to semi-join optimizations
+# (actually this is a 5.3 bug.)               
+#
+create table t1 (a int) engine=myisam;
+insert into t1  values (5),(3),(2),(7),(2),(5),(1);
+create table t2 (b int, index idx(b)) engine=myisam;
+insert into t2 values (2),(3),(2),(1),(3),(4);
+insert into t2 select b+10 from t2;
+insert into t2 select b+10 from t2;
+insert into t2 select b+10 from t2;
+insert into t2 select b+10 from t2;
+insert into t2 select b+10 from t2;
+insert into t2 select b+10 from t2;
+insert into t2 select b+10 from t2;
+insert into t2 select b+10 from t2;
+insert into t2 select b+10 from t2;
+insert into t2 select b+10 from t2;
+analyze table t1,t2;
+Table	Op	Msg_type	Msg_text
+test.t1	analyze	status	OK
+test.t2	analyze	status	OK
+explain select a from t1 where a in (select b from t2);
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PRIMARY	t1	ALL	NULL	NULL	NULL	NULL	7	Using where
+1	PRIMARY	t2	ref	idx	idx	5	test.t1.a	140	Using index; FirstMatch(t1)
+explain select * from (select a from t1 where a in (select b from t2)) t;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PRIMARY	t1	ALL	NULL	NULL	NULL	NULL	7	Using where
+1	PRIMARY	t2	ref	idx	idx	5	test.t1.a	140	Using index; FirstMatch(t1)
+create view v1 as select a from t1 where a in (select b from t2);
+explain select * from v1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PRIMARY	t1	ALL	NULL	NULL	NULL	NULL	7	Using where
+1	PRIMARY	t2	ref	idx	idx	5	test.t1.a	140	Using index; FirstMatch(t1)
+drop view v1;
+drop table t1,t2;
+#
+# Bug mdev-12812: mergeable derived / view with subqueries
+#                 NOT subject to semi-join optimizations
+#
+CREATE TABLE t1 (c1 varchar(3)) ENGINE=MyISAM;
+INSERT INTO t1 VALUES ('foo'),('foo');
+CREATE TABLE t2 (c2 varchar(3)) ENGINE=MyISAM;
+INSERT INTO t2 VALUES ('bar'),('qux'),('foo');
+SELECT STRAIGHT_JOIN * 
+FROM ( SELECT * FROM t1 WHERE c1 IN ( SELECT c2 FROM t2 ) ) AS sq;
+c1
+foo
+foo
+EXPLAIN EXTENDED SELECT STRAIGHT_JOIN * 
+FROM ( SELECT * FROM t1 WHERE c1 IN ( SELECT c2 FROM t2 ) ) AS sq;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	t1	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+3	DEPENDENT SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where
+Warnings:
+Note	1003	select straight_join `test`.`t1`.`c1` AS `c1` from `test`.`t1` where <in_optimizer>(`test`.`t1`.`c1`,<exists>(select `test`.`t2`.`c2` from `test`.`t2` where (<cache>(`test`.`t1`.`c1`) = `test`.`t2`.`c2`)))
+DROP TABLE t1, t2;
 set optimizer_switch=@exit_optimizer_switch;
 set join_cache_level=@exit_join_cache_level;

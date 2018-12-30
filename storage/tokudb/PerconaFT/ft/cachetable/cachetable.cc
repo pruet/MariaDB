@@ -57,6 +57,25 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #include "util/status.h"
 #include "util/context.h"
 
+toku_instr_key *cachetable_m_mutex_key;
+toku_instr_key *cachetable_ev_thread_lock_mutex_key;
+
+toku_instr_key *cachetable_m_list_lock_key;
+toku_instr_key *cachetable_m_pending_lock_expensive_key;
+toku_instr_key *cachetable_m_pending_lock_cheap_key;
+toku_instr_key *cachetable_m_lock_key;
+
+toku_instr_key *cachetable_value_key;
+toku_instr_key *cachetable_disk_nb_rwlock_key;
+
+toku_instr_key *cachetable_p_refcount_wait_key;
+toku_instr_key *cachetable_m_flow_control_cond_key;
+toku_instr_key *cachetable_m_ev_thread_cond_key;
+
+toku_instr_key *cachetable_disk_nb_mutex_key;
+toku_instr_key *log_internal_lock_mutex_key;
+toku_instr_key *eviction_thread_key;
+
 ///////////////////////////////////////////////////////////////////////////////////
 // Engine status
 //
@@ -464,7 +483,14 @@ int toku_cachetable_openf (CACHEFILE *cfptr, CACHETABLE ct, const char *fname_in
 
 char *
 toku_cachefile_fname_in_env (CACHEFILE cf) {
-    return cf->fname_in_env;
+    if (cf) {
+        return cf->fname_in_env;
+    }
+    return nullptr;
+}
+
+void toku_cachefile_set_fname_in_env(CACHEFILE cf, char *new_fname_in_env) {
+    cf->fname_in_env = new_fname_in_env;
 }
 
 int 
@@ -772,18 +798,25 @@ void pair_init(PAIR p,
     p->checkpoint_complete_callback = write_callback.checkpoint_complete_callback;
     p->write_extraargs = write_callback.write_extraargs;
 
-    p->count = 0; // <CER> Is zero the correct init value?
+    p->count = 0;  // <CER> Is zero the correct init value?
     p->refcount = 0;
     p->num_waiting_on_refs = 0;
-    toku_cond_init(&p->refcount_wait, NULL);
+    toku_cond_init(*cachetable_p_refcount_wait_key, &p->refcount_wait, nullptr);
     p->checkpoint_pending = false;
 
     p->mutex = list->get_mutex_for_pair(fullhash);
     assert(p->mutex);
-    p->value_rwlock.init(p->mutex);
-    nb_mutex_init(&p->disk_nb_mutex);
+    p->value_rwlock.init(p->mutex
+#ifdef TOKU_MYSQL_WITH_PFS
+                         ,
+                         *cachetable_value_key
+#endif
+                         );
+    nb_mutex_init(*cachetable_disk_nb_mutex_key,
+                  *cachetable_disk_nb_rwlock_key,
+                  &p->disk_nb_mutex);
 
-    p->size_evicting_estimate = 0; // <CER> Is zero the correct init value?
+    p->size_evicting_estimate = 0;  // <CER> Is zero the correct init value?
 
     p->ev = ev;
     p->list = list;
@@ -1257,7 +1290,6 @@ int toku_cachetable_get_and_pin (
     CACHEKEY key, 
     uint32_t fullhash, 
     void**value, 
-    long *sizep,
     CACHETABLE_WRITE_CALLBACK write_callback,
     CACHETABLE_FETCH_CALLBACK fetch_callback, 
     CACHETABLE_PARTIAL_FETCH_REQUIRED_CALLBACK pf_req_callback,
@@ -1278,7 +1310,6 @@ int toku_cachetable_get_and_pin (
         key, 
         fullhash, 
         value, 
-        sizep,
         write_callback,
         fetch_callback, 
         pf_req_callback,
@@ -1526,7 +1557,6 @@ int toku_cachetable_get_and_pin_with_dep_pairs (
     CACHEKEY key,
     uint32_t fullhash,
     void**value,
-    long *sizep,
     CACHETABLE_WRITE_CALLBACK write_callback,
     CACHETABLE_FETCH_CALLBACK fetch_callback,
     CACHETABLE_PARTIAL_FETCH_REQUIRED_CALLBACK pf_req_callback,
@@ -1710,7 +1740,6 @@ beginning:
     }
 got_value:
     *value = p->value_data;
-    if (sizep) *sizep = p->attr.size;
     return 0;
 }
 
@@ -1820,6 +1849,22 @@ int toku_cachetable_maybe_get_and_pin_clean (CACHEFILE cachefile, CACHEKEY key, 
     } else {
         ct->list.pair_unlock_by_fullhash(fullhash);
     }
+    return r;
+}
+
+int toku_cachetable_get_attr (CACHEFILE cachefile, CACHEKEY key, uint32_t fullhash, PAIR_ATTR *attr) {
+    CACHETABLE ct = cachefile->cachetable;
+    int r;
+    ct->list.pair_lock_by_fullhash(fullhash);
+    PAIR p = ct->list.find_pair(cachefile, key, fullhash);
+    if (p) {
+        // Assumes pair lock and full hash lock are the same mutex
+        *attr = p->attr;
+        r = 0;
+    } else {
+        r = -1;
+    }
+    ct->list.pair_unlock_by_fullhash(fullhash);
     return r;
 }
 
@@ -1964,7 +2009,6 @@ int toku_cachetable_get_and_pin_nonblocking(
     CACHEKEY key,
     uint32_t fullhash,
     void**value,
-    long* UU(sizep),
     CACHETABLE_WRITE_CALLBACK write_callback,
     CACHETABLE_FETCH_CALLBACK fetch_callback,
     CACHETABLE_PARTIAL_FETCH_REQUIRED_CALLBACK pf_req_callback,
@@ -2886,6 +2930,10 @@ toku_cachefile_get_cachetable(CACHEFILE cf) {
     return cf->cachetable;
 }
 
+CACHEFILE toku_pair_get_cachefile(PAIR pair) {
+    return pair->cachefile;
+}
+
 //Only called by ft_end_checkpoint
 //Must have access to cf->fd (must be protected)
 void toku_cachefile_fsync(CACHEFILE cf) {
@@ -2901,6 +2949,18 @@ void toku_cachefile_unlink_on_close(CACHEFILE cf) {
 // is this cachefile marked as unlink on close?
 bool toku_cachefile_is_unlink_on_close(CACHEFILE cf) {
     return cf->unlink_on_close;
+}
+
+void toku_cachefile_skip_log_recover_on_close(CACHEFILE cf) {
+    cf->skip_log_recover_on_close = true;
+}
+
+void toku_cachefile_do_log_recover_on_close(CACHEFILE cf) {
+    cf->skip_log_recover_on_close = false;
+}
+
+bool toku_cachefile_is_skip_log_recover_on_close(CACHEFILE cf) {
+    return cf->skip_log_recover_on_close;
 }
 
 uint64_t toku_cachefile_size(CACHEFILE cf) {
@@ -3206,16 +3266,26 @@ void pair_list::init() {
 #if defined(HAVE_PTHREAD_RWLOCKATTR_SETKIND_NP)
     pthread_rwlockattr_setkind_np(&attr, PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP);
 #else
-    // TODO: need to figure out how to make writer-preferential rwlocks
-    // happen on osx
+// TODO: need to figure out how to make writer-preferential rwlocks
+// happen on osx
 #endif
-    toku_pthread_rwlock_init(&m_list_lock, &attr);
-    toku_pthread_rwlock_init(&m_pending_lock_expensive, &attr);    
-    toku_pthread_rwlock_init(&m_pending_lock_cheap, &attr);    
+    toku_pthread_rwlock_init(*cachetable_m_list_lock_key, &m_list_lock, &attr);
+    toku_pthread_rwlock_init(*cachetable_m_pending_lock_expensive_key,
+                             &m_pending_lock_expensive,
+                             &attr);
+    toku_pthread_rwlock_init(
+        *cachetable_m_pending_lock_cheap_key, &m_pending_lock_cheap, &attr);
     XCALLOC_N(m_table_size, m_table);
     XCALLOC_N(m_num_locks, m_mutexes);
     for (uint64_t i = 0; i < m_num_locks; i++) {
-        toku_mutex_init(&m_mutexes[i].aligned_mutex, NULL);
+        toku_mutex_init(
+#ifdef TOKU_PFS_MUTEX_EXTENDED_CACHETABLEMMUTEX
+            *cachetable_m_mutex_key,
+#else
+            toku_uninstrumented,
+#endif
+            &m_mutexes[i].aligned_mutex,
+            nullptr);
     }
 }
 
@@ -3555,9 +3625,9 @@ ENSURE_POD(evictor);
 // This is the function that runs eviction on its own thread.
 //
 static void *eviction_thread(void *evictor_v) {
-    evictor* CAST_FROM_VOIDP(evictor, evictor_v);
+    evictor *CAST_FROM_VOIDP(evictor, evictor_v);
     evictor->run_eviction_thread();
-    return evictor_v;
+    return toku_pthread_done(evictor_v);
 }
 
 //
@@ -3606,11 +3676,14 @@ int evictor::init(long _size_limit, pair_list* _pl, cachefile_list* _cf_list, KI
 
     m_pl = _pl;
     m_cf_list = _cf_list;
-    m_kibbutz = _kibbutz;    
-    toku_mutex_init(&m_ev_thread_lock, NULL);
-    toku_cond_init(&m_flow_control_cond, NULL);
-    toku_cond_init(&m_ev_thread_cond, NULL);
-    m_num_sleepers = 0;    
+    m_kibbutz = _kibbutz;
+    toku_mutex_init(
+        *cachetable_ev_thread_lock_mutex_key, &m_ev_thread_lock, nullptr);
+    toku_cond_init(
+        *cachetable_m_flow_control_cond_key, &m_flow_control_cond, nullptr);
+    toku_cond_init(
+        *cachetable_m_ev_thread_cond_key, &m_ev_thread_cond, nullptr);
+    m_num_sleepers = 0;
     m_ev_thread_is_running = false;
     m_period_in_seconds = eviction_period;
 
@@ -3618,11 +3691,12 @@ int evictor::init(long _size_limit, pair_list* _pl, cachefile_list* _cf_list, KI
     int r = myinitstate_r(seed, m_random_statebuf, sizeof m_random_statebuf, &m_random_data);
     assert_zero(r);
 
-    // start the background thread    
+    // start the background thread
     m_run_thread = true;
     m_num_eviction_thread_runs = 0;
     m_ev_thread_init = false;
-    r = toku_pthread_create(&m_ev_thread, NULL, eviction_thread, this); 
+    r = toku_pthread_create(
+        *eviction_thread_key, &m_ev_thread, nullptr, eviction_thread, this);
     if (r == 0) {
         m_ev_thread_init = true;
     }
@@ -4679,7 +4753,7 @@ static_assert(std::is_pod<cachefile_list>::value, "cachefile_list isn't POD");
 void cachefile_list::init() {
     m_next_filenum_to_use.fileid = 0;
     m_next_hash_id_to_use = 0;
-    toku_pthread_rwlock_init(&m_lock, NULL);
+    toku_pthread_rwlock_init(*cachetable_m_lock_key, &m_lock, nullptr);
     m_active_filenum.create();
     m_active_fileid.create();
     m_stale_fileid.create();

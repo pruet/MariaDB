@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /* ======================================================================
    Open Query Graph Computation Engine, based on a concept by Arjen Lentz
@@ -25,7 +25,6 @@
 #include <string.h>
 #include <cstdlib>
 
-#include "graphcore-config.h"
 #include "graphcore-graph.h"
 
 #include <set>
@@ -485,7 +484,7 @@ namespace open_query
   optional<Vertex>
   oqgraph_share::find_vertex(VertexID id) const
   {
-    return ::boost::find_vertex(id, g);
+    return oqgraph3::find_vertex(id, g);
   }
 
 #if 0
@@ -891,18 +890,18 @@ namespace open_query
           boost::unordered_map<Vertex, Vertex> p;
           boost::unordered_map<Vertex, EdgeWeight> d;
           boost::queue<Vertex> Q;
-          reverse_graph<Graph> r(share->g);
+          const reverse_graph<Graph> r(share->g);
           p[ *dest ]= *dest;
           d[ *dest ] = EdgeWeight();
           switch (ALGORITHM & op)
           {
           case DIJKSTRAS:
-            dijkstra_shortest_paths_no_init(share->g, *dest,
+            dijkstra_shortest_paths_no_init(r, *dest,
                 make_lazy_property_map(p, identity_initializer<Vertex>()),
                 make_lazy_property_map(d, value_initializer<EdgeWeight>(
                     (std::numeric_limits<EdgeWeight>::max)())),
-                get(edge_weight, share->g),
-                get(vertex_index, share->g),
+                get(edge_weight, r),
+                get(vertex_index, r),
                 std::less<EdgeWeight>(),
                 closed_plus<EdgeWeight>(),
                 EdgeWeight(),
@@ -913,10 +912,10 @@ namespace open_query
                             static_cast<stack_cursor*>(cursor)
                         )
                 ),
-                make_two_bit_judy_map(get(vertex_index, share->g)));
+                make_two_bit_judy_map(get(vertex_index, r)));
             break;
           case BREADTH_FIRST:
-            breadth_first_visit(share->g, *dest, Q,
+            breadth_first_visit(r, *dest, Q,
                 make_bfs_visitor(
                     std::make_pair(
                         record_predecessors(
@@ -935,7 +934,7 @@ namespace open_query
                         )
                     ))
                 ),
-                make_two_bit_judy_map(get(vertex_index, share->g)));
+                make_two_bit_judy_map(get(vertex_index, r)));
             break;
           default:
             abort();

@@ -1,14 +1,25 @@
-SET(TOKUDB_VERSION 5.6.26-74.0)
+SET(TOKUDB_VERSION 5.6.41-84.1)
 # PerconaFT only supports x86-64 and cmake-2.8.9+
 IF(CMAKE_VERSION VERSION_LESS "2.8.9")
   MESSAGE(STATUS "CMake 2.8.9 or higher is required by TokuDB")
+ELSEIF(NOT HAVE_DLOPEN)
+  MESSAGE(STATUS "dlopen is required by TokuDB")
+ELSEIF(PLUGIN_PERFSCHEMA MATCHES "^NO$")
+  MESSAGE(STATUS "Performance Schema is required by TokuDB")
+  RETURN()
 ELSEIF(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" OR
        CMAKE_SYSTEM_PROCESSOR STREQUAL "amd64")
+# tokudb requires F_NOCACHE or O_DIRECT, and designated initializers
 CHECK_CXX_SOURCE_COMPILES(
 "
+#include <fcntl.h>
 struct a {int b; int c; };
 struct a d = { .b=1, .c=2 };
+#if defined(O_DIRECT) || defined(F_NOCACHE)
 int main() { return 0; }
+#else
+#error
+#endif
 " TOKUDB_OK)
 ENDIF()
 
@@ -16,7 +27,13 @@ IF(NOT TOKUDB_OK)
   RETURN()
 ENDIF()
 
-SET(TOKUDB_SOURCES ha_tokudb.cc)
+SET(TOKUDB_SOURCES
+    ha_tokudb.cc
+    tokudb_background.cc
+    tokudb_information_schema.cc
+    tokudb_sysvars.cc
+    tokudb_thread.cc
+    tokudb_dir_cmd.cc)
 MYSQL_ADD_PLUGIN(tokudb ${TOKUDB_SOURCES} STORAGE_ENGINE MODULE_ONLY)
 
 IF(NOT TARGET tokudb)
@@ -27,8 +44,9 @@ IF(NOT LIBJEMALLOC)
   MESSAGE(WARNING "TokuDB is enabled, but jemalloc is not. This configuration is not supported")
 ENDIF()
 
-MY_CHECK_AND_SET_COMPILER_FLAG("-Wno-vla")
+MY_CHECK_AND_SET_COMPILER_FLAG("-Wno-shadow")
 MY_CHECK_AND_SET_COMPILER_FLAG("-Wno-vla" DEBUG)
+MY_CHECK_AND_SET_COMPILER_FLAG("-Wno-implicit-fallthrough")
 
 ############################################
 SET(TOKUDB_DEB_FILES "usr/lib/mysql/plugin/ha_tokudb.so\netc/mysql/conf.d/tokudb.cnf\nusr/bin/tokuftdump" PARENT_SCOPE)
@@ -47,9 +65,15 @@ MARK_AS_ADVANCED(gcc_ar)
 MARK_AS_ADVANCED(gcc_ranlib)
 ############################################
 
+# pick language dialect
+MY_CHECK_AND_SET_COMPILER_FLAG(-std=c++11)
+
 SET(BUILD_TESTING OFF CACHE BOOL "")
 SET(USE_VALGRIND OFF CACHE BOOL "")
 SET(TOKU_DEBUG_PARANOID OFF CACHE BOOL "")
+
+# Enable TokuDB's TOKUDB_DEBUG in debug builds
+SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DTOKUDB_DEBUG")
 
 IF(NOT DEFINED TOKUDB_VERSION)
     IF(DEFINED ENV{TOKUDB_VERSION})
@@ -69,14 +93,6 @@ IF(DEFINED TOKUDB_NOPATCH_CONFIG)
     ADD_DEFINITIONS("-DTOKUDB_NOPATCH_CONFIG=${TOKUDB_NOPATCH_CONFIG}")
 ENDIF()
 
-IF(DEFINED TOKUDB_CHECK_JEMALLOC)
-    ADD_DEFINITIONS("-DTOKUDB_CHECK_JEMALLOC=${TOKUDB_CHECK_JEMALLOC}")
-ENDIF()
-
-## adds a compiler flag if the compiler supports it
-include(CheckCCompilerFlag)
-include(CheckCXXCompilerFlag)
-
 MY_CHECK_AND_SET_COMPILER_FLAG(-Wno-missing-field-initializers)
 
 IF (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/PerconaFT/")
@@ -89,7 +105,11 @@ ELSEIF (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ft-index/")
     MESSAGE(WARNING "Found ft-index sources, ft-index is deprecated and replaced with PerconaFT.")
     SET(TOKU_FT_DIR_NAME "ft-index")
 ELSE ()
-        MESSAGE(FATAL_ERROR "Could not find PerconaFT sources.")
+    MESSAGE(FATAL_ERROR "Could not find PerconaFT sources.")
+ENDIF ()
+
+IF (WITH_VALGRIND)
+    SET(USE_VALGRIND "ON")
 ENDIF ()
 
 ADD_SUBDIRECTORY(${TOKU_FT_DIR_NAME})

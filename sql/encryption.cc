@@ -29,6 +29,10 @@ uint no_key(uint)
 {
   return ENCRYPTION_KEY_VERSION_INVALID;
 }
+uint zero_size(uint,uint)
+{
+  return 0;
+}
 
 static int ctx_init(void *ctx, const unsigned char* key, unsigned int klen,
                     const unsigned char* iv, unsigned int ivlen, int flags,
@@ -94,18 +98,27 @@ int initialize_encryption_plugin(st_plugin_int *plugin)
 
 int finalize_encryption_plugin(st_plugin_int *plugin)
 {
-  encryption_handler.encryption_key_get_func=
-      (uint (*)(uint, uint, uchar*, uint*))no_key;
-  encryption_handler.encryption_key_get_latest_version_func= no_key;
+  bool used= plugin_ref_to_int(encryption_manager) == plugin;
+
+  if (used)
+  {
+    encryption_handler.encryption_key_get_func=
+        (uint (*)(uint, uint, uchar*, uint*))no_key;
+    encryption_handler.encryption_key_get_latest_version_func= no_key;
+    encryption_handler.encryption_ctx_size_func= zero_size;
+  }
 
   if (plugin && plugin->plugin->deinit && plugin->plugin->deinit(NULL))
   {
     DBUG_PRINT("warning", ("Plugin '%s' deinit function returned error.",
                            plugin->name.str));
   }
-  if (encryption_manager)
+
+  if (used)
+  {
     plugin_unlock(NULL, encryption_manager);
-  encryption_manager= 0;
+    encryption_manager= 0;
+  }
   return 0;
 }
 

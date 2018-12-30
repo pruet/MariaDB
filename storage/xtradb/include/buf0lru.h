@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2013, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1995, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -35,6 +36,7 @@ Created 11/5/1995 Heikki Tuuri
 
 // Forward declaration
 struct trx_t;
+struct dict_table_t;
 
 /******************************************************************//**
 Returns TRUE if less than 25 % of the buffer pool is available. This can be
@@ -53,19 +55,17 @@ These are low-level functions
 /** Minimum LRU list length for which the LRU_old pointer is defined */
 #define BUF_LRU_OLD_MIN_LEN	512	/* 8 megabytes of 16k pages */
 
-/******************************************************************//**
-Flushes all dirty pages or removes all pages belonging
-to a given tablespace. A PROBLEM: if readahead is being started, what
-guarantees that it will not try to read in pages after this operation
-has completed? */
-UNIV_INTERN
-void
-buf_LRU_flush_or_remove_pages(
-/*==========================*/
-	ulint		id,		/*!< in: space id */
-	buf_remove_t	buf_remove,	/*!< in: remove or flush strategy */
-	const trx_t*	trx);		/*!< to check if the operation must
-					be interrupted */
+/** Try to drop the adaptive hash index for a tablespace.
+@param[in,out]	table	table
+@return	whether anything was dropped */
+UNIV_INTERN bool buf_LRU_drop_page_hash_for_tablespace(dict_table_t* table)
+	MY_ATTRIBUTE((warn_unused_result,nonnull));
+
+/** Empty the flush list for all pages belonging to a tablespace.
+@param[in]	id		tablespace identifier
+@param[in]	trx		transaction, for checking for user interrupt;
+				or NULL if nothing is to be written */
+UNIV_INTERN void buf_LRU_flush_or_remove_pages(ulint id, const trx_t* trx);
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
 /********************************************************************//**
@@ -97,7 +97,7 @@ buf_LRU_free_page(
 	buf_page_t*	bpage,	/*!< in: block to be freed */
 	bool		zip)	/*!< in: true if should remove also the
 				compressed page of an uncompressed page */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /******************************************************************//**
 Try to free a replaceable block.
 @return	TRUE if found and freed */
@@ -109,7 +109,7 @@ buf_LRU_scan_and_free_block(
 	ibool		scan_all)	/*!< in: scan whole LRU list
 					if TRUE, otherwise scan only
 					'old' blocks. */
-	__attribute__((nonnull,warn_unused_result));
+	MY_ATTRIBUTE((nonnull,warn_unused_result));
 /******************************************************************//**
 Returns a free block from the buf_pool.  The block is taken off the
 free list.  If it is empty, returns NULL.
@@ -150,7 +150,7 @@ buf_block_t*
 buf_LRU_get_free_block(
 /*===================*/
 	buf_pool_t*	buf_pool)	/*!< in/out: buffer pool instance */
-	__attribute__((nonnull,warn_unused_result));
+	MY_ATTRIBUTE((nonnull,warn_unused_result));
 /******************************************************************//**
 Determines if the unzip_LRU list should be used for evicting a victim
 instead of the general LRU list.
@@ -233,7 +233,7 @@ buf_LRU_free_one_page(
 	buf_page_t*	bpage)	/*!< in/out: block, must contain a file page and
 				be in a state where it can be freed; there
 				may or may not be a hash index to the page */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 
 #if defined UNIV_DEBUG || defined UNIV_BUF_DEBUG
 /**********************************************************************//**

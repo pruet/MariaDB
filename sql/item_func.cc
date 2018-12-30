@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2015, MariaDB
+   Copyright (c) 2009, 2017, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -133,6 +133,7 @@ void Item_func::sync_with_sum_func_and_with_field(List<Item> &list)
   {
     with_sum_func|= item->with_sum_func;
     with_field|= item->with_field;
+    with_param|= item->with_param;
   }
 }
 
@@ -226,6 +227,7 @@ Item_func::fix_fields(THD *thd, Item **ref)
 	maybe_null=1;
 
       with_sum_func= with_sum_func || item->with_sum_func;
+      with_param= with_param || item->with_param;
       with_field= with_field || item->with_field;
       used_tables_and_const_cache_join(item);
       with_subselect|=        item->has_subquery();
@@ -270,7 +272,8 @@ Item_func::eval_not_null_tables(uchar *opt_arg)
 }
 
 
-void Item_func::fix_after_pullout(st_select_lex *new_parent, Item **ref)
+void Item_func::fix_after_pullout(st_select_lex *new_parent, Item **ref,
+                                  bool merge)
 {
   Item **arg,**arg_end;
 
@@ -281,7 +284,7 @@ void Item_func::fix_after_pullout(st_select_lex *new_parent, Item **ref)
   {
     for (arg=args, arg_end=args+arg_count; arg != arg_end ; arg++)
     {
-      (*arg)->fix_after_pullout(new_parent, arg);
+      (*arg)->fix_after_pullout(new_parent, arg, merge);
       Item *item= *arg;
 
       used_tables_and_const_cache_join(item);
@@ -509,43 +512,6 @@ bool Item_func::eq(const Item *item, bool binary_cmp) const
 }
 
 
-Field *Item_func::tmp_table_field(TABLE *table)
-{
-  Field *field= NULL;
-  MEM_ROOT *mem_root= table->in_use->mem_root;
-
-  switch (result_type()) {
-  case INT_RESULT:
-    if (max_char_length() > MY_INT32_NUM_DECIMAL_DIGITS)
-      field= new (mem_root)
-        Field_longlong(max_char_length(), maybe_null, name,
-                       unsigned_flag);
-    else
-      field= new (mem_root)
-        Field_long(max_char_length(), maybe_null, name,
-                   unsigned_flag);
-    break;
-  case REAL_RESULT:
-    field= new (mem_root)
-      Field_double(max_char_length(), maybe_null, name, decimals);
-    break;
-  case STRING_RESULT:
-    return make_string_field(table);
-  case DECIMAL_RESULT:
-    field= Field_new_decimal::create_from_item(mem_root, this);
-    break;
-  case ROW_RESULT:
-  case TIME_RESULT:
-    // This case should never be chosen
-    DBUG_ASSERT(0);
-    field= 0;
-    break;
-  }
-  if (field)
-    field->init(table);
-  return field;
-}
-
 /*
 bool Item_func::is_expensive_processor(uchar *arg)
 {
@@ -586,6 +552,7 @@ my_decimal *Item_real_func::val_decimal(my_decimal *decimal_value)
 }
 
 
+#ifdef HAVE_DLOPEN
 void Item_udf_func::fix_num_length_and_dec()
 {
   uint fl_length= 0;
@@ -602,6 +569,7 @@ void Item_udf_func::fix_num_length_and_dec()
     max_length= float_length(NOT_FIXED_DEC);
   }
 }
+#endif
 
 
 /**
@@ -972,7 +940,10 @@ longlong Item_func_hybrid_field_type::val_int()
   case INT_RESULT:
     return int_op();
   case REAL_RESULT:
-    return (longlong) rint(real_op());
+  {
+    bool error;
+    return double_to_longlong(real_op(), unsigned_flag, &error);
+  }
   case TIME_RESULT:
   {
     MYSQL_TIME ltime;
@@ -1981,6 +1952,7 @@ my_decimal *Item_func_mod::decimal_op(my_decimal *decimal_value)
     return decimal_value;
   case E_DEC_DIV_ZERO:
     signal_divide_by_null();
+    /* fall through */
   default:
     null_value= 1;
     return 0;
@@ -2349,15 +2321,6 @@ longlong Item_func_bit_neg::val_int()
 
 
 // Conversion functions
-
-void Item_func_integer::fix_length_and_dec()
-{
-  max_length=args[0]->max_length - args[0]->decimals+1;
-  uint tmp=float_length(decimals);
-  set_if_smaller(max_length,tmp);
-  decimals=0;
-}
-
 
 void Item_func_int_val::fix_length_and_dec()
 {
@@ -2813,7 +2776,6 @@ void Item_func_min_max::fix_length_and_dec()
   decimals=0;
   max_length=0;
   maybe_null=0;
-  thd= current_thd;
   Item_result tmp_cmp_type= args[0]->cmp_type();
   uint string_type_count= 0;
   uint temporal_type_count= 0;
@@ -2910,10 +2872,10 @@ void Item_func_min_max::fix_length_and_dec()
     collation.set_numeric();
     fix_char_length(float_length(decimals));
     /*
-      Set type to DOUBLE, as Item_func::tmp_table_field() does not
+      Set type to DOUBLE, as Item_func::create_tmp_field() does not
       distinguish between DOUBLE and FLOAT and always creates Field_double.
       Perhaps we should eventually change this to use agg_field_type() here,
-      and fix Item_func::tmp_table_field() to create Field_float when possible.
+      and fix Item_func::create_tmp_field() to create Field_float when possible.
     */
     set_handler_by_field_type(MYSQL_TYPE_DOUBLE);
     break;
@@ -2955,10 +2917,8 @@ bool Item_func_min_max::get_date(MYSQL_TIME *ltime, ulonglong fuzzy_date)
     longlong res= args[i]->val_temporal_packed(Item_func_min_max::field_type());
 
     /* Check if we need to stop (because of error or KILL) and stop the loop */
-    if (thd->is_error() || args[i]->null_value)
-    {
+    if (args[i]->null_value)
       return (null_value= 1);
-    }
 
     if (i == 0 || (res < min_max ? cmp_sign : -cmp_sign) > 0)
       min_max= res;
@@ -3551,6 +3511,7 @@ udf_handler::fix_fields(THD *thd, Item_func_or_sum *func,
 	func->maybe_null=1;
       func->with_sum_func= func->with_sum_func || item->with_sum_func;
       func->with_field= func->with_field || item->with_field;
+      func->with_param= func->with_param || item->with_param;
       func->with_subselect|= item->with_subselect;
       func->used_tables_and_const_cache_join(item);
       f_args.arg_type[i]=item->result_type();
@@ -3962,7 +3923,7 @@ longlong Item_master_pos_wait::val_int()
   longlong timeout = (arg_count>=3) ? args[2]->val_int() : 0 ;
   String connection_name_buff;
   LEX_STRING connection_name;
-  Master_info *mi;
+  Master_info *mi= NULL;
   if (arg_count >= 4)
   {
     String *con;
@@ -3981,11 +3942,7 @@ longlong Item_master_pos_wait::val_int()
   else
     connection_name= thd->variables.default_master_connection;
 
-  mysql_mutex_lock(&LOCK_active_mi);
-  mi= master_info_index->get_master_info(&connection_name,
-                                         Sql_condition::WARN_LEVEL_WARN);
-  mysql_mutex_unlock(&LOCK_active_mi);
-  if (!mi)
+  if (!(mi= get_master_info(&connection_name, Sql_condition::WARN_LEVEL_WARN)))
     goto err;
 
   if ((event_count = mi->rli.wait_for_pos(thd, log_name, pos, timeout)) == -2)
@@ -3993,6 +3950,7 @@ longlong Item_master_pos_wait::val_int()
     null_value = 1;
     event_count=0;
   }
+  mi->release();
 #endif
   return event_count;
 
@@ -4010,6 +3968,7 @@ longlong Item_master_gtid_wait::val_int()
 {
   DBUG_ASSERT(fixed == 1);
   longlong result= 0;
+  String *gtid_pos __attribute__((unused)) = args[0]->val_str(&value);
 
   if (args[0]->null_value)
   {
@@ -4021,7 +3980,6 @@ longlong Item_master_gtid_wait::val_int()
 #ifdef HAVE_REPLICATION
   THD* thd= current_thd;
   longlong timeout_us;
-  String *gtid_pos = args[0]->val_str(&value);
 
   if (arg_count==2 && !args[1]->null_value)
     timeout_us= (longlong)(1e6*args[1]->val_real());
@@ -6655,7 +6613,8 @@ Item_func_sp::init_result_field(THD *thd)
 
 bool Item_func_sp::is_expensive()
 {
-  return !(m_sp->m_chistics->detistic);
+  return !m_sp->m_chistics->detistic ||
+          current_thd->locked_tables_mode < LTM_LOCK_TABLES;
 }
 
 
@@ -6802,16 +6761,6 @@ longlong Item_func_found_rows::val_int()
 {
   DBUG_ASSERT(fixed == 1);
   return current_thd->found_rows();
-}
-
-
-Field *
-Item_func_sp::tmp_table_field(TABLE *t_arg)
-{
-  DBUG_ENTER("Item_func_sp::tmp_table_field");
-
-  DBUG_ASSERT(sp_result_field);
-  DBUG_RETURN(sp_result_field);
 }
 
 

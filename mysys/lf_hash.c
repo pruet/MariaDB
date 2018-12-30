@@ -1,5 +1,5 @@
-/* Copyright (c) 2006, 2010, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2016, MariaDB
+/* Copyright (c) 2006, 2018, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2018, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -102,8 +102,8 @@ retry:
   do { /* PTR() isn't necessary below, head is a dummy node */
     cursor->curr= (LF_SLIST *)(*cursor->prev);
     lf_pin(pins, 1, cursor->curr);
-  } while (*cursor->prev != (intptr)cursor->curr && LF_BACKOFF);
-
+  } while (my_atomic_loadptr((void**)cursor->prev) != cursor->curr &&
+                              LF_BACKOFF);
   for (;;)
   {
     if (unlikely(!cursor->curr))
@@ -201,7 +201,7 @@ static LF_SLIST *l_insert(LF_SLIST * volatile *head, CHARSET_INFO *cs,
   lf_unpin(pins, 2);
   /*
     Note that cursor.curr is not pinned here and the pointer is unreliable,
-    the object may dissapear anytime. But if it points to a dummy node, the
+    the object may disappear anytime. But if it points to a dummy node, the
     pointer is safe, because dummy nodes are never freed - initialize_bucket()
     uses this fact.
   */
@@ -333,7 +333,7 @@ static void default_initializer(LF_HASH *hash, void *dst, const void *src)
   lf_alloc and a size of memcpy'ed block size in lf_hash_insert. Typically
   they are the same, indeed. But LF_HASH::element_size can be decreased
   after lf_hash_init, and then lf_alloc will allocate larger block that
-  lf_hash_insert will copy over. It is desireable if part of the element
+  lf_hash_insert will copy over. It is desirable if part of the element
   is expensive to initialize - for example if there is a mutex or
   DYNAMIC_ARRAY. In this case they should be initialize in the
   LF_ALLOCATOR::constructor, and lf_hash_insert should not overwrite them.
@@ -442,7 +442,7 @@ int lf_hash_delete(LF_HASH *hash, LF_PINS *pins, const void *key, uint keylen)
 
   hashnr= hash->hash_function(hash->charset, (uchar *)key, keylen) & INT_MAX32;
 
-  /* hide OOM errors - if we cannot initalize a bucket, try the previous one */
+  /* hide OOM errors - if we cannot initialize a bucket, try the previous one */
   for (bucket= hashnr % hash->size; ;bucket= my_clear_highest_bit(bucket))
   {
     el= lf_dynarray_lvalue(&hash->array, bucket);
@@ -476,7 +476,7 @@ void *lf_hash_search_using_hash_value(LF_HASH *hash, LF_PINS *pins,
   LF_SLIST * volatile *el, *found;
   uint bucket;
 
-  /* hide OOM errors - if we cannot initalize a bucket, try the previous one */
+  /* hide OOM errors - if we cannot initialize a bucket, try the previous one */
   for (bucket= hashnr % hash->size; ;bucket= my_clear_highest_bit(bucket))
   {
     el= lf_dynarray_lvalue(&hash->array, bucket);
@@ -550,7 +550,10 @@ static int initialize_bucket(LF_HASH *hash, LF_SLIST * volatile *node,
     return -1;
   if (*el == NULL && bucket &&
       unlikely(initialize_bucket(hash, el, parent, pins)))
+  {
+    my_free(dummy);
     return -1;
+  }
   dummy->hashnr= my_reverse_bits(bucket) | 0; /* dummy node */
   dummy->key= dummy_key;
   dummy->keylen= 0;

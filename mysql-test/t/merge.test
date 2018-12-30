@@ -1559,7 +1559,7 @@ CREATE TABLE m1 (
 ) ENGINE=MRG_MyISAM DEFAULT CHARSET=latin1 INSERT_METHOD=LAST UNION=(t1);
 
 insert into m1 (col1) values (1);
---error ER_DUP_ENTRY
+--error ER_DUP_KEY
 insert into m1 (col1) values (1);
 
 drop table m1, t1;
@@ -1593,7 +1593,7 @@ CREATE TABLE t1 (c1 INT, c2 INT, UNIQUE (c1), UNIQUE (c2));
 CREATE TABLE m1 (c1 INT, c2 INT, UNIQUE (c1)) ENGINE=MRG_MyISAM INSERT_METHOD=LAST UNION=(t1);
 INSERT INTO m1 VALUES (1,2);
 --echo # insert the duplicate value into the merge table
---error ER_DUP_ENTRY
+--error ER_DUP_KEY
 INSERT INTO m1 VALUES (3,2);
 DROP TABLE m1,t1;
 
@@ -2879,6 +2879,19 @@ repair table m1;
 --echo # Clean-up.
 drop tables m1, t1, t4;
 drop view t3;
+
+
+--echo #
+--echo # MDEV-10424 - Assertion `ticket == __null' failed in
+--echo #              MDL_request::set_type
+--echo #
+CREATE TABLE t1 (f1 INT) ENGINE=MyISAM;
+CREATE TABLE tmerge (f1 INT) ENGINE=MERGE UNION=(t1);
+PREPARE stmt FROM "ANALYZE TABLE tmerge, t1";
+EXECUTE stmt;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+DROP TABLE t1, tmerge;
 
 
 --echo End of 5.5 tests

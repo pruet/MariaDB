@@ -359,7 +359,7 @@ int mysql_update(THD *thd,
   table_list->grant.want_privilege= table->grant.want_privilege=
     (SELECT_ACL & ~table->grant.privilege);
 #endif
-  if (setup_fields(thd, 0, values, MARK_COLUMNS_READ, 0, 0))
+  if (setup_fields(thd, 0, values, MARK_COLUMNS_READ, 0, NULL, 0))
   {
     free_underlaid_joins(thd, select_lex);
     DBUG_RETURN(1);				/* purecov: inspected */
@@ -534,6 +534,9 @@ int mysql_update(THD *thd,
   DBUG_EXECUTE_IF("show_explain_probe_update_exec_start", 
                   dbug_serve_apcs(thd, 1););
   
+  if (!(select && select->quick))
+    status_var_increment(thd->status_var.update_scan_count);
+
   if (query_plan.using_filesort || query_plan.using_io_buffer)
   {
     /*
@@ -567,7 +570,7 @@ int mysql_update(THD *thd,
       Filesort_tracker *fs_tracker= 
         thd->lex->explain->get_upd_del_plan()->filesort_tracker;
 
-      if (!(sortorder=make_unireg_sortorder(thd, order, &length, NULL)) ||
+      if (!(sortorder=make_unireg_sortorder(thd, NULL, 0, order, &length, NULL)) ||
           (table->sort.found_records= filesort(thd, table, sortorder, length,
                                                select, limit,
                                                true,
@@ -604,6 +607,7 @@ int mysql_update(THD *thd,
         close_cached_file(&tempfile);
         goto err;
       }
+
       table->file->try_semi_consistent_read(1);
 
       /*
@@ -636,13 +640,11 @@ int mysql_update(THD *thd,
       {
         explain->buf_tracker.on_record_read();
         if (table->vfield)
-          update_virtual_fields(thd, table,
-                                table->triggers ? VCOL_UPDATE_ALL :
-                                                  VCOL_UPDATE_FOR_READ);
+          update_virtual_fields(thd, table, VCOL_UPDATE_FOR_READ);
         thd->inc_examined_row_count(1);
 	if (!select || (error= select->skip_record(thd)) > 0)
 	{
-          if (table->file->was_semi_consistent_read())
+          if (table->file->ha_was_semi_consistent_read())
 	    continue;  /* repeat the read of the same row if it still exists */
 
           explain->buf_tracker.on_record_after_where();
@@ -699,6 +701,8 @@ int mysql_update(THD *thd,
       if (reinit_io_cache(&tempfile,READ_CACHE,0L,0,0))
 	error=1; /* purecov: inspected */
       select->file=tempfile;			// Read row ptrs from this file
+      // select->file was copied, update self-references.
+      setup_io_cache(&select->file);
       if (error >= 0)
 	goto err;
     }
@@ -754,13 +758,11 @@ int mysql_update(THD *thd,
   {
     explain->tracker.on_record_read();
     if (table->vfield)
-      update_virtual_fields(thd, table,
-                            table->triggers ? VCOL_UPDATE_ALL :
-                                              VCOL_UPDATE_FOR_READ);
+      update_virtual_fields(thd, table, VCOL_UPDATE_FOR_READ);
     thd->inc_examined_row_count(1);
     if (!select || select->skip_record(thd) > 0)
     {
-      if (table->file->was_semi_consistent_read())
+      if (table->file->ha_was_semi_consistent_read())
         continue;  /* repeat the read of the same row if it still exists */
 
       explain->tracker.on_record_after_where();
@@ -940,7 +942,7 @@ int mysql_update(THD *thd,
   // simulated killing after the loop must be ineffective for binlogging
   DBUG_EXECUTE_IF("simulate_kill_bug27571",
                   {
-                    thd->killed= KILL_QUERY;
+                    thd->set_killed(KILL_QUERY);
                   };);
   error= (killed_status == NOT_KILLED)?  error : 1;
   
@@ -1612,7 +1614,7 @@ bool mysql_multi_update(THD *thd,
     DBUG_RETURN(TRUE);
   }
 
-  thd->abort_on_warning= thd->is_strict_mode();
+  thd->abort_on_warning= !ignore && thd->is_strict_mode();
   List<Item> total_list;
 
   res= mysql_select(thd, &select_lex->ref_pointer_array,
@@ -1711,7 +1713,7 @@ int multi_update::prepare(List<Item> &not_used_values,
     reference tables
   */
 
-  int error= setup_fields(thd, 0, *values, MARK_COLUMNS_READ, 0, 0);
+  int error= setup_fields(thd, 0, *values, MARK_COLUMNS_READ, 0, NULL, 0);
 
   ti.rewind();
   while ((table_ref= ti++))
@@ -2065,7 +2067,7 @@ multi_update::~multi_update()
   TABLE_LIST *table;
   for (table= update_tables ; table; table= table->next_local)
   {
-    table->table->no_keyread= table->table->no_cache= 0;
+    table->table->no_keyread= 0;
     if (ignore)
       table->table->file->extra(HA_EXTRA_NO_IGNORE_DUP_KEY);
   }
@@ -2345,7 +2347,7 @@ int multi_update::do_updates()
     check_opt_it.rewind();
     while(TABLE *tbl= check_opt_it++)
     {
-      if ((local_error= tbl->file->ha_rnd_init(1)))
+      if ((local_error= tbl->file->ha_rnd_init(0)))
       {
         err_table= tbl;
         goto err;
@@ -2433,8 +2435,7 @@ int multi_update::do_updates()
         if (table->default_field && (error= table->update_default_fields()))
           goto err2;
         if (table->vfield &&
-            update_virtual_fields(thd, table,
-                 (table->triggers ? VCOL_UPDATE_ALL : VCOL_UPDATE_FOR_WRITE)))
+            update_virtual_fields(thd, table, VCOL_UPDATE_FOR_WRITE))
           goto err2;
         if ((error= cur_table->view_check_option(thd, ignore)) !=
             VIEW_CHECK_OK)

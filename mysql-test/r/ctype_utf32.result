@@ -1662,6 +1662,36 @@ CHAR_LENGTH(TRIM(BOTH 0x61 FROM _utf32 0x00000061))
 SELECT CHAR_LENGTH(TRIM(BOTH 0x00 FROM _utf32 0x00000061));
 CHAR_LENGTH(TRIM(BOTH 0x00 FROM _utf32 0x00000061))
 1
+select hex(lower(cast(0xffff0000 as char character set utf32))) as c;
+c
+0000003F0000003F0000003F0000003F
+Warnings:
+Warning	1300	Invalid utf32 character string: '\xFF\xFF\x00\x00'
+#
+# MDEV-11685: sql_mode can't be set with non-ascii connection charset
+#
+SET character_set_connection=utf32;
+SET sql_mode='NO_ENGINE_SUBSTITUTION';
+SELECT @@sql_mode;
+@@sql_mode
+NO_ENGINE_SUBSTITUTION
+SET sql_mode=DEFAULT;
+SET NAMES utf8;
+#
+# MDEV-13530 VARBINARY doesn't convert to to BLOB for sizes 65533, 65534 and 65535
+#
+CREATE TABLE t1 (c1 VARCHAR(16383) CHARACTER SET utf32);
+DESCRIBE t1;
+Field	Type	Null	Key	Default	Extra
+c1	varchar(16383)	YES		NULL	
+DROP TABLE t1;
+CREATE TABLE t1 (c1 VARCHAR(16384) CHARACTER SET utf32);
+Warnings:
+Note	1246	Converting column 'c1' from VARCHAR to TEXT
+DESCRIBE t1;
+Field	Type	Null	Key	Default	Extra
+c1	mediumtext	YES		NULL	
+DROP TABLE t1;
 #
 # End of 5.5 tests
 #
@@ -2207,6 +2237,29 @@ EXECUTE stmt USING @arg00;
 CONCAT(_utf32'a' COLLATE utf32_unicode_ci, ?)
 aÿ
 DEALLOCATE PREPARE stmt;
+SET NAMEs utf8, character_set_connection=utf32;
+#
+# MDEV-13118 Wrong results with LOWER and UPPER and subquery
+#
+SET @save_optimizer_switch=@@optimizer_switch;
+SET optimizer_switch=_latin1'derived_merge=on';
+CREATE TABLE t1 AS SELECT REPEAT('a', 10) AS t LIMIT 0;
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `t` varchar(10) CHARACTER SET utf32 NOT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+INSERT INTO t1 VALUES ('abcdefghi'),('ABCDEFGHI');
+SELECT CONCAT(t2,'-',t2) c2 FROM (SELECT LOWER(t) t2 FROM t1) sub;
+c2
+abcdefghi-abcdefghi
+abcdefghi-abcdefghi
+SELECT CONCAT(t2,'-',t2) c2 FROM (SELECT UPPER(t) t2 FROM t1) sub;
+c2
+ABCDEFGHI-ABCDEFGHI
+ABCDEFGHI-ABCDEFGHI
+DROP TABLE t1;
+SET optimizer_switch=@save_optimizer_switch;
 #
 # End of 10.0 tests
 #

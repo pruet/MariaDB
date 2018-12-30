@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /* Describe, check and repair of MARIA tables */
 
@@ -891,8 +891,7 @@ static int chk_index(HA_CHECK *param, MARIA_HA *info, MARIA_KEYDEF *keyinfo,
   if (level > param->max_level)
     param->max_level=level;
 
-  if (_ma_get_keynr(share, anc_page->buff) !=
-      (uint) (keyinfo - share->keyinfo))
+  if (_ma_get_keynr(share, anc_page->buff) != keyinfo->key_nr)
     _ma_check_print_error(param, "Page at %s is not marked for index %u",
                           llstr(anc_page->pos, llbuff),
                           (uint) (keyinfo - share->keyinfo));
@@ -916,7 +915,7 @@ static int chk_index(HA_CHECK *param, MARIA_HA *info, MARIA_KEYDEF *keyinfo,
   info->last_key.keyinfo= tmp_key.keyinfo= keyinfo;
   info->lastinx= ~0;                            /* Safety */
   tmp_key.data= tmp_key_buff;
-  for ( ;; )
+  for ( ;; _ma_copy_key(&info->last_key, &tmp_key))
   {
     if (nod_flag)
     {
@@ -998,7 +997,6 @@ static int chk_index(HA_CHECK *param, MARIA_HA *info, MARIA_KEYDEF *keyinfo,
                                             tmp_key.data);
       }
     }
-    _ma_copy_key(&info->last_key, &tmp_key);
     (*key_checksum)+= maria_byte_checksum(tmp_key.data, tmp_key.data_length);
     record= _ma_row_pos_from_key(&tmp_key);
 
@@ -2837,7 +2835,7 @@ int maria_repair(HA_CHECK *param, register MARIA_HA *info,
                                 (param->testflag & T_BACKUP_DATA ?
                                  MYF(MY_REDEL_MAKE_BACKUP): MYF(0)) |
                                 sync_dir) ||
-        _ma_open_datafile(info, share, NullS, -1))
+        _ma_open_datafile(info, share))
     {
       goto err;
     }
@@ -3998,7 +3996,7 @@ int maria_repair_by_sort(HA_CHECK *param, register MARIA_HA *info,
                                   (param->testflag & T_BACKUP_DATA ?
                                    MYF(MY_REDEL_MAKE_BACKUP): MYF(0)) |
                                   sync_dir) ||
-          _ma_open_datafile(info, share, NullS, -1))
+          _ma_open_datafile(info, share))
       {
         _ma_check_print_error(param, "Couldn't change to new data file");
         goto err;
@@ -4220,6 +4218,7 @@ int maria_repair_parallel(HA_CHECK *param, register MARIA_HA *info,
     printf("Data records: %s\n", llstr(start_records, llbuff));
   }
 
+  bzero(&new_data_cache, sizeof(new_data_cache));
   if (initialize_variables_for_repair(param, &sort_info, &tmp_sort_param, info,
                                       rep_quick, &backup_share))
     goto err;
@@ -4259,6 +4258,8 @@ int maria_repair_parallel(HA_CHECK *param, register MARIA_HA *info,
     }
   */
   DBUG_PRINT("info", ("is quick repair: %d", (int) rep_quick));
+  if (!rep_quick)
+    my_b_clear(&new_data_cache);
 
   /* Initialize pthread structures before goto err. */
   mysql_mutex_init(key_SORT_INFO_mutex, &sort_info.mutex, MY_MUTEX_INIT_FAST);
@@ -4624,7 +4625,7 @@ err:
     already or they were not yet started (if the error happend before
     creating the threads).
   */
-  if (!rep_quick)
+  if (!rep_quick && my_b_inited(&new_data_cache))
     end_io_cache(&new_data_cache);
   if (!got_error)
   {
@@ -4638,7 +4639,7 @@ err:
                                   MYF((param->testflag & T_BACKUP_DATA ?
                                        MY_REDEL_MAKE_BACKUP : 0) |
                                       sync_dir)) ||
-	  _ma_open_datafile(info,share, NullS, -1))
+	  _ma_open_datafile(info,share))
 	got_error=1;
     }
   }
@@ -5747,8 +5748,7 @@ static int sort_insert_key(MARIA_SORT_PARAM *sort_param,
     a_length= share->keypage_header + nod_flag;
     key_block->end_pos= anc_buff + share->keypage_header;
     bzero(anc_buff, share->keypage_header);
-    _ma_store_keynr(share, anc_buff, (uint) (sort_param->keyinfo -
-                                            share->keyinfo));
+    _ma_store_keynr(share, anc_buff, sort_param->keyinfo->key_nr);
     lastkey=0;					/* No previous key in block */
   }
   else
@@ -6103,7 +6103,7 @@ int maria_recreate_table(HA_CHECK *param, MARIA_HA **org_info, char *filename)
   create_info.data_file_length=file_length;
   create_info.auto_increment=share.state.auto_increment;
   create_info.language = (param->language ? param->language :
-			  share.state.header.language);
+			  share.base.language);
   create_info.key_file_length=  status_info.key_file_length;
   create_info.org_data_file_type= ((enum data_file_type)
                                    share.state.header.org_data_file_type);

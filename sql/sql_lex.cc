@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2014, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2016, MariaDB
+   Copyright (c) 2009, 2018, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -469,7 +469,7 @@ int my_wc_mb_utf8_with_escape(CHARSET_INFO *cs, my_wc_t escape, my_wc_t wc,
   DBUG_ASSERT(escape > 0);
   if (str + 1 >= end)
     return MY_CS_TOOSMALL2;  // Not enough space, need at least two bytes.
-  *str= escape;
+  *str= (uchar)escape;
   int cnvres= my_charset_utf8_handler.wc_mb(cs, wc, str + 1, end);
   if (cnvres > 0)
     return cnvres + 1;       // The character was normally put
@@ -657,9 +657,11 @@ void lex_start(THD *thd)
 {
   LEX *lex= thd->lex;
   DBUG_ENTER("lex_start");
+  DBUG_PRINT("info", ("Lex %p", thd->lex));
 
   lex->thd= lex->unit.thd= thd;
-  
+
+  lex->stmt_lex= lex; // default, should be rewritten for VIEWs And CTEs
   DBUG_ASSERT(!lex->explain);
 
   lex->context_stack.empty();
@@ -668,6 +670,7 @@ void lex_start(THD *thd)
   /* 'parent_lex' is used in init_query() so it must be before it. */
   lex->select_lex.parent_lex= lex;
   lex->select_lex.init_query();
+  lex->current_select_number= 1;
   lex->value_list.empty();
   lex->update_list.empty();
   lex->set_var_list.empty();
@@ -800,6 +803,7 @@ void lex_end_stage2(LEX *lex)
 
   /* Reset LEX_MASTER_INFO */
   lex->mi.reset(lex->sql_command == SQLCOM_CHANGE_MASTER);
+  delete_dynamic(&lex->delete_gtid_domain);
 
   DBUG_VOID_RETURN;
 }
@@ -1315,7 +1319,7 @@ static int lex_one_token(YYSTYPE *yylval, THD *thd)
       state= (enum my_lex_states) state_map[c];
       break;
     case MY_LEX_ESCAPE:
-      if (lip->yyGet() == 'N')
+      if (!lip->eof() && lip->yyGet() == 'N')
       {					// Allow \N as shortcut for NULL
 	yylval->lex_str.str=(char*) "\\N";
 	yylval->lex_str.length=2;
@@ -1395,12 +1399,14 @@ static int lex_one_token(YYSTYPE *yylval, THD *thd)
 	state= MY_LEX_HEX_NUMBER;
 	break;
       }
+      /* fall through */
     case MY_LEX_IDENT_OR_BIN:
       if (lip->yyPeek() == '\'')
       {                                 // Found b'bin-number'
         state= MY_LEX_BIN_NUMBER;
         break;
       }
+      /* fall through */
     case MY_LEX_IDENT:
       const char *start;
 #if defined(USE_MB) && defined(USE_MB_IDENT)
@@ -1697,32 +1703,35 @@ static int lex_one_token(YYSTYPE *yylval, THD *thd)
       return (BIN_NUM);
 
     case MY_LEX_CMP_OP:			// Incomplete comparison operator
+      lip->next_state= MY_LEX_START;	// Allow signed numbers
       if (state_map[(uchar) lip->yyPeek()] == MY_LEX_CMP_OP ||
           state_map[(uchar) lip->yyPeek()] == MY_LEX_LONG_CMP_OP)
-        lip->yySkip();
-      if ((tokval = find_keyword(lip, lip->yyLength() + 1, 0)))
       {
-	lip->next_state= MY_LEX_START;	// Allow signed numbers
-	return(tokval);
+        lip->yySkip();
+        if ((tokval= find_keyword(lip, 2, 0)))
+          return(tokval);
+        lip->yyUnget();
       }
-      state = MY_LEX_CHAR;		// Something fishy found
-      break;
+      return(c);
 
     case MY_LEX_LONG_CMP_OP:		// Incomplete comparison operator
+      lip->next_state= MY_LEX_START;
       if (state_map[(uchar) lip->yyPeek()] == MY_LEX_CMP_OP ||
           state_map[(uchar) lip->yyPeek()] == MY_LEX_LONG_CMP_OP)
       {
         lip->yySkip();
         if (state_map[(uchar) lip->yyPeek()] == MY_LEX_CMP_OP)
+        {
           lip->yySkip();
+          if ((tokval= find_keyword(lip, 3, 0)))
+            return(tokval);
+          lip->yyUnget();
+        }
+        if ((tokval= find_keyword(lip, 2, 0)))
+          return(tokval);
+        lip->yyUnget();
       }
-      if ((tokval = find_keyword(lip, lip->yyLength() + 1, 0)))
-      {
-	lip->next_state= MY_LEX_START;	// Found long op
-	return(tokval);
-      }
-      state = MY_LEX_CHAR;		// Something fishy found
-      break;
+      return(c);
 
     case MY_LEX_BOOL:
       if (c != lip->yyPeek())
@@ -1742,6 +1751,7 @@ static int lex_one_token(YYSTYPE *yylval, THD *thd)
 	break;
       }
       /* " used for strings */
+      /* fall through */
     case MY_LEX_STRING:			// Incomplete text string
     {
       uint sep;
@@ -2089,6 +2099,7 @@ void st_select_lex::init_query()
   leaf_tables_prep.empty();
   leaf_tables.empty();
   item_list.empty();
+  min_max_opt_list.empty();
   join= 0;
   having= prep_having= where= prep_where= 0;
   olap= UNSPECIFIED_OLAP_TYPE;
@@ -2166,6 +2177,7 @@ void st_select_lex::init_select()
   m_agg_func_used= false;
   name_visibility_map= 0;
   join= 0;
+  lock_type= TL_READ_DEFAULT;
 }
 
 /*
@@ -2870,6 +2882,10 @@ LEX::LEX()
                       INITIAL_LEX_PLUGIN_LIST_SIZE, 0);
   reset_query_tables_list(TRUE);
   mi.init();
+  init_dynamic_array2(&delete_gtid_domain, sizeof(uint32),
+                      gtid_domain_static_buffer,
+                      initial_gtid_domain_buffer_size,
+                      initial_gtid_domain_buffer_size, 0);
 }
 
 
@@ -3375,6 +3391,9 @@ void LEX::first_lists_tables_same()
     if (query_tables_last == &first_table->next_global)
       query_tables_last= first_table->prev_global;
 
+    if (query_tables_own_last == &first_table->next_global)
+      query_tables_own_last= first_table->prev_global;
+
     if ((next= *first_table->prev_global= first_table->next_global))
       next->prev_global= first_table->prev_global;
     /* include in new place */
@@ -3700,12 +3719,28 @@ bool st_select_lex::add_index_hint (THD *thd, char *str, uint length)
 
 bool st_select_lex::optimize_unflattened_subqueries(bool const_only)
 {
-  for (SELECT_LEX_UNIT *un= first_inner_unit(); un; un= un->next_unit())
+  SELECT_LEX_UNIT *next_unit= NULL;
+  for (SELECT_LEX_UNIT *un= first_inner_unit();
+       un;
+       un= next_unit ? next_unit : un->next_unit())
   {
     Item_subselect *subquery_predicate= un->item;
-    
+    next_unit= NULL;
+
     if (subquery_predicate)
     {
+      if (!subquery_predicate->fixed)
+      {
+	/*
+	 This subquery was excluded as part of some expression so it is
+	 invisible from all prepared expression.
+       */
+	next_unit= un->next_unit();
+	un->exclude_level();
+	if (next_unit)
+	  continue;
+	break;
+      }
       if (subquery_predicate->substype() == Item_subselect::IN_SUBS)
       {
         Item_in_subselect *in_subs= (Item_in_subselect*) subquery_predicate;
@@ -4486,6 +4521,12 @@ bool st_select_lex::is_merged_child_of(st_select_lex *ancestor)
     {
       continue;
     }
+
+    if (sl->master_unit()->derived &&
+      sl->master_unit()->derived->is_merged_derived())
+    {
+      continue;
+    }
     all_merged= FALSE;
     break;
   }
@@ -4828,4 +4869,3 @@ void binlog_unsafe_map_init()
      BINLOG_DIRECT_OFF & TRX_CACHE_NOT_EMPTY);
 }
 #endif
-

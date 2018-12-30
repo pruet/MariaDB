@@ -328,6 +328,7 @@ bool tc_release_table(TABLE *table)
 {
   DBUG_ASSERT(table->in_use);
   DBUG_ASSERT(table->file);
+  DBUG_ASSERT(!table->pos_in_locked_tables);
 
   if (table->needs_reopen() || tc_records() > tc_size)
   {
@@ -778,6 +779,8 @@ void tdc_release_share(TABLE_SHARE *share)
   mysql_mutex_lock(&share->tdc->LOCK_table_share);
   if (--share->tdc->ref_count)
   {
+    if (!share->is_view)
+      mysql_cond_broadcast(&share->tdc->COND_release);
     mysql_mutex_unlock(&share->tdc->LOCK_table_share);
     mysql_mutex_unlock(&LOCK_unused_shares);
     DBUG_VOID_RETURN;

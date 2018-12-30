@@ -55,7 +55,6 @@ class Arg_comparator: public Sql_alloc
   Arg_comparator *comparators;   // used only for compare_row()
   double precision;
   /* Fields used in DATE/DATETIME comparison. */
-  THD *thd;
   Item *a_cache, *b_cache;         // Cached values of a and b items
                                    //   when one of arguments is NULL.
   int set_compare_func(Item_func_or_sum *owner, Item_result type);
@@ -70,12 +69,12 @@ public:
 
   Arg_comparator(): m_compare_type(STRING_RESULT),
     m_compare_collation(&my_charset_bin),
-    set_null(TRUE), comparators(0), thd(0),
+    set_null(TRUE), comparators(0),
     a_cache(0), b_cache(0) {};
   Arg_comparator(Item **a1, Item **a2): a(a1), b(a2),
     m_compare_type(STRING_RESULT),
     m_compare_collation(&my_charset_bin),
-    set_null(TRUE), comparators(0), thd(0),
+    set_null(TRUE), comparators(0),
     a_cache(0), b_cache(0) {};
 
 public:
@@ -331,6 +330,7 @@ public:
   bool is_null();
   longlong val_int();
   void cleanup();
+  enum Functype functype() const   { return IN_OPTIMIZER_FUNC; }
   const char *func_name() const { return "<in_optimizer>"; }
   Item_cache **get_cache() { return &cache; }
   void keep_top_level_cache();
@@ -343,9 +343,15 @@ public:
   virtual void get_cache_parameters(List<Item> &parameters);
   bool is_top_level_item();
   bool eval_not_null_tables(uchar *opt_arg);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   bool invisible_mode();
   void reset_cache() { cache= NULL; }
+  virtual void print(String *str, enum_query_type query_type);
+  void restore_first_argument();
+  Item* get_wrapped_in_subselect_item()
+  {
+    return args[1];
+  }
 };
 
 
@@ -825,7 +831,7 @@ public:
   void fix_length_and_dec();
   virtual void print(String *str, enum_query_type query_type);
   bool eval_not_null_tables(uchar *opt_arg);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   bool count_sargable_conds(uchar *arg);
   void add_key_fields(JOIN *join, KEY_FIELD **key_fields,
                       uint *and_level, table_map usable_tables,
@@ -840,6 +846,11 @@ public:
                                       cond);
     return this;
   }
+
+  longlong val_int_cmp_string();
+  longlong val_int_cmp_int();
+  longlong val_int_cmp_real();
+  longlong val_int_cmp_decimal();
 };
 
 
@@ -879,6 +890,7 @@ public:
   {
     allowed_arg_cols= 0;    // Fetch this value from first argument
   }
+  bool fix_fields(THD *, Item **);
   longlong val_int();
   void fix_length_and_dec();
   const char *func_name() const { return "interval"; }
@@ -951,7 +963,9 @@ public:
     maybe_null= args[1]->maybe_null;
   }
   const char *func_name() const { return "ifnull"; }
-  Field *tmp_table_field(TABLE *table);
+  Field *create_field_for_create_select(TABLE *table)
+  { return tmp_table_field_from_field_type(table, false, false); }
+
   table_map not_null_tables() const { return 0; }
   uint decimal_precision() const
   {
@@ -979,7 +993,7 @@ public:
   }
   const char *func_name() const { return "if"; }
   bool eval_not_null_tables(uchar *opt_arg);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
 private:
   void cache_type_info(Item *source);
 };
@@ -1007,6 +1021,7 @@ class Item_func_nullif :public Item_func_hybrid_field_type
   */
   Item_cache *m_cache;
   int compare();
+  Item *m_arg0;
 public:
   /*
     Here we pass three arguments to the parent constructor, as NULLIF
@@ -1018,8 +1033,14 @@ public:
   */
   Item_func_nullif(THD *thd, Item *a, Item *b):
     Item_func_hybrid_field_type(thd, a, b, a),
-    m_cache(NULL)
+    m_cache(NULL),
+    m_arg0(NULL)
   { arg_count--; }
+  void cleanup()
+  {
+    Item_func_hybrid_field_type::cleanup();
+    arg_count= 2; // See the comment to the constructor
+  }
   bool date_op(MYSQL_TIME *ltime, uint fuzzydate);
   double real_op();
   longlong int_op();
@@ -1185,15 +1206,13 @@ public:
 class in_datetime :public in_longlong
 {
 public:
-  THD *thd;
   /* An item used to issue warnings. */
   Item *warn_item;
   /* Cache for the left item. */
   Item *lval_cache;
 
   in_datetime(Item *warn_item_arg, uint elements)
-    :in_longlong(elements), thd(current_thd), warn_item(warn_item_arg),
-     lval_cache(0) {};
+    :in_longlong(elements), warn_item(warn_item_arg), lval_cache(0) {};
   void set(uint pos,Item *item);
   uchar *get_value(Item *item);
   Item *create_item(THD *thd);
@@ -1303,6 +1322,13 @@ public:
   {
     value_res= item->val_str(&value);
     m_null_value= item->null_value;
+    // Make sure to cache the result String inside "value"
+    if (value_res && value_res != &value)
+    {
+      if (value.copy(*value_res))
+        value.set("", 0, item->collation.collation);
+      value_res= &value;
+    }
   }
   int cmp(Item *arg)
   {
@@ -1363,14 +1389,13 @@ class cmp_item_datetime : public cmp_item_scalar
 {
   longlong value;
 public:
-  THD *thd;
   /* Item used for issuing warnings. */
   Item *warn_item;
   /* Cache for the left item. */
   Item *lval_cache;
 
   cmp_item_datetime(Item *warn_item_arg)
-    :thd(current_thd), warn_item(warn_item_arg), lval_cache(0) {}
+    : warn_item(warn_item_arg), lval_cache(0) {}
   void store_value(Item *item);
   int cmp(Item *arg);
   int compare(cmp_item *ci);
@@ -1590,7 +1615,7 @@ public:
   enum Functype functype() const { return IN_FUNC; }
   const char *func_name() const { return " IN "; }
   bool eval_not_null_tables(uchar *opt_arg);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   bool count_sargable_conds(uchar *arg);
 };
 
@@ -1667,10 +1692,26 @@ public:
     update_used_tables();
   }
   const char *func_name() const { return "isnull"; }
+
+  bool arg_is_datetime_notnull_field()
+  {
+    Item **args= arguments();
+    if (args[0]->real_item()->type() == Item::FIELD_ITEM)
+    {
+      Field *field=((Item_field*) args[0]->real_item())->field;
+
+      if (((field->type() == MYSQL_TYPE_DATE) ||
+          (field->type() == MYSQL_TYPE_DATETIME)) &&
+          (field->flags & NOT_NULL_FLAG))
+        return true;
+    }
+    return false;
+  }
+
   /* Optimize case of not_null_column IS NULL */
   virtual void update_used_tables()
   {
-    if (!args[0]->maybe_null)
+    if (!args[0]->maybe_null && !arg_is_datetime_notnull_field())
     {
       used_tables_cache= 0;			/* is always false */
       const_item_cache= 1;
@@ -1684,6 +1725,7 @@ public:
   }
   COND *remove_eq_conds(THD *thd, Item::cond_result *cond_value,
                         bool top_level);
+  virtual void print(String *str, enum_query_type query_type);
   table_map not_null_tables() const { return 0; }
   Item *neg_transformer(THD *thd);
 };
@@ -1821,12 +1863,7 @@ public:
   }
   void add_key_fields(JOIN *join, KEY_FIELD **key_fields, uint *and_level,
                       table_map usable_tables, SARGABLE_PARAM **sargables);
-  SEL_TREE *get_mm_tree(RANGE_OPT_PARAM *param, Item **cond_ptr)
-  {
-    return with_sargable_pattern() ?
-           Item_bool_func2::get_mm_tree(param, cond_ptr) :
-           Item_func::get_mm_tree(param, cond_ptr);
-  }
+  SEL_TREE *get_mm_tree(RANGE_OPT_PARAM *param, Item **cond_ptr);
   Item* propagate_equal_fields(THD *thd, const Context &ctx, COND_EQUAL *cond)
   {
     /*
@@ -1876,6 +1913,7 @@ public:
 class Regexp_processor_pcre
 {
   pcre *m_pcre;
+  pcre_extra m_pcre_extra;
   bool m_conversion_is_needed;
   bool m_is_const;
   int m_library_flags;
@@ -1884,7 +1922,6 @@ class Regexp_processor_pcre
   String m_prev_pattern;
   int m_pcre_exec_rc;
   int m_SubStrVec[30];
-  uint m_subpatterns_needed;
   void pcre_exec_warn(int rc) const;
   int pcre_exec_with_warn(const pcre *code, const pcre_extra *extra,
                           const char *subject, int length, int startoffset,
@@ -1898,11 +1935,14 @@ public:
     m_pcre(NULL), m_conversion_is_needed(true), m_is_const(0),
     m_library_flags(0),
     m_data_charset(&my_charset_utf8_general_ci),
-    m_library_charset(&my_charset_utf8_general_ci),
-    m_subpatterns_needed(0)
-  {}
+    m_library_charset(&my_charset_utf8_general_ci)
+  {
+    m_pcre_extra.flags= PCRE_EXTRA_MATCH_LIMIT_RECURSION;
+    m_pcre_extra.match_limit_recursion= 100L;
+  }
   int default_regex_flags();
-  void init(CHARSET_INFO *data_charset, int extra_flags, uint nsubpatterns_arg)
+  void set_recursion_limit(THD *);
+  void init(CHARSET_INFO *data_charset, int extra_flags)
   {
     m_library_flags= default_regex_flags() | extra_flags |
                     (data_charset != &my_charset_bin ?
@@ -1916,7 +1956,6 @@ public:
 
     m_conversion_is_needed= (data_charset != &my_charset_bin) &&
                             !my_charset_same(data_charset, m_library_charset);
-    m_subpatterns_needed= nsubpatterns_arg;
   }
   void fix_owner(Item_func *owner, Item *subject_arg, Item *pattern_arg);
   bool compile(String *pattern, bool send_error);
@@ -1973,6 +2012,7 @@ public:
     DBUG_VOID_RETURN;
   }
   longlong val_int();
+  bool fix_fields(THD *thd, Item **ref);
   void fix_length_and_dec();
   const char *func_name() const { return "regexp"; }
 
@@ -2000,6 +2040,7 @@ public:
     DBUG_VOID_RETURN;
   }
   longlong val_int();
+  bool fix_fields(THD *thd, Item **ref);
   void fix_length_and_dec();
   const char *func_name() const { return "regexp_instr"; }
 };
@@ -2043,7 +2084,7 @@ public:
     list.append(nlist);
   }
   bool fix_fields(THD *, Item **ref);
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
 
   enum Type type() const { return COND_ITEM; }
   List<Item>* argument_list() { return &list; }
@@ -2235,6 +2276,11 @@ public:
   void sort(Item_field_cmpfunc compare, void *arg);
   void fix_length_and_dec();
   bool fix_fields(THD *thd, Item **ref);
+  void cleanup()
+  {
+    delete eval_item;
+    eval_item= NULL;
+  }
   void update_used_tables();
   COND *build_equal_items(THD *thd, COND_EQUAL *inherited,
                           bool link_item_fields,
@@ -2559,4 +2605,3 @@ extern Ge_creator ge_creator;
 extern Le_creator le_creator;
 
 #endif /* ITEM_CMPFUNC_INCLUDED */
-

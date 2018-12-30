@@ -11,7 +11,7 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #ifndef UNICODE
 #define UNICODE
@@ -180,7 +180,7 @@ extern "C" UINT __stdcall CheckDirectoryEmpty(MSIHANDLE hInstall,
      empty= true;
      for(;;)
      {
-       if (wcscmp(data.cFileName, L".") || wcscmp(data.cFileName, L".."))
+       if (wcscmp(data.cFileName, L".") &&  wcscmp(data.cFileName, L".."))
        {
          empty= false;
          break;
@@ -767,6 +767,49 @@ extern "C" UINT __stdcall PresetDatabaseProperties(MSIHANDLE hInstall)
 LExit:
   return WcaFinalize(er);
 }
+
+static BOOL FindErrorLog(const wchar_t *dir, wchar_t * ErrorLogFile, size_t ErrorLogLen)
+{
+  WIN32_FIND_DATA FindFileData;
+  HANDLE hFind;
+  wchar_t name[MAX_PATH];
+  wcsncpy_s(name,dir, MAX_PATH);
+  wcsncat_s(name,L"\\*.err", MAX_PATH);
+  hFind = FindFirstFileW(name,&FindFileData);
+  if (hFind != INVALID_HANDLE_VALUE)
+  {
+    _snwprintf(ErrorLogFile, ErrorLogLen,
+      L"%s\\%s",dir, FindFileData.cFileName);
+    FindClose(hFind);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static void DumpErrorLog(const wchar_t *dir)
+{
+  wchar_t filepath[MAX_PATH];
+  if (!FindErrorLog(dir, filepath, MAX_PATH))
+    return;
+  FILE *f= _wfopen(filepath, L"r");
+  if (!f)
+    return;
+  char buf[2048];
+  WcaLog(LOGMSG_STANDARD,"=== dumping error log %S === ",filepath);
+  while (fgets(buf, sizeof(buf), f))
+  {
+     /* Strip off EOL chars. */
+     size_t len = strlen(buf);
+     if (len > 0 && buf[len-1] == '\n')
+       buf[--len]= 0;
+     if (len > 0 && buf[len-1] == '\r')
+       buf[--len]= 0;
+     WcaLog(LOGMSG_STANDARD,"%s",buf);
+  }
+  fclose(f);
+  WcaLog(LOGMSG_STANDARD,"=== end of error log ===");
+}
+
 /* Remove service and data directory created by CreateDatabase operation */
 extern "C" UINT __stdcall CreateDatabaseRollback(MSIHANDLE hInstall) 
 {
@@ -774,7 +817,6 @@ extern "C" UINT __stdcall CreateDatabaseRollback(MSIHANDLE hInstall)
   UINT er = ERROR_SUCCESS;
   wchar_t* service= 0;
   wchar_t* dir= 0;
-
   hr = WcaInitialize(hInstall, __FUNCTION__);
   ExitOnFailure(hr, "Failed to initialize");
   WcaLog(LOGMSG_STANDARD, "Initialized.");
@@ -804,6 +846,7 @@ extern "C" UINT __stdcall CreateDatabaseRollback(MSIHANDLE hInstall)
   }
   if(dir)
   {
+    DumpErrorLog(dir);
     ExecRemoveDataDirectory(dir);
   }
 LExit:
@@ -886,11 +929,11 @@ extern "C" UINT __stdcall CheckServiceUpgrades(MSIHANDLE hInstall)
       (QUERY_SERVICE_CONFIGW*)(void *)config_buffer;
     DWORD needed;
     BOOL ok= QueryServiceConfigW(service, config,sizeof(config_buffer),
-      &needed);
+      &needed) && (config->dwStartType != SERVICE_DISABLED);
     CloseServiceHandle(service);
     if (ok)
     {
-        mysqld_service_properties props;
+       mysqld_service_properties props;
        if (get_mysql_service_properties(config->lpBinaryPathName, &props))
                   continue;
         /* 

@@ -7972,6 +7972,56 @@ SELECT _latin1 0x7E, _latin1 X'7E', _latin1 B'01111110';
 _latin1 0x7E	_latin1 X'7E'	_latin1 B'01111110'
 ~	~	~
 #
+# MDEV-9886 Illegal mix of collations with a view comparing a field to a binary constant
+#
+SET NAMES latin1;
+CREATE TABLE t1 (a TEXT CHARACTER SET latin1);
+INSERT INTO t1 VALUES (0xC0);
+SELECT a<>0xEE5D AS a FROM t1;
+a
+1
+CREATE VIEW v1 AS SELECT a<>0xC0 AS a FROM t1;
+SHOW CREATE VIEW v1;
+View	Create View	character_set_client	collation_connection
+v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v1` AS select (`t1`.`a` <> 0xc0) AS `a` from `t1`	latin1	latin1_swedish_ci
+SELECT * FROM v1;
+a
+0
+DROP VIEW v1;
+DROP TABLE t1;
+SET NAMES latin1;
+#
+# MDEV-13118 Wrong results with LOWER and UPPER and subquery
+#
+SET @save_optimizer_switch=@@optimizer_switch;
+SET optimizer_switch=_latin1'derived_merge=on';
+CREATE TABLE t1 AS SELECT REPEAT('a', 10) AS t LIMIT 0;
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `t` varchar(10) NOT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=latin1
+INSERT INTO t1 VALUES ('abcdefghi'),('ABCDEFGHI');
+SELECT CONCAT(t2,'-',t2) c2 FROM (SELECT LOWER(t) t2 FROM t1) sub;
+c2
+abcdefghi-abcdefghi
+abcdefghi-abcdefghi
+SELECT CONCAT(t2,'-',t2) c2 FROM (SELECT UPPER(t) t2 FROM t1) sub;
+c2
+ABCDEFGHI-ABCDEFGHI
+ABCDEFGHI-ABCDEFGHI
+DROP TABLE t1;
+SET optimizer_switch=@save_optimizer_switch;
+#
+# MDEV-17298 ASAN unknown-crash / READ of size 1 in my_strntoul_8bit upon INSERT .. SELECT
+#
+SET NAMES latin1;
+CREATE TABLE t1 (a CHAR);
+CREATE TABLE t2 (b ENUM('foo','bar'));
+INSERT INTO t1 VALUES ('1');
+INSERT INTO t2 SELECT * FROM t1;
+DROP TABLE t1, t2;
+#
 # End of 10.0 tests
 #
 #
@@ -8189,6 +8239,19 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 Warnings:
 Note	1003	select `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b`,`test`.`t1`.`c` AS `c`,`test`.`t1`.`d` AS `d` from `test`.`t1` where ((coalesce(`test`.`t1`.`c`,0) = '3 ') and (coalesce(`test`.`t1`.`d`,0) = '3 '))
 DROP TABLE t1;
+#
+# MDEV-15005 ASAN: stack-buffer-overflow in my_strnncollsp_simple
+#
+SET NAMES latin1;
+SELECT CONVERT(1, CHAR) IN ('100', 10, '101');
+CONVERT(1, CHAR) IN ('100', 10, '101')
+0
+SELECT CONVERT(1, CHAR) IN ('100', 10, '1');
+CONVERT(1, CHAR) IN ('100', 10, '1')
+1
+SELECT CONVERT(1, CHAR) IN ('100', '10', '1');
+CONVERT(1, CHAR) IN ('100', '10', '1')
+1
 #
 # End of 10.1 tests
 #

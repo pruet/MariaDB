@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /* Describe, check and repair of MARIA tables */
 
@@ -895,7 +895,7 @@ static void get_options(register int *argc,register char ***argv)
 {
   int ho_error;
 
-  load_defaults("my", load_default_groups, argc, argv);
+  load_defaults_or_exit("my", load_default_groups, argc, argv);
   default_argv= *argv;
   check_param.testflag= T_UPDATE_STATE;
   if (isatty(fileno(stdout)))
@@ -1120,7 +1120,7 @@ static int maria_chk(HA_CHECK *param, char *filename)
        maria_test_if_almost_full(info) ||
        info->s->state.header.file_version[3] != maria_file_magic[3] ||
        (set_collation &&
-        set_collation->number != share->state.header.language)))
+        set_collation->number != share->base.language)))
   {
     if (set_collation)
       param->language= set_collation->number;
@@ -1128,7 +1128,7 @@ static int maria_chk(HA_CHECK *param, char *filename)
     {
       fprintf(stderr, "Aria table '%s' is not fixed because of errors\n",
 	      filename);
-      return(-1);
+      DBUG_RETURN(-1);
     }
     recreate=1;
     if (!(param->testflag & T_REP_ANY))
@@ -1150,7 +1150,7 @@ static int maria_chk(HA_CHECK *param, char *filename)
     param->total_deleted+=info->state->del;
     descript(param, info, filename);
     maria_close(info);                          /* Should always succeed */
-    return(0);
+    DBUG_RETURN(0);
   }
 
   if (!stopwords_inited++)
@@ -1275,7 +1275,7 @@ static int maria_chk(HA_CHECK *param, char *filename)
         mysql_file_close(info->dfile.file, MYF(MY_WME)); /* Close new file */
         error|=maria_change_to_newfile(filename,MARIA_NAME_DEXT,DATA_TMP_EXT,
                                        0, MYF(0));
-        if (_ma_open_datafile(info,info->s, NullS, -1))
+        if (_ma_open_datafile(info, info->s))
           error=1;
         param->out_flag&= ~O_NEW_DATA; /* We are using new datafile */
         param->read_cache.file= info->dfile.file;
@@ -1507,8 +1507,8 @@ static void descript(HA_CHECK *param, register MARIA_HA *info, char *name)
   printf("Crashsafe:           %s\n",
          share->base.born_transactional ? "yes" : "no");
   printf("Character set:       %s (%d)\n",
-	 get_charset_name(share->state.header.language),
-	 share->state.header.language);
+	 get_charset_name(share->base.language),
+         (int) share->base.language);
 
   if (param->testflag & T_VERBOSE)
   {

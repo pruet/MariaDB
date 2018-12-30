@@ -70,6 +70,8 @@ const char *toku_copyright_string = "Copyright (c) 2006, 2015, Percona and/or it
 #include "util/status.h"
 #include "util/context.h"
 
+#include <functional>
+
 // Include ydb_lib.cc here so that its constructor/destructor gets put into
 // ydb.o, to make sure they don't get erased at link time (when linking to
 // a static libtokufractaltree.a that was compiled with gcc).  See #5094.
@@ -183,9 +185,12 @@ toku_ydb_init(void) {
 // Do not clean up resources if env is panicked, just exit ugly
 void 
 toku_ydb_destroy(void) {
+    if (!ydb_layer_status.initialized)
+        return;
     if (env_is_panicked == 0) {
         toku_ft_layer_destroy();
     }
+    ydb_layer_status.initialized = false;
 }
 
 static int
@@ -225,7 +230,7 @@ env_fs_poller(void *arg) {
     int in_red;    // set true to prevent certain operations (returning ENOSPC)
 
     // get the fs sizes for the home dir
-    uint64_t avail_size, total_size;
+    uint64_t avail_size = 0, total_size = 0;
     r = toku_get_filesystem_sizes(env->i->dir, &avail_size, NULL, &total_size);
     assert(r == 0);
     in_yellow = (avail_size < 2 * env_fs_redzone(env, total_size));
@@ -623,32 +628,39 @@ ydb_recover_log_exists(DB_ENV *env) {
 }
 
 // Validate that all required files are present, no side effects.
-// Return 0 if all is well, ENOENT if some files are present but at least one is missing, 
+// Return 0 if all is well, ENOENT if some files are present but at least one is
+// missing,
 // other non-zero value if some other error occurs.
 // Set *valid_newenv if creating a new environment (all files missing).
-// (Note, if special dictionaries exist, then they were created transactionally and log should exist.)
-static int 
-validate_env(DB_ENV * env, bool * valid_newenv, bool need_rollback_cachefile) {
+// (Note, if special dictionaries exist, then they were created transactionally
+// and log should exist.)
+static int validate_env(DB_ENV *env,
+                        bool *valid_newenv,
+                        bool need_rollback_cachefile) {
     int r;
-    bool expect_newenv = false;        // set true if we expect to create a new env
+    bool expect_newenv = false;  // set true if we expect to create a new env
     toku_struct_stat buf;
-    char* path = NULL;
+    char *path = NULL;
 
     // Test for persistent environment
-    path = toku_construct_full_name(2, env->i->dir, toku_product_name_strings.environmentdictionary);
+    path = toku_construct_full_name(
+        2, env->i->dir, toku_product_name_strings.environmentdictionary);
     assert(path);
-    r = toku_stat(path, &buf);
+    r = toku_stat(path, &buf, toku_uninstrumented);
     if (r == 0) {
         expect_newenv = false;  // persistent info exists
-    }
-    else {
+    } else {
         int stat_errno = get_error_errno();
         if (stat_errno == ENOENT) {
             expect_newenv = true;
             r = 0;
-        }
-        else {
-            r = toku_ydb_do_error(env, stat_errno, "Unable to access persistent environment\n");
+        } else {
+            r = toku_ydb_do_error(
+                env,
+                stat_errno,
+                "Unable to access persistent environment [%s] in [%s]\n",
+                toku_product_name_strings.environmentdictionary,
+                env->i->dir);
             assert(r);
         }
     }
@@ -656,23 +668,40 @@ validate_env(DB_ENV * env, bool * valid_newenv, bool need_rollback_cachefile) {
 
     // Test for existence of rollback cachefile if it is expected to exist
     if (r == 0 && need_rollback_cachefile) {
-        path = toku_construct_full_name(2, env->i->dir, toku_product_name_strings.rollback_cachefile);
+        path = toku_construct_full_name(
+            2, env->i->dir, toku_product_name_strings.rollback_cachefile);
         assert(path);
-        r = toku_stat(path, &buf);
-        if (r == 0) {  
-            if (expect_newenv)  // rollback cachefile exists, but persistent env is missing
-                r = toku_ydb_do_error(env, ENOENT, "Persistent environment is missing\n");
-        }
-        else {
+        r = toku_stat(path, &buf, toku_uninstrumented);
+        if (r == 0) {
+            if (expect_newenv)  // rollback cachefile exists, but persistent env
+                                // is missing
+                r = toku_ydb_do_error(
+                    env,
+                    ENOENT,
+                    "Persistent environment is missing while looking for "
+                    "rollback cachefile [%s] in [%s]\n",
+                    toku_product_name_strings.rollback_cachefile, env->i->dir);
+        } else {
             int stat_errno = get_error_errno();
             if (stat_errno == ENOENT) {
-                if (!expect_newenv)  // rollback cachefile is missing but persistent env exists
-                    r = toku_ydb_do_error(env, ENOENT, "rollback cachefile directory is missing\n");
-                else 
-                    r = 0;           // both rollback cachefile and persistent env are missing
-            }
-            else {
-                r = toku_ydb_do_error(env, stat_errno, "Unable to access rollback cachefile\n");
+                if (!expect_newenv)  // rollback cachefile is missing but
+                                     // persistent env exists
+                    r = toku_ydb_do_error(
+                        env,
+                        ENOENT,
+                        "rollback cachefile [%s] is missing from [%s]\n",
+                        toku_product_name_strings.rollback_cachefile,
+                        env->i->dir);
+                else
+                    r = 0;  // both rollback cachefile and persistent env are
+                            // missing
+            } else {
+                r = toku_ydb_do_error(
+                    env,
+                    stat_errno,
+                    "Unable to access rollback cachefile [%s] in [%s]\n",
+                    toku_product_name_strings.rollback_cachefile,
+                    env->i->dir);
                 assert(r);
             }
         }
@@ -681,23 +710,41 @@ validate_env(DB_ENV * env, bool * valid_newenv, bool need_rollback_cachefile) {
 
     // Test for fileops directory
     if (r == 0) {
-        path = toku_construct_full_name(2, env->i->dir, toku_product_name_strings.fileopsdirectory);
+        path = toku_construct_full_name(
+            2, env->i->dir, toku_product_name_strings.fileopsdirectory);
         assert(path);
-        r = toku_stat(path, &buf);
-        if (r == 0) {  
-            if (expect_newenv)  // fileops directory exists, but persistent env is missing
-                r = toku_ydb_do_error(env, ENOENT, "Persistent environment is missing\n");
-        }
-        else {
+        r = toku_stat(path, &buf, toku_uninstrumented);
+        if (r == 0) {
+            if (expect_newenv)  // fileops directory exists, but persistent env
+                                // is missing
+                r = toku_ydb_do_error(
+                    env,
+                    ENOENT,
+                    "Persistent environment is missing while looking for "
+                    "fileops directory [%s] in [%s]\n",
+                    toku_product_name_strings.fileopsdirectory,
+                    env->i->dir);
+        } else {
             int stat_errno = get_error_errno();
             if (stat_errno == ENOENT) {
-                if (!expect_newenv)  // fileops directory is missing but persistent env exists
-                    r = toku_ydb_do_error(env, ENOENT, "Fileops directory is missing\n");
-                else 
-                    r = 0;           // both fileops directory and persistent env are missing
-            }
-            else {
-                r = toku_ydb_do_error(env, stat_errno, "Unable to access fileops directory\n");
+                if (!expect_newenv)  // fileops directory is missing but
+                                     // persistent env exists
+                    r = toku_ydb_do_error(
+                        env,
+                        ENOENT,
+                        "Fileops directory [%s] is missing from [%s]\n",
+                        toku_product_name_strings.fileopsdirectory,
+                        env->i->dir);
+                else
+                    r = 0;  // both fileops directory and persistent env are
+                            // missing
+            } else {
+                r = toku_ydb_do_error(
+                    env,
+                    stat_errno,
+                    "Unable to access fileops directory [%s] in [%s]\n",
+                    toku_product_name_strings.fileopsdirectory,
+                    env->i->dir);
                 assert(r);
             }
         }
@@ -709,16 +756,26 @@ validate_env(DB_ENV * env, bool * valid_newenv, bool need_rollback_cachefile) {
         // if using transactions, test for existence of log
         r = ydb_recover_log_exists(env);  // return 0 or ENOENT
         if (expect_newenv && (r != ENOENT))
-            r = toku_ydb_do_error(env, ENOENT, "Persistent environment information is missing (but log exists)\n");
+            r = toku_ydb_do_error(env,
+                                  ENOENT,
+                                  "Persistent environment information is "
+                                  "missing (but log exists) while looking for "
+                                  "recovery log files in [%s]\n",
+                                  env->i->real_log_dir);
         else if (!expect_newenv && r == ENOENT)
-            r = toku_ydb_do_error(env, ENOENT, "Recovery log is missing (persistent environment information is present)\n");
+            r = toku_ydb_do_error(env,
+                                  ENOENT,
+                                  "Recovery log is missing (persistent "
+                                  "environment information is present) while "
+                                  "looking for recovery log files in [%s]\n",
+                                  env->i->real_log_dir);
         else
             r = 0;
     }
 
     if (r == 0)
         *valid_newenv = expect_newenv;
-    else 
+    else
         *valid_newenv = false;
     return r;
 }
@@ -768,7 +825,7 @@ env_open(DB_ENV * env, const char *home, uint32_t flags, int mode) {
         goto cleanup;
     }
 
-    if (toku_os_huge_pages_enabled()) {
+    if (env->get_check_thp(env) && toku_os_huge_pages_enabled()) {
         r = toku_ydb_do_error(env, TOKUDB_HUGE_PAGES_ENABLED,
                               "Huge pages are enabled, disable them before continuing\n");
         goto cleanup;
@@ -802,10 +859,11 @@ env_open(DB_ENV * env, const char *home, uint32_t flags, int mode) {
 
     // Verify that the home exists.
     toku_struct_stat buf;
-    r = toku_stat(home, &buf);
+    r = toku_stat(home, &buf, toku_uninstrumented);
     if (r != 0) {
         int e = get_error_errno();
-        r = toku_ydb_do_error(env, e, "Error from toku_stat(\"%s\",...)\n", home);
+        r = toku_ydb_do_error(
+            env, e, "Error from toku_stat(\"%s\",...)\n", home);
         goto cleanup;
     }
     unused_flags &= ~DB_PRIVATE;
@@ -821,13 +879,22 @@ env_open(DB_ENV * env, const char *home, uint32_t flags, int mode) {
     env->i->open_flags = flags;
     env->i->open_mode = mode;
 
+    // Instrumentation probe start
+    TOKU_PROBE_START(toku_instr_probe_1);
+
     env_setup_real_data_dir(env);
     env_setup_real_log_dir(env);
     env_setup_real_tmp_dir(env);
 
-    r = toku_single_process_lock(env->i->dir, "environment", &env->i->envdir_lockfd);
-    if (r!=0) goto cleanup;
-    r = toku_single_process_lock(env->i->real_data_dir, "data", &env->i->datadir_lockfd);
+    // Instrumentation probe stop
+    toku_instr_probe_1->stop();
+
+    r = toku_single_process_lock(
+        env->i->dir, "environment", &env->i->envdir_lockfd);
+    if (r != 0)
+        goto cleanup;
+    r = toku_single_process_lock(
+        env->i->real_data_dir, "data", &env->i->datadir_lockfd);
     if (r!=0) goto cleanup;
     r = toku_single_process_lock(env->i->real_log_dir, "logs", &env->i->logdir_lockfd);
     if (r!=0) goto cleanup;
@@ -1232,6 +1299,187 @@ env_set_checkpoint_pool_threads(DB_ENV * env, uint32_t threads) {
     HANDLE_PANICKED_ENV(env);
     env->i->checkpoint_pool_threads = threads;
     return 0;
+}
+
+static void
+env_set_check_thp(DB_ENV * env, bool new_val) {
+    assert(env);
+    env->i->check_thp = new_val;
+}
+
+static bool
+env_get_check_thp(DB_ENV * env) {
+    assert(env);
+    return env->i->check_thp;
+}
+
+static bool env_set_dir_per_db(DB_ENV *env, bool new_val) {
+    HANDLE_PANICKED_ENV(env);
+    bool r = env->i->dir_per_db;
+    env->i->dir_per_db = new_val;
+    return r;
+}
+
+static bool env_get_dir_per_db(DB_ENV *env) {
+    HANDLE_PANICKED_ENV(env);
+    return env->i->dir_per_db;
+}
+
+static const char *env_get_data_dir(DB_ENV *env) {
+    return env->i->real_data_dir;
+}
+
+static int env_dirtool_attach(DB_ENV *env,
+                              DB_TXN *txn,
+                              const char *dname,
+                              const char *iname) {
+    int r;
+    DBT dname_dbt;
+    DBT iname_dbt;
+
+    HANDLE_PANICKED_ENV(env);
+    if (!env_opened(env)) {
+        return EINVAL;
+    }
+    HANDLE_READ_ONLY_TXN(txn);
+    toku_fill_dbt(&dname_dbt, dname, strlen(dname) + 1);
+    toku_fill_dbt(&iname_dbt, iname, strlen(iname) + 1);
+
+    r = toku_db_put(env->i->directory,
+                    txn,
+                    &dname_dbt,
+                    &iname_dbt,
+                    0,
+                    true);
+        return r;
+}
+
+static int env_dirtool_detach(DB_ENV *env,
+                              DB_TXN *txn,
+                              const char *dname) {
+    int r;
+    DBT dname_dbt;
+    DBT old_iname_dbt;
+
+    HANDLE_PANICKED_ENV(env);
+    if (!env_opened(env)) {
+        return EINVAL;
+    }
+    HANDLE_READ_ONLY_TXN(txn);
+
+    toku_fill_dbt(&dname_dbt, dname, strlen(dname) + 1);
+    toku_init_dbt_flags(&old_iname_dbt, DB_DBT_REALLOC);
+
+    r = toku_db_get(env->i->directory,
+                    txn,
+                    &dname_dbt,
+                    &old_iname_dbt,
+                    DB_SERIALIZABLE);  // allocates memory for iname
+    if (r == DB_NOTFOUND)
+        return EEXIST;
+    toku_free(old_iname_dbt.data);
+
+    r = toku_db_del(env->i->directory, txn, &dname_dbt, DB_DELETE_ANY, true);
+
+    return r;
+}
+
+static int env_dirtool_move(DB_ENV *env,
+                            DB_TXN *txn,
+                            const char *old_dname,
+                            const char *new_dname) {
+    int r;
+    DBT old_dname_dbt;
+    DBT new_dname_dbt;
+    DBT iname_dbt;
+
+    HANDLE_PANICKED_ENV(env);
+    if (!env_opened(env)) {
+        return EINVAL;
+    }
+    HANDLE_READ_ONLY_TXN(txn);
+
+    toku_fill_dbt(&old_dname_dbt, old_dname, strlen(old_dname) + 1);
+    toku_fill_dbt(&new_dname_dbt, new_dname, strlen(new_dname) + 1);
+    toku_init_dbt_flags(&iname_dbt, DB_DBT_REALLOC);
+
+    r = toku_db_get(env->i->directory,
+                    txn,
+                    &old_dname_dbt,
+                    &iname_dbt,
+                    DB_SERIALIZABLE);  // allocates memory for iname
+    if (r == DB_NOTFOUND)
+        return EEXIST;
+
+    r = toku_db_del(
+        env->i->directory, txn, &old_dname_dbt, DB_DELETE_ANY, true);
+    if (r != 0)
+        goto exit;
+
+    r = toku_db_put(
+        env->i->directory, txn, &new_dname_dbt, &iname_dbt, 0, true);
+
+exit:
+    toku_free(iname_dbt.data);
+    return r;
+}
+
+static int locked_env_op(DB_ENV *env,
+                         DB_TXN *txn,
+                         std::function<int(DB_TXN *)> f) {
+    int ret, r;
+    HANDLE_READ_ONLY_TXN(txn);
+    HANDLE_ILLEGAL_WORKING_PARENT_TXN(env, txn);
+
+    DB_TXN *child_txn = NULL;
+    int using_txns = env->i->open_flags & DB_INIT_TXN;
+    if (using_txns) {
+        ret = toku_txn_begin(env, txn, &child_txn, 0);
+        lazy_assert_zero(ret);
+    }
+
+    // cannot begin a checkpoint
+    toku_multi_operation_client_lock();
+    r = f(child_txn);
+    toku_multi_operation_client_unlock();
+
+    if (using_txns) {
+        if (r == 0) {
+            ret = locked_txn_commit(child_txn, 0);
+            lazy_assert_zero(ret);
+        } else {
+            ret = locked_txn_abort(child_txn);
+            lazy_assert_zero(ret);
+        }
+    }
+    return r;
+
+}
+
+static int locked_env_dirtool_attach(DB_ENV *env,
+                                     DB_TXN *txn,
+                                     const char *dname,
+                                     const char *iname) {
+    auto f = std::bind(
+        env_dirtool_attach, env, std::placeholders::_1, dname, iname);
+    return locked_env_op(env, txn, f);
+}
+
+static int locked_env_dirtool_detach(DB_ENV *env,
+                                     DB_TXN *txn,
+                                     const char *dname) {
+    auto f = std::bind(
+        env_dirtool_detach, env, std::placeholders::_1, dname);
+    return locked_env_op(env, txn, f);
+}
+
+static int locked_env_dirtool_move(DB_ENV *env,
+                                   DB_TXN *txn,
+                                   const char *old_dname,
+                                   const char *new_dname) {
+    auto f = std::bind(
+        env_dirtool_move, env, std::placeholders::_1, old_dname, new_dname);
+    return locked_env_op(env, txn, f);
 }
 
 static int env_dbremove(DB_ENV * env, DB_TXN *txn, const char *fname, const char *dbname, uint32_t flags);
@@ -1721,6 +1969,12 @@ static int env_set_lock_timeout(DB_ENV *env, uint64_t default_lock_timeout_msec,
 static int
 env_set_lock_timeout_callback(DB_ENV *env, lock_timeout_callback callback) {
     env->i->lock_wait_timeout_callback = callback;
+    return 0;
+}
+
+static int
+env_set_lock_wait_callback(DB_ENV *env, lock_wait_callback callback) {
+    env->i->lock_wait_needed_callback = callback;
     return 0;
 }
 
@@ -2540,6 +2794,10 @@ static void env_set_killed_callback(DB_ENV *env, uint64_t default_killed_time_ms
     env->i->killed_callback = killed_callback;
 }
 
+static void env_kill_waiter(DB_ENV *env, void *extra) {
+    env->i->ltm.kill_waiter(extra);
+}
+
 static void env_do_backtrace(DB_ENV *env) {
     if (env->i->errcall) {
         db_env_do_backtrace_errfunc((toku_env_err_func) toku_env_err, (const void *) env);
@@ -2566,6 +2824,9 @@ toku_env_create(DB_ENV ** envp, uint32_t flags) {
 #define SENV(name) result->name = locked_env_ ## name
     SENV(dbremove);
     SENV(dbrename);
+    SENV(dirtool_attach);
+    SENV(dirtool_detach);
+    SENV(dirtool_move);
     //SENV(set_noticecall);
 #undef SENV
 #define USENV(name) result->name = env_ ## name
@@ -2620,6 +2881,7 @@ toku_env_create(DB_ENV ** envp, uint32_t flags) {
     USENV(get_lock_timeout);
     USENV(set_lock_timeout);
     USENV(set_lock_timeout_callback);
+    USENV(set_lock_wait_callback);
     USENV(set_redzone);
     USENV(log_flush);
     USENV(log_archive);
@@ -2634,6 +2896,12 @@ toku_env_create(DB_ENV ** envp, uint32_t flags) {
     USENV(get_loader_memory_size);
     USENV(set_killed_callback);
     USENV(do_backtrace);
+    USENV(set_check_thp);
+    USENV(get_check_thp);
+    USENV(set_dir_per_db);
+    USENV(get_dir_per_db);
+    USENV(get_data_dir);
+    USENV(kill_waiter);
 #undef USENV
     
     // unlocked methods
@@ -2659,6 +2927,8 @@ toku_env_create(DB_ENV ** envp, uint32_t flags) {
     env_fs_init(result);
     env_fsync_log_init(result);
 
+    result->i->check_thp = true;
+
     result->i->bt_compare = toku_builtin_compare_fun;
 
     r = toku_logger_create(&result->i->logger);
@@ -2674,7 +2944,8 @@ toku_env_create(DB_ENV ** envp, uint32_t flags) {
     result->i->open_dbs_by_dname->create();
     XMALLOC(result->i->open_dbs_by_dict_id);
     result->i->open_dbs_by_dict_id->create();
-    toku_pthread_rwlock_init(&result->i->open_dbs_rwlock, NULL);
+    toku_pthread_rwlock_init(
+        *result_i_open_dbs_rwlock_key, &result->i->open_dbs_rwlock, nullptr);
 
     *envp = result;
     r = 0;
@@ -2816,28 +3087,31 @@ env_dbremove_subdb(DB_ENV * env, DB_TXN * txn, const char *fname, const char *db
 // see if we can acquire a table lock for the given dname.
 // requires: write lock on dname in the directory. dictionary
 //          open, close, and begin checkpoint cannot occur.
-// returns: true if we could open, lock, and close a dictionary
-//          with the given dname, false otherwise.
-static bool
+// returns: zero if we could open, lock, and close a dictionary
+//          with the given dname, errno otherwise.
+static int
 can_acquire_table_lock(DB_ENV *env, DB_TXN *txn, const char *iname_in_env) {
     int r;
-    bool got_lock = false;
     DB *db;
 
     r = toku_db_create(&db, env, 0);
     assert_zero(r);
     r = toku_db_open_iname(db, txn, iname_in_env, 0, 0);
-    assert_zero(r);
-    r = toku_db_pre_acquire_table_lock(db, txn);
-    if (r == 0) {
-        got_lock = true;
-    } else {
-        got_lock = false;
+    if(r) {
+	if (r == ENAMETOOLONG)
+	    toku_ydb_do_error(env, r, "File name too long!\n");
+	goto exit;
     }
-    r = toku_db_close(db);
-    assert_zero(r);
-
-    return got_lock;
+    r = toku_db_pre_acquire_table_lock(db, txn);
+    if (r) {
+        r = DB_LOCK_NOTGRANTED;
+    }
+exit:
+    if(db) {
+        int r2 = toku_db_close(db);
+        assert_zero(r2);
+    }
+    return r;
 }
 
 static int
@@ -2888,8 +3162,10 @@ env_dbremove(DB_ENV * env, DB_TXN *txn, const char *fname, const char *dbname, u
     if (txn && r) {
         if (r == EMFILE || r == ENFILE)
             r = toku_ydb_do_error(env, r, "toku dbremove failed because open file limit reached\n");
-        else
+        else if (r != ENOENT)
             r = toku_ydb_do_error(env, r, "toku dbremove failed\n");
+        else
+            r = 0;
         goto exit;
     }
     if (txn) {
@@ -2977,7 +3253,7 @@ env_dbrename(DB_ENV *env, DB_TXN *txn, const char *fname, const char *dbname, co
     if (env_is_db_with_dname_open(env, newname)) {
         return toku_ydb_do_error(env, EINVAL, "Cannot rename dictionary; Dictionary with target name has an open handle.\n");
     }
-    
+
     DBT old_dname_dbt;  
     DBT new_dname_dbt;  
     DBT iname_dbt;  
@@ -2997,10 +3273,35 @@ env_dbrename(DB_ENV *env, DB_TXN *txn, const char *fname, const char *dbname, co
             r = EEXIST;
         }
         else if (r == DB_NOTFOUND) {
+            DBT new_iname_dbt;
+            // Do not rename ft file if 'dir_per_db' option is not set
+            auto new_iname =
+                env->get_dir_per_db(env)
+                    ? generate_iname_for_rename_or_open(
+                          env, txn, newname, false)
+                    : std::unique_ptr<char[], decltype(&toku_free)>(
+                          toku_strdup(iname), &toku_free);
+            toku_fill_dbt(
+                &new_iname_dbt, new_iname.get(), strlen(new_iname.get()) + 1);
+
             // remove old (dname,iname) and insert (newname,iname) in directory
             r = toku_db_del(env->i->directory, txn, &old_dname_dbt, DB_DELETE_ANY, true);
             if (r != 0) { goto exit; }
-            r = toku_db_put(env->i->directory, txn, &new_dname_dbt, &iname_dbt, 0, true);
+
+            // Do not rename ft file if 'dir_per_db' option is not set
+            if (env->get_dir_per_db(env))
+                r = toku_ft_rename_iname(txn,
+                                         env->get_data_dir(env),
+                                         iname,
+                                         new_iname.get(),
+                                         env->i->cachetable);
+
+            r = toku_db_put(env->i->directory,
+                            txn,
+                            &new_dname_dbt,
+                            &new_iname_dbt,
+                            0,
+                            true);
             if (r != 0) { goto exit; }
 
             //Now that we have writelocks on both dnames, verify that there are still no handles open. (to prevent race conditions)
@@ -3023,8 +3324,8 @@ env_dbrename(DB_ENV *env, DB_TXN *txn, const char *fname, const char *dbname, co
             // otherwise, we're okay in marking this ft as remove on
             // commit. no new handles can open for this dictionary
             // because the txn has directory write locks on the dname
-            if (txn && !can_acquire_table_lock(env, txn, iname)) {
-                r = DB_LOCK_NOTGRANTED;
+            if (txn) {
+                r = can_acquire_table_lock(env, txn, new_iname.get());
             }
             // We don't do anything at the ft or cachetable layer for rename.
             // We just update entries in the environment's directory.
@@ -3146,6 +3447,10 @@ toku_test_get_latest_lsn(DB_ENV *env) {
         rval = toku_logger_last_lsn(env->i->logger);
     }
     return rval.lsn;
+}
+
+void toku_set_test_txn_sync_callback(void (* cb) (pthread_t, void *), void * extra) {
+    set_test_txn_sync_callback(cb, extra);
 }
 
 int 

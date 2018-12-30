@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2013, Monty Program Ab.
+   Copyright (c) 2010, 2017, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -42,6 +42,7 @@ typedef struct my_aio_result {
 #include <malloc.h> /*for alloca*/
 #endif
 #include <mysql/plugin.h>
+#include <mysql/service_my_print_error.h>
 
 #define MY_INIT(name)   { my_progname= name; my_init(); }
 
@@ -66,9 +67,10 @@ typedef struct my_aio_result {
 #define MY_FAE		8	/* Fatal if any error */
 #define MY_WME		16	/* Write message on error */
 #define MY_WAIT_IF_FULL 32	/* Wait and try again if disk full error */
-#define MY_IGNORE_BADFD 32      /* my_sync: ignore 'bad descriptor' errors */
+#define MY_IGNORE_BADFD 32      /* my_sync(): ignore 'bad descriptor' errors */
 #define MY_ENCRYPT      64      /* Encrypt IO_CACHE temporary files */
-#define MY_FULL_IO     512      /* For my_read - loop intil I/O is complete */
+#define MY_NOSYMLINKS  512      /* my_open(): don't follow symlinks */
+#define MY_FULL_IO     512      /* my_read(): loop intil I/O is complete */
 #define MY_DONT_CHECK_FILESIZE 128 /* Option to init_io_cache() */
 #define MY_LINK_WARNING 32	/* my_redel() gives warning if links */
 #define MY_COPYTIME	64	/* my_redel() copys time */
@@ -103,18 +105,10 @@ typedef struct my_aio_result {
 #define MY_GIVE_INFO	2	/* Give time info about process*/
 #define MY_DONT_FREE_DBUG 4     /* Do not call DBUG_END() in my_end() */
 
-#define ME_HIGHBYTE	8	/* Shift for colours */
-#define ME_NOCUR	1	/* Don't use curses message */
-#define ME_OLDWIN	2	/* Use old window */
-#define ME_BELL		4	/* Ring bell then printing message */
-#define ME_HOLDTANG	8	/* Don't delete last keys */
-#define ME_WAITTOT	16	/* Wait for errtime secs of for a action */
-#define ME_WAITTANG	32	/* Wait for a user action  */
-#define ME_NOREFRESH	64	/* Write the error message to error log */
-#define ME_NOINPUT	128	/* Dont use the input libary */
-#define ME_COLOUR1	((1 << ME_HIGHBYTE))	/* Possibly error-colours */
-#define ME_COLOUR2	((2 << ME_HIGHBYTE))
-#define ME_COLOUR3	((3 << ME_HIGHBYTE))
+#define ME_BELL         4       /* Ring bell then printing message */
+#define ME_WAITTANG     0       /* Wait for a user action  */
+#define ME_NOREFRESH    64      /* Write the error message to error log */
+#define ME_NOINPUT      0       /* Dont use the input libary */
 #define ME_JUST_INFO    1024    /**< not error but just info */
 #define ME_JUST_WARNING 2048    /**< not error but just warning */
 #define ME_FATALERROR   4096    /* Fatal statement error */
@@ -261,7 +255,7 @@ extern ulong	my_file_opened,my_stream_opened, my_tmp_file_created;
 extern ulong    my_file_total_opened;
 extern ulong    my_sync_count;
 extern uint	mysys_usage_id;
-extern my_bool	my_init_done;
+extern my_bool	my_init_done, my_thr_key_mysys_exists;
 extern my_bool  my_assert_on_error;
 extern myf      my_global_flags;        /* Set to MY_WME for more error messages */
 					/* Point to current my_message() */
@@ -279,7 +273,7 @@ extern my_bool my_use_symdir;
 extern ulong	my_default_record_cache_size;
 extern my_bool  my_disable_locking, my_disable_async_io,
                 my_disable_flush_key_blocks, my_disable_symlinks;
-extern my_bool my_disable_sync;
+extern my_bool my_disable_sync, my_disable_copystat_in_redel;
 extern char	wild_many,wild_one,wild_prefix;
 extern const char *charsets_dir;
 extern my_bool timed_mutexes;
@@ -615,6 +609,7 @@ int my_b_pread(IO_CACHE *info, uchar *Buffer, size_t Count, my_off_t pos);
 
 typedef uint32 ha_checksum;
 
+extern int (*mysys_test_invalid_symlink)(const char *filename);
 #include <my_alloc.h>
 
 	/* Prototypes for mysys and my_func functions */
@@ -642,9 +637,10 @@ extern int my_realpath(char *to, const char *filename, myf MyFlags);
 extern File my_create_with_symlink(const char *linkname, const char *filename,
 				   int createflags, int access_flags,
 				   myf MyFlags);
-extern int my_delete_with_symlink(const char *name, myf MyFlags);
 extern int my_rename_with_symlink(const char *from,const char *to,myf MyFlags);
 extern int my_symlink(const char *content, const char *linkname, myf MyFlags);
+extern int my_handler_delete_with_symlink(const char *filename, myf sync_dir);
+
 extern size_t my_read(File Filedes,uchar *Buffer,size_t Count,myf MyFlags);
 extern size_t my_pread(File Filedes,uchar *Buffer,size_t Count,my_off_t offset,
 		     myf MyFlags);
@@ -668,8 +664,12 @@ extern void *my_memmem(const void *haystack, size_t haystacklen,
 
 #ifdef _WIN32
 extern int      my_access(const char *path, int amode);
+#define my_check_user(A,B) (NULL)
+#define my_set_user(A,B,C) (0)
 #else
 #define my_access access
+struct passwd *my_check_user(const char *user, myf MyFlags);
+int my_set_user(const char *user, struct passwd *user_info, myf MyFlags);
 #endif
 
 extern int check_if_legal_filename(const char *path);
@@ -708,12 +708,6 @@ extern int my_sync(File fd, myf my_flags);
 extern int my_sync_dir(const char *dir_name, myf my_flags);
 extern int my_sync_dir_by_file(const char *file_name, myf my_flags);
 extern const char *my_get_err_msg(uint nr);
-extern void my_error(uint nr,myf MyFlags, ...);
-extern void my_printf_error(uint my_err, const char *format,
-                            myf MyFlags, ...)
-                            ATTRIBUTE_FORMAT(printf, 2, 4);
-extern void my_printv_error(uint error, const char *format, myf MyFlags,
-                            va_list ap);
 extern int my_error_register(const char** (*get_errmsgs) (void),
                              uint first, uint last);
 extern const char **my_error_unregister(uint first, uint last);
@@ -940,6 +934,12 @@ extern ulonglong my_getcputime(void);
 #define hrtime_sec_part(X)              ((ulong)((X).val % HRTIME_RESOLUTION))
 #define my_time(X)                      hrtime_to_time(my_hrtime())
 
+#if STACK_DIRECTION < 0
+#define available_stack_size(CUR,END) (long) ((char*)(CUR) - (char*)(END))
+#else
+#define available_stack_size(CUR,END) (long) ((char*)(END) - (char*)(CUR))
+#endif
+
 #ifdef HAVE_SYS_MMAN_H
 #include <sys/mman.h>
 
@@ -989,6 +989,8 @@ void my_uuid_init(ulong seed1, ulong seed2);
 void my_uuid(uchar *guid);
 void my_uuid2str(const uchar *guid, char *s);
 void my_uuid_end(void);
+
+const char *my_dlerror(const char *dlpath);
 
 /* character sets */
 extern void my_charset_loader_init_mysys(MY_CHARSET_LOADER *loader);

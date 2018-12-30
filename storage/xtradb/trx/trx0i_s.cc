@@ -507,7 +507,9 @@ fill_trx_row(
 
 	row->trx_mysql_thread_id = thd_get_thread_id(trx->mysql_thd);
 
-	stmt = innobase_get_stmt(trx->mysql_thd, &stmt_len);
+	stmt = trx->mysql_thd
+		? innobase_get_stmt(trx->mysql_thd, &stmt_len)
+		: NULL;
 
 	if (stmt != NULL) {
 		char	query[TRX_I_S_TRX_QUERY_MAX_LEN + 1];
@@ -1466,6 +1468,8 @@ trx_i_s_cache_free(
 /*===============*/
 	trx_i_s_cache_t*	cache)	/*!< in, own: cache to free */
 {
+	rw_lock_free(&cache->rw_lock);
+	mutex_free(&cache->last_read_mutex);
 	hash_table_free(cache->locks_hash);
 	ha_storage_free(cache->storage);
 	table_cache_free(&cache->innodb_trx);

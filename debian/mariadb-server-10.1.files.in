@@ -1,5 +1,6 @@
 usr/lib/mysql/plugin/auth_pam.so
 usr/lib/mysql/plugin/auth_socket.so
+usr/lib/mysql/plugin/disks.so
 usr/lib/mysql/plugin/file_key_management.so
 usr/lib/mysql/plugin/ha_archive.so
 usr/lib/mysql/plugin/ha_blackhole.so
@@ -46,6 +47,7 @@ usr/bin/mysql_zap
 usr/bin/mysqlbinlog
 usr/bin/mysqld_multi
 usr/bin/mysqld_safe
+usr/bin/mysqld_safe_helper
 usr/bin/mysqlhotcopy
 usr/bin/perror
 usr/bin/replace
@@ -56,6 +58,7 @@ usr/bin/wsrep_sst_mysqldump
 usr/bin/wsrep_sst_rsync
 usr/bin/wsrep_sst_xtrabackup
 usr/bin/wsrep_sst_xtrabackup-v2
+usr/bin/wsrep_sst_mariabackup
 usr/share/doc/mariadb-server-10.1/mysqld.sym.gz
 usr/share/doc/mariadb-server-10.1/INFO_SRC
 usr/share/doc/mariadb-server-10.1/INFO_BIN

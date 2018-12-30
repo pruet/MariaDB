@@ -1,4 +1,5 @@
-# Copyright (c) 2009, 2012, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2018, Oracle and/or its affiliates.
+# Copyright (c) 2011, 2018, MariaDB Corporation
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -186,8 +187,11 @@ MACRO(MYSQL_ADD_PLUGIN)
     ADD_LIBRARY(${target} MODULE ${SOURCES}) 
     DTRACE_INSTRUMENT(${target})
 
-    SET_TARGET_PROPERTIES (${target} PROPERTIES PREFIX ""
-      COMPILE_DEFINITIONS "MYSQL_DYNAMIC_PLUGIN")
+    SET_TARGET_PROPERTIES (${target} PROPERTIES PREFIX "")
+    IF (NOT ARG_CLIENT)
+      SET_TARGET_PROPERTIES (${target} PROPERTIES
+        COMPILE_DEFINITIONS "MYSQL_DYNAMIC_PLUGIN")
+    ENDIF()
 
     TARGET_LINK_LIBRARIES (${target} mysqlservices ${ARG_LINK_LIBRARIES})
 
@@ -198,8 +202,19 @@ MACRO(MYSQL_ADD_PLUGIN)
     # executable to the linker command line (it would result into link error). 
     # Thus we skip TARGET_LINK_LIBRARIES on Linux, as it would only generate
     # an additional dependency.
-    IF(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ARG_CLIENT)
-      TARGET_LINK_LIBRARIES (${target} mysqld)
+    IF(ARG_RECOMPILE_FOR_EMBEDDED OR ARG_STORAGE_ENGINE)
+      IF(MSVC)
+        ADD_DEPENDENCIES(${target} gen_mysqld_lib)
+        TARGET_LINK_LIBRARIES(${target} mysqld_import_lib)
+      ELSEIF(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        TARGET_LINK_LIBRARIES (${target} mysqld)
+      ENDIF()
+    ELSEIF(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      TARGET_LINK_LIBRARIES (${target} "-Wl,--no-undefined")
+    ENDIF()
+
+    IF(ARG_LINK_LIBRARIES)
+      TARGET_LINK_LIBRARIES (${target} ${ARG_LINK_LIBRARIES})
     ENDIF()
     ADD_DEPENDENCIES(${target} GenError ${ARG_DEPENDENCIES})
 
@@ -208,13 +223,15 @@ MACRO(MYSQL_ADD_PLUGIN)
     # Install dynamic library
     IF(ARG_COMPONENT)
       IF(CPACK_COMPONENTS_ALL AND
-         NOT CPACK_COMPONENTS_ALL MATCHES ${ARG_COMPONENT})
+         NOT CPACK_COMPONENTS_ALL MATCHES ${ARG_COMPONENT}
+         AND INSTALL_SYSCONF2DIR)
         IF (ARG_STORAGE_ENGINE)
           SET(ver " = %{version}-%{release}")
         ELSE()
           SET(ver "")
         ENDIF()
-        SET(CPACK_COMPONENTS_ALL ${CPACK_COMPONENTS_ALL} ${ARG_COMPONENT} PARENT_SCOPE)
+        SET(CPACK_COMPONENTS_ALL ${CPACK_COMPONENTS_ALL} ${ARG_COMPONENT})
+        SET(CPACK_COMPONENTS_ALL ${CPACK_COMPONENTS_ALL} PARENT_SCOPE)
 
         IF (NOT ARG_CLIENT)
           SET(CPACK_RPM_${ARG_COMPONENT}_PACKAGE_REQUIRES "MariaDB${ver}" PARENT_SCOPE)

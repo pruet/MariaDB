@@ -4547,6 +4547,64 @@ set global max_allowed_packet=default;
 # End of 5.6 tests
 #
 #
+# Start of 10.0 tests
+#
+#
+# MDEV-12681 Wrong VIEW results for CHAR(0xDF USING latin1)
+#
+EXPLAIN EXTENDED SELECT CHAR(0xDF USING latin1);
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+Warnings:
+Note	1003	select char(0xdf using latin1) AS `CHAR(0xDF USING latin1)`
+EXPLAIN EXTENDED SELECT CHAR(0xDF USING `binary`);
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+Warnings:
+Note	1003	select char(0xdf) AS `CHAR(0xDF USING ``binary``)`
+EXPLAIN EXTENDED SELECT CHAR(0xDF);
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+Warnings:
+Note	1003	select char(0xdf) AS `CHAR(0xDF)`
+#
+# MDEV-15619 using CONVERT() inside AES_ENCRYPT() in an UPDATE corrupts data
+#
+CREATE TABLE t1 (
+id int(11) NOT NULL,
+session_id varchar(255) DEFAULT NULL,
+directory mediumtext,
+checksum int(10) DEFAULT NULL,
+last_update datetime DEFAULT NULL,
+PRIMARY KEY (id),
+KEY lastupdate (last_update)
+) DEFAULT CHARSET=latin1;
+INSERT INTO t1 VALUES (1,'',NULL,38391,'2017-06-24 07:35:28');
+UPDATE t1 SET directory = AES_ENCRYPT(CONVERT('test stringrererejrjerjehrjekhrjkehrjkehrkjehrjkerhkjehrjekrhkjehrkjerhjkehrkjehrkjehrjkehrjkehrjkehrjkerjkehrjkehrjkehrjke rekjhrejrejhrjehgrehjgrhjerjhegrjherejhgrjhegrjehgrjhegrejhrgjehgrjhegrjhegrjhergjhegrjhegrhjegrjerhthkjjkdhjkgdfjkgjkdgdjkfjkhgjkfdhjgjkfdghkjdfghkjfdghfjkdghkdjfghdkjfghfjkdghfkjdghkjfdghfkjdghfkdjghfkjdghfdjkghjkdfhgdfjkghfjkdghfjkdghfjdkghfjkdghkfjdghfkjdghfkjdghkjdfghfjdkghjkfdghkjdfhgjkdfhgjkfdhgkjfdghkfjdhgkjfdgdjkejktjherjthkjrethkjrethjkerthjkerhtjkerhtkjerhtjkerhtjkerhtjkrehtkjerhtkjrehtjkrehtkjrehtkjerhtkjerhtjkrehtkjrehtjkrehtkjrethjkrethkjrehtkjethjkerhtjkrehtjkretkjerhtkjrehtjkerhtjkrehtjrehtkjrekjtrfgdsfgdhjsghjgfdhjsfhjdfgdhjshjdshjfghjdsfgjhsfgjhsdfgjhdsfgjdhsfgsjhfgjhsdfgsdjhfgjdhsfdjshfgdsjhfgjsdhfdjshfgdjhsfgdjshfgjdhsfgjhsdfgjhsdgfjhsdgfjhdsgfjhsgfjhsdgfjhdsgfhjsdehkjthrkjethjkre' USING latin1), '95F5A1F52A554'), last_update= NOW();
+SELECT directory IS NULL FROM t1;
+directory IS NULL
+0
+DROP TABLE t1;
+CREATE TABLE t1 (
+id int(11) NOT NULL PRIMARY KEY,
+directory mediumtext
+) DEFAULT CHARSET=latin1;
+INSERT INTO t1 VALUES (1,AES_ENCRYPT(CONVERT(REPEAT('a',800) USING latin1),'95F5A1F52A554'));
+SELECT AES_DECRYPT(directory,'95F5A1F52A554') FROM t1;
+AES_DECRYPT(directory,'95F5A1F52A554')
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+DROP TABLE t1;
+SET @enc=AES_ENCRYPT(REPEAT(_latin1'a',800),'95F5A1F52A554');
+CREATE TABLE t1 (
+id int(11) NOT NULL PRIMARY KEY,
+directory mediumtext
+) DEFAULT CHARSET=latin1;
+INSERT INTO t1 VALUES (1,AES_DECRYPT(CONVERT(@enc USING binary),'95F5A1F52A554'));
+SELECT * FROM t1;
+id	directory
+1	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+DROP TABLE t1;
+#
 # Start of 10.1 tests
 #
 #
@@ -4580,6 +4638,80 @@ INSERT INTO t1 VALUES (0),(0),(1),(0),(0);
 SELECT COUNT(*) FROM t1, t1 t2 GROUP BY INSERT('', t2.a, t1.a, @@global.max_binlog_size);
 COUNT(*)
 25
+DROP TABLE t1;
+# Start of func_str_ascii_checksum.inc
+#
+# MDEV-10850 Wrong result for WHERE .. (f2=TO_BASE64('test') OR f2=TO_BASE64('TEST'))
+#
+CREATE TABLE t1 (f1 VARCHAR(4), f2 VARCHAR(255), UNIQUE KEY k1 (f1,f2));
+INSERT INTO t1 VALUES ('test',hex('test')), ('TEST', hex('TEST'));
+SELECT * FROM t1 IGNORE INDEX(k1) WHERE f1='test' AND (f2= hex("test") OR f2= hex("TEST"));
+f1	f2
+test	74657374
+TEST	54455354
+SELECT * FROM t1                  WHERE f1='test' AND (f2= hex("test") OR f2= hex("TEST"));
+f1	f2
+TEST	54455354
+test	74657374
+SELECT * FROM t1                  WHERE f1='test' AND (f2= hex("TEST") OR f2= hex("test"));
+f1	f2
+TEST	54455354
+test	74657374
+DROP TABLE t1;
+#
+# MDEV-10425 Assertion `collation.derivation == DERIVATION_IMPLICIT' failed in Item_func_conv_charset::fix_length_and_dec()
+#
+PREPARE stmt FROM "SELECT hex(CONVERT('foo' USING latin1))";
+EXECUTE stmt;
+hex(CONVERT('foo' USING latin1))
+666F6F
+DEALLOCATE PREPARE stmt;
+# End of func_str_ascii_checksum.inc
+# Start of func_str_ascii_checksum.inc
+#
+# MDEV-10850 Wrong result for WHERE .. (f2=TO_BASE64('test') OR f2=TO_BASE64('TEST'))
+#
+CREATE TABLE t1 (f1 VARCHAR(4), f2 VARCHAR(255), UNIQUE KEY k1 (f1,f2));
+INSERT INTO t1 VALUES ('test',to_base64('test')), ('TEST', to_base64('TEST'));
+SELECT * FROM t1 IGNORE INDEX(k1) WHERE f1='test' AND (f2= to_base64("test") OR f2= to_base64("TEST"));
+f1	f2
+test	dGVzdA==
+TEST	VEVTVA==
+SELECT * FROM t1                  WHERE f1='test' AND (f2= to_base64("test") OR f2= to_base64("TEST"));
+f1	f2
+test	dGVzdA==
+TEST	VEVTVA==
+SELECT * FROM t1                  WHERE f1='test' AND (f2= to_base64("TEST") OR f2= to_base64("test"));
+f1	f2
+test	dGVzdA==
+TEST	VEVTVA==
+DROP TABLE t1;
+#
+# MDEV-10425 Assertion `collation.derivation == DERIVATION_IMPLICIT' failed in Item_func_conv_charset::fix_length_and_dec()
+#
+PREPARE stmt FROM "SELECT to_base64(CONVERT('foo' USING latin1))";
+EXECUTE stmt;
+to_base64(CONVERT('foo' USING latin1))
+Zm9v
+DEALLOCATE PREPARE stmt;
+# End of func_str_ascii_checksum.inc
+#
+# MDEV-10864 Wrong result for WHERE .. (f2=COMPRESS('test') OR f2=COMPRESS('TEST'))
+#
+CREATE TABLE t1 (f1 VARCHAR(4), f2 VARCHAR(128), UNIQUE KEY k1 (f1,f2));
+INSERT INTO t1 VALUES ('YQ==',from_base64('YQ==')), ('Yq==', from_base64('Yq=='));
+SELECT f1,HEX(f2) FROM t1 ignore index(k1) WHERE f1='YQ==' AND (f2= from_base64("YQ==") OR f2= from_base64("Yq=="));
+f1	HEX(f2)
+YQ==	61
+Yq==	62
+SELECT f1,HEX(f2) FROM t1                  WHERE f1='YQ==' AND (f2= from_base64("YQ==") OR f2= from_base64("Yq=="));
+f1	HEX(f2)
+YQ==	61
+Yq==	62
+SELECT f1,HEX(f2) FROM t1                  WHERE f1='YQ==' AND (f2= from_base64("Yq==") OR f2= from_base64("YQ=="));
+f1	HEX(f2)
+YQ==	61
+Yq==	62
 DROP TABLE t1;
 #
 # End of 10.1 tests

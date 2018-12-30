@@ -52,7 +52,8 @@ enum enum_table_stat_col
 {
   TABLE_STAT_DB_NAME,
   TABLE_STAT_TABLE_NAME,
-  TABLE_STAT_CARDINALITY
+  TABLE_STAT_CARDINALITY,
+  TABLE_STAT_N_FIELDS
 };
 
 enum enum_column_stat_col
@@ -67,7 +68,8 @@ enum enum_column_stat_col
   COLUMN_STAT_AVG_FREQUENCY,
   COLUMN_STAT_HIST_SIZE,
   COLUMN_STAT_HIST_TYPE,
-  COLUMN_STAT_HISTOGRAM
+  COLUMN_STAT_HISTOGRAM,
+  COLUMN_STAT_N_FIELDS
 };
 
 enum enum_index_stat_col
@@ -76,7 +78,8 @@ enum enum_index_stat_col
   INDEX_STAT_TABLE_NAME,
   INDEX_STAT_INDEX_NAME,
   INDEX_STAT_PREFIX_ARITY,
-  INDEX_STAT_AVG_FREQUENCY
+  INDEX_STAT_AVG_FREQUENCY,
+  INDEX_STAT_N_FIELDS
 };
 
 inline
@@ -89,6 +92,7 @@ int read_statistics_for_tables_if_needed(THD *thd, TABLE_LIST *tables);
 int collect_statistics_for_table(THD *thd, TABLE *table);
 int alloc_statistics_for_table_share(THD* thd, TABLE_SHARE *share,
                                      bool is_safe);
+void delete_stat_values_for_table_share(TABLE_SHARE *table_share);
 int alloc_statistics_for_table(THD *thd, TABLE *table);
 int update_statistics_for_table(THD *thd, TABLE *table);
 int delete_statistics_for_table(THD *thd, LEX_STRING *db, LEX_STRING *tab);
@@ -107,6 +111,8 @@ double get_column_range_cardinality(Field *field,
                                     key_range *min_endp,
                                     key_range *max_endp,
                                     uint range_flag);
+bool is_stat_table(const char *db, const char *table);
+bool is_eits_usable(Field* field);
 
 class Histogram
 {
@@ -340,12 +346,17 @@ private:
 public:
 
   Histogram histogram;
+
+  uint32 no_values_provided_bitmap()
+  {
+    return
+     ((1 << (COLUMN_STAT_HISTOGRAM-COLUMN_STAT_COLUMN_NAME))-1) <<
+      (COLUMN_STAT_COLUMN_NAME+1);
+  }
  
   void set_all_nulls()
   {
-    column_stat_nulls= 
-      ((1 << (COLUMN_STAT_HISTOGRAM-COLUMN_STAT_COLUMN_NAME))-1) <<
-      (COLUMN_STAT_COLUMN_NAME+1);
+    column_stat_nulls= no_values_provided_bitmap();
   }
 
   void set_not_null(uint stat_field_no)
@@ -388,6 +399,25 @@ public:
     avg_frequency= (ulong) (val * Scale_factor_avg_frequency);
   }
 
+  bool min_max_values_are_provided()
+  {
+    return !is_null(COLUMN_STAT_MIN_VALUE) && 
+      !is_null(COLUMN_STAT_MAX_VALUE);
+  }
+  /*
+    This function checks whether the values for the fields of the statistical
+    tables that were NULL by DEFAULT for a column have changed or not.
+
+    @retval
+    TRUE: Statistics are not present for a column
+    FALSE: Statisitics are present for a column
+  */
+  bool no_stat_values_provided()
+  {
+    if (column_stat_nulls == no_values_provided_bitmap())
+      return true;
+    return false;
+  }
 };
 
 

@@ -11,7 +11,7 @@
 
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #define MYSQL_SERVER 1
 #include "mysql_version.h"
@@ -40,6 +40,27 @@
 #include "spd_ping_table.h"
 #include "spd_direct_sql.h"
 #include "spd_malloc.h"
+
+inline MYSQL_THD spider_create_thd()
+{
+  THD *thd;
+  my_thread_init();
+  if (!(thd = new THD()))
+    my_thread_end();
+  else
+  {
+#ifdef HAVE_PSI_INTERFACE
+    mysql_thread_set_psi_id(thd->thread_id);
+#endif
+    thd->thread_stack = (char *) &thd;
+    thd->store_globals();
+  }
+  return thd;
+}
+inline void spider_destroy_thd(MYSQL_THD thd)
+{
+  delete thd;
+}
 
 ulong *spd_db_att_thread_id;
 #ifdef SPIDER_XID_USES_xid_cache_iterate
@@ -76,9 +97,6 @@ PSI_mutex_key spd_key_mutex_conn;
 #if defined(HS_HAS_SQLCOM) && defined(HAVE_HANDLERSOCKET)
 PSI_mutex_key spd_key_mutex_hs_r_conn;
 PSI_mutex_key spd_key_mutex_hs_w_conn;
-#endif
-#ifndef WITHOUT_SPIDER_BG_SEARCH
-PSI_mutex_key spd_key_mutex_global_trx;
 #endif
 PSI_mutex_key spd_key_mutex_open_conn;
 PSI_mutex_key spd_key_mutex_allocated_thds;
@@ -123,9 +141,6 @@ static PSI_mutex_info all_spider_mutexes[]=
 #if defined(HS_HAS_SQLCOM) && defined(HAVE_HANDLERSOCKET)
   { &spd_key_mutex_hs_r_conn, "hs_r_conn", PSI_FLAG_GLOBAL},
   { &spd_key_mutex_hs_w_conn, "hs_w_conn", PSI_FLAG_GLOBAL},
-#endif
-#ifndef WITHOUT_SPIDER_BG_SEARCH
-  { &spd_key_mutex_global_trx, "global_trx", PSI_FLAG_GLOBAL},
 #endif
   { &spd_key_mutex_open_conn, "open_conn", PSI_FLAG_GLOBAL},
   { &spd_key_mutex_allocated_thds, "allocated_thds", PSI_FLAG_GLOBAL},
@@ -280,9 +295,6 @@ pthread_mutex_t spider_allocated_thds_mutex;
 
 #ifndef WITHOUT_SPIDER_BG_SEARCH
 pthread_attr_t spider_pt_attr;
-
-pthread_mutex_t spider_global_trx_mutex;
-SPIDER_TRX *spider_global_trx;
 #endif
 
 extern pthread_mutex_t spider_mem_calc_mutex;
@@ -517,7 +529,6 @@ int spider_free_share_alloc(
 ) {
   int roop_count;
   DBUG_ENTER("spider_free_share_alloc");
-  if (share->dbton_bitmap)
   {
     for (roop_count = SPIDER_DBTON_SIZE - 1; roop_count >= 0; roop_count--)
     {
@@ -5995,7 +6006,7 @@ int spider_close_connection(
   SPIDER_CONN *conn;
   SPIDER_TRX *trx;
   DBUG_ENTER("spider_close_connection");
-  if (!(trx = (SPIDER_TRX*) *thd_ha_data(thd, spider_hton_ptr)))
+  if (!(trx = (SPIDER_TRX*) thd_get_ha_data(thd, spider_hton_ptr)))
     DBUG_RETURN(0); /* transaction is not started */
 
   trx->tmp_spider->conns = &conn;
@@ -6050,6 +6061,7 @@ int spider_db_done(
   void *p
 ) {
   int roop_count;
+  bool do_delete_thd;
   THD *thd = current_thd, *tmp_thd;
   SPIDER_CONN *conn;
   SPIDER_INIT_ERROR_TABLE *spider_init_error_table;
@@ -6057,9 +6069,17 @@ int spider_db_done(
   SPIDER_LGTM_TBLHND_SHARE *lgtm_tblhnd_share;
   DBUG_ENTER("spider_db_done");
 
-#ifndef WITHOUT_SPIDER_BG_SEARCH
-  spider_free_trx(spider_global_trx, TRUE);
-#endif
+  /* Begin Spider plugin deinit */
+  if (thd)
+    do_delete_thd = FALSE;
+  else
+  {
+    /* Create a thread for Spider plugin deinit */
+    thd = spider_create_thd();
+    if (!thd)
+      DBUG_RETURN(HA_ERR_OUT_OF_MEM);
+    do_delete_thd = TRUE;
+  }
 
   for (roop_count = SPIDER_DBTON_SIZE - 1; roop_count >= 0; roop_count--)
   {
@@ -6099,21 +6119,22 @@ int spider_db_done(
     pthread_mutex_destroy(&spider_udf_table_mon_mutexes[roop_count]);
   spider_free(NULL, spider_udf_table_mon_mutexes, MYF(0));
 
-  if (thd && thd_sql_command(thd) == SQLCOM_UNINSTALL_PLUGIN) {
-    pthread_mutex_lock(&spider_allocated_thds_mutex);
-    while ((tmp_thd = (THD *) my_hash_element(&spider_allocated_thds, 0)))
+  pthread_mutex_lock(&spider_allocated_thds_mutex);
+  while ((tmp_thd = (THD *) my_hash_element(&spider_allocated_thds, 0)))
+  {
+    SPIDER_TRX *trx = (SPIDER_TRX *)
+                      thd_get_ha_data(tmp_thd, spider_hton_ptr);
+    if (trx)
     {
-      SPIDER_TRX *trx = (SPIDER_TRX *) *thd_ha_data(tmp_thd, spider_hton_ptr);
-      if (trx)
-      {
-        DBUG_ASSERT(tmp_thd == trx->thd);
-        spider_free_trx(trx, FALSE);
-        *thd_ha_data(tmp_thd, spider_hton_ptr) = (void *) NULL;
-      } else
-        my_hash_delete(&spider_allocated_thds, (uchar *) tmp_thd);
+      DBUG_ASSERT(tmp_thd == trx->thd);
+      spider_free_trx(trx, FALSE);
+      thd_set_ha_data(tmp_thd, spider_hton_ptr, NULL);
     }
-    pthread_mutex_unlock(&spider_allocated_thds_mutex);
+    else
+      my_hash_delete(&spider_allocated_thds, (uchar *) tmp_thd);
   }
+  pthread_mutex_unlock(&spider_allocated_thds_mutex);
+
 #if defined(HS_HAS_SQLCOM) && defined(HAVE_HANDLERSOCKET)
   pthread_mutex_lock(&spider_hs_w_conn_mutex);
   while ((conn = (SPIDER_CONN*) my_hash_element(&spider_hs_w_conn_hash, 0)))
@@ -6227,9 +6248,6 @@ int spider_db_done(
   pthread_mutex_destroy(&spider_mon_table_cache_mutex);
   pthread_mutex_destroy(&spider_allocated_thds_mutex);
   pthread_mutex_destroy(&spider_open_conn_mutex);
-#ifndef WITHOUT_SPIDER_BG_SEARCH
-  pthread_mutex_destroy(&spider_global_trx_mutex);
-#endif
 #if defined(HS_HAS_SQLCOM) && defined(HAVE_HANDLERSOCKET)
   pthread_mutex_destroy(&spider_hs_w_conn_mutex);
   pthread_mutex_destroy(&spider_hs_r_conn_mutex);
@@ -6262,6 +6280,11 @@ int spider_db_done(
         spider_current_alloc_mem[roop_count] ? "NG" : "OK"
       ));
   }
+
+  /* End Spider plugin deinit */
+  if (do_delete_thd)
+    spider_destroy_thd(thd);
+
 /*
 DBUG_ASSERT(0);
 */
@@ -6471,18 +6494,6 @@ int spider_db_init(
     error_num = HA_ERR_OUT_OF_MEM;
     goto error_conn_mutex_init;
   }
-#ifndef WITHOUT_SPIDER_BG_SEARCH
-#if MYSQL_VERSION_ID < 50500
-  if (pthread_mutex_init(&spider_global_trx_mutex, MY_MUTEX_INIT_FAST))
-#else
-  if (mysql_mutex_init(spd_key_mutex_global_trx,
-    &spider_global_trx_mutex, MY_MUTEX_INIT_FAST))
-#endif
-  {
-    error_num = HA_ERR_OUT_OF_MEM;
-    goto error_global_trx_mutex_init;
-  }
-#endif
 #if MYSQL_VERSION_ID < 50500
   if (pthread_mutex_init(&spider_open_conn_mutex, MY_MUTEX_INIT_FAST))
 #else
@@ -6747,16 +6758,9 @@ int spider_db_init(
     }
   }
 
-#ifndef WITHOUT_SPIDER_BG_SEARCH
-  if (!(spider_global_trx = spider_get_trx(NULL, FALSE, &error_num)))
-    goto error;
-#endif
-
   DBUG_RETURN(0);
 
 #ifndef WITHOUT_SPIDER_BG_SEARCH
-error:
-  roop_count = SPIDER_DBTON_SIZE;
 error_init_dbton:
   for (roop_count--; roop_count >= 0; roop_count--)
   {
@@ -6858,10 +6862,6 @@ error_hs_r_conn_mutex_init:
 #endif
   pthread_mutex_destroy(&spider_open_conn_mutex);
 error_open_conn_mutex_init:
-#ifndef WITHOUT_SPIDER_BG_SEARCH
-  pthread_mutex_destroy(&spider_global_trx_mutex);
-error_global_trx_mutex_init:
-#endif
   pthread_mutex_destroy(&spider_conn_mutex);
 error_conn_mutex_init:
   pthread_mutex_destroy(&spider_lgtm_tblhnd_share_mutex);
@@ -6942,7 +6942,7 @@ void spider_get_partition_info(
   partition_element **part_elem,
   partition_element **sub_elem
 ) {
-  char tmp_name[FN_LEN];
+  char tmp_name[FN_REFLEN + 1];
   partition_element *tmp_part_elem = NULL, *tmp_sub_elem = NULL;
   bool tmp_flg = FALSE, tmp_find_flg = FALSE;
   DBUG_ENTER("spider_get_partition_info");
@@ -6963,9 +6963,10 @@ void spider_get_partition_info(
       List_iterator<partition_element> sub_it((*part_elem)->subpartitions);
       while ((*sub_elem = sub_it++))
       {
-        create_subpartition_name(tmp_name, table_share->path.str,
-          (*part_elem)->partition_name, (*sub_elem)->partition_name,
-          NORMAL_PART_NAME);
+        if (create_subpartition_name(tmp_name, sizeof(tmp_name),
+            table_share->path.str, (*part_elem)->partition_name,
+            (*sub_elem)->partition_name, NORMAL_PART_NAME))
+          DBUG_VOID_RETURN;
         DBUG_PRINT("info",("spider tmp_name=%s", tmp_name));
         if (!memcmp(table_name, tmp_name, table_name_length + 1))
           DBUG_VOID_RETURN;
@@ -6981,8 +6982,10 @@ void spider_get_partition_info(
         }
       }
     } else {
-      create_partition_name(tmp_name, table_share->path.str,
-        (*part_elem)->partition_name, NORMAL_PART_NAME, TRUE);
+      if (create_partition_name(tmp_name, sizeof(tmp_name),
+          table_share->path.str, (*part_elem)->partition_name,
+          NORMAL_PART_NAME, TRUE))
+        DBUG_VOID_RETURN;
       DBUG_PRINT("info",("spider tmp_name=%s", tmp_name));
       if (!memcmp(table_name, tmp_name, table_name_length + 1))
         DBUG_VOID_RETURN;
@@ -8448,7 +8451,7 @@ int spider_discover_table_structure(
     spider_free_share_resource_only(spider_share);
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   } else {
-    char tmp_name[FN_LEN];
+    char tmp_name[FN_REFLEN + 1];
     List_iterator<partition_element> part_it(part_info->partitions);
     partition_element *part_elem, *sub_elem;
     while ((part_elem = part_it++))
@@ -8459,9 +8462,10 @@ int spider_discover_table_structure(
         while ((sub_elem = sub_it++))
         {
           str.length(str_len);
-          create_subpartition_name(tmp_name, table_name,
-            (part_elem)->partition_name, (sub_elem)->partition_name,
-            NORMAL_PART_NAME);
+          if (create_subpartition_name(tmp_name, sizeof(tmp_name), table_name,
+              (part_elem)->partition_name, (sub_elem)->partition_name,
+              NORMAL_PART_NAME))
+            DBUG_RETURN(1);
           DBUG_PRINT("info",("spider tmp_name=%s", tmp_name));
           if (!(spider_share = spider_create_share(table_name, share,
             part_info,
@@ -8484,8 +8488,9 @@ int spider_discover_table_structure(
           break;
       } else {
         str.length(str_len);
-        create_partition_name(tmp_name, table_name,
-          (part_elem)->partition_name, NORMAL_PART_NAME, TRUE);
+        if (create_partition_name(tmp_name, sizeof(tmp_name), table_name,
+            (part_elem)->partition_name, NORMAL_PART_NAME, TRUE))
+          DBUG_RETURN(1);
         DBUG_PRINT("info",("spider tmp_name=%s", tmp_name));
         if (!(spider_share = spider_create_share(table_name, share,
           part_info,

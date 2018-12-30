@@ -1,3 +1,6 @@
+if (CMAKE_PROJECT_NAME STREQUAL TokuDB)
+  cmake_minimum_required(VERSION 2.8.8 FATAL_ERROR)
+endif()
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules")
 
 project(TokuDB)
@@ -5,6 +8,25 @@ project(TokuDB)
 # suppress -rdynamic
 set(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 set(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "")
+
+# See: https://jira.percona.com/browse/TDB-93
+MY_CHECK_AND_SET_COMPILER_FLAG("-Wno-address-of-packed-member")
+
+# detect when we are being built as a subproject
+if (DEFINED MYSQL_PROJECT_NAME_DOCSTRING)
+  add_definitions(-DMYSQL_TOKUDB_ENGINE=1)
+  add_definitions(-DMYSQL_VERSION_ID=${MYSQL_VERSION_ID})
+  # Extended PFS instrumentation:
+  # -DTOKU_PFS_MUTEX_EXTENDED_CACHETABLEMMUTEX=1
+  if (WITH_PERFSCHEMA_STORAGE_ENGINE)
+    add_definitions(-DTOKU_MYSQL_WITH_PFS)
+  endif ()
+  include_directories(${CMAKE_SOURCE_DIR}/include)
+  if ((CMAKE_BUILD_TYPE MATCHES "Debug") AND
+      (CMAKE_CXX_FLAGS_DEBUG MATCHES " -DENABLED_DEBUG_SYNC"))
+    include_directories(${CMAKE_SOURCE_DIR}/sql)
+  endif ()
+endif ()
 
 ## Versions of gcc >= 4.9.0 require special version of 'ar' and 'ranlib' for
 ## link-time optimizations to work properly.

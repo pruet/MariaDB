@@ -18,7 +18,7 @@ INCLUDE(FindPkgConfig)
 
 MACRO(CHECK_SYSTEMD)
   IF(UNIX)
-    SET(WITH_SYSTEMD "auto" CACHE STRING "Compile with systemd socket activation and notification")
+    SET(WITH_SYSTEMD "auto" CACHE STRING "Enable systemd scripts and notification support")
     IF(WITH_SYSTEMD STREQUAL "yes" OR WITH_SYSTEMD STREQUAL "auto")
       IF(PKG_CONFIG_FOUND)
         IF(WITH_SYSTEMD STREQUAL "yes")
@@ -55,9 +55,10 @@ MACRO(CHECK_SYSTEMD)
       IF(HAVE_SYSTEMD AND HAVE_SYSTEMD_SD_DAEMON_H AND HAVE_SYSTEMD_SD_LISTEN_FDS
          AND HAVE_SYSTEMD_SD_NOTIFY AND HAVE_SYSTEMD_SD_NOTIFYF)
         ADD_DEFINITIONS(-DHAVE_SYSTEMD)
-        SET(SYSTEMD_SCRIPTS mariadb-service-convert galera_new_cluster)
+        SET(SYSTEMD_SCRIPTS mariadb-service-convert galera_new_cluster galera_recovery)
         SET(SYSTEMD_DEB_FILES "usr/bin/mariadb-service-convert
                                usr/bin/galera_new_cluster
+                               usr/bin/galera_recovery
                                ${INSTALL_SYSTEMD_UNITDIR}/mariadb.service
                                ${INSTALL_SYSTEMD_UNITDIR}/mariadb@.service
                                ${INSTALL_SYSTEMD_UNITDIR}/mariadb@bootstrap.service.d/use_galera_new_cluster.conf")
@@ -75,9 +76,11 @@ MACRO(CHECK_SYSTEMD)
         UNSET(HAVE_SYSTEMD_SD_NOTIFYF)
         MESSAGE(STATUS "Systemd features not enabled")
         IF(WITH_SYSTEMD STREQUAL "yes")
-          MESSAGE(FATAL_ERROR "Requested WITH_SYSTEMD=YES however no dependencies installed/found")
+          MESSAGE(FATAL_ERROR "Requested WITH_SYSTEMD=yes however no dependencies installed/found")
         ENDIF()
       ENDIF()
+    ELSEIF(NOT WITH_SYSTEMD STREQUAL "no")
+      MESSAGE(FATAL_ERROR "Invalid value for WITH_SYSTEMD. Must be 'yes', 'no', or 'auto'.")
     ENDIF()
   ENDIF()
 ENDMACRO()

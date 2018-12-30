@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2011, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2013, Monty Program Ab
+   Copyright (c) 2010, 2018, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -323,6 +323,8 @@ enum enum_server_command
 */
 #define SERVER_STATUS_IN_TRANS_READONLY 8192
 
+#define SERVER_STATUS_ANSI_QUOTES       32768
+
 
 /**
   Server status flags that must be cleared when starting
@@ -377,7 +379,7 @@ typedef struct st_net {
   char save_char;
   char net_skip_rest_factor;
   my_bool thread_specific_malloc;
-  my_bool compress;
+  unsigned char compress;
   my_bool unused3; /* Please remove with the next incompatible ABI change. */
   /*
     Pointer to query object in query cache, do not equal NULL (0) for

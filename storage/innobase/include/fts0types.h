@@ -126,7 +126,9 @@ struct fts_sync_t {
 	bool		in_progress;	/*!< flag whether sync is in progress.*/
 	bool		unlock_cache;	/*!< flag whether unlock cache when
 					write fts node */
-	os_event_t	event;		/*!< sync finish event */
+	os_event_t	event;		/*!< sync finish event;
+					only os_event_set() and os_event_wait()
+					are used */
 };
 
 /** The cache for the FTS system. It is a memory-based inverted index
@@ -159,7 +161,7 @@ struct fts_cache_t {
 					the document from the table. Each
 					element is of type fts_doc_t */
 
-	ulint		total_size;	/*!< total size consumed by the ilist
+	size_t		total_size;	/*!< total size consumed by the ilist
 					field of all nodes. SYNC is run
 					whenever this gets too big */
 	fts_sync_t*	sync;		/*!< sync structure to sync data to
@@ -241,7 +243,7 @@ struct fts_fetch_t {
 	fts_sql_callback
 			read_record;	/*!< Callback for reading index
 					record */
-	ulint		total_memory;	/*!< Total memory used */
+	size_t		total_memory;	/*!< Total memory used */
 };
 
 /** For horizontally splitting an FTS auxiliary index */

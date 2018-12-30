@@ -84,7 +84,7 @@ sub is_child {
 }
 
 
-my @safe_process_cmd;
+our @safe_process_cmd;
 my $safe_kill;
 my $bindir;
 
@@ -338,7 +338,7 @@ sub dump_core {
   my ($self)= @_;
   return if IS_WINDOWS;
   my $pid= $self->{SAFE_PID};
-  die "Can't cet core from not started process" unless defined $pid;
+  die "Can't get core from not started process" unless defined $pid;
   _verbose("Sending ABRT to $self");
   kill ("ABRT", $pid);
   return 1;

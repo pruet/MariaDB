@@ -5,7 +5,7 @@
 /*                                                                     */
 /* COPYRIGHT:                                                          */
 /* ----------                                                          */
-/*  (C) Copyright to the author Olivier BERTRAND          2005-2015    */
+/*  (C) Copyright to the author Olivier BERTRAND          2005-2017    */
 /*                                                                     */
 /* WHAT THIS PROGRAM DOES:                                             */
 /* -----------------------                                             */
@@ -45,6 +45,7 @@
 #include "maputil.h"
 #include "filamap.h"
 #include "tabdos.h"
+#include "tabfmt.h"
 
 /* --------------------------- Class MAPFAM -------------------------- */
 
@@ -87,9 +88,9 @@ int MAPFAM::GetFileLength(PGLOBAL g)
   {
   int len;
 
-  len = (To_Fb) ? To_Fb->Length : TXTFAM::GetFileLength(g);
+  len = (To_Fb && To_Fb->Count) ? To_Fb->Length : TXTFAM::GetFileLength(g);
 
-  if (trace)
+  if (trace(1))
     htrc("Mapped file length=%d\n", len);
 
   return len;
@@ -127,7 +128,7 @@ bool MAPFAM::OpenTableFile(PGLOBAL g)
                      && fp->Count && fp->Mode == mode)
         break;
 
-		if (trace)
+		if (trace(1))
       htrc("Mapping file, fp=%p\n", fp);
 
   } else
@@ -165,7 +166,7 @@ bool MAPFAM::OpenTableFile(PGLOBAL g)
         sprintf(g->Message, MSG(OPEN_MODE_ERROR),
                 "map", (int) rc, filename);
 
-      if (trace)
+      if (trace(1))
         htrc("CreateFileMap: %s\n", g->Message);
 
       return (mode == MODE_READ && rc == ENOENT)
@@ -226,7 +227,7 @@ bool MAPFAM::OpenTableFile(PGLOBAL g)
   Fpos = Mempos = Memory;
   Top = Memory + len;
 
-  if (trace)
+  if (trace(1))
     htrc("fp=%p count=%d MapView=%p len=%d Top=%p\n",
           fp, fp->Count, Memory, len, Top);
 
@@ -246,7 +247,7 @@ int MAPFAM::GetRowID(void)
 /***********************************************************************/
 int MAPFAM::GetPos(void)
   {
-  return Fpos - Memory;
+  return (int)(Fpos - Memory);
   } // end of GetPos
 
 /***********************************************************************/
@@ -254,7 +255,7 @@ int MAPFAM::GetPos(void)
 /***********************************************************************/
 int MAPFAM::GetNextPos(void)
   {
-  return Mempos - Memory;
+  return (int)(Mempos - Memory);
   } // end of GetNextPos
 
 /***********************************************************************/
@@ -300,10 +301,9 @@ int MAPFAM::SkipRecord(PGLOBAL g, bool header)
   PDBUSER dup = (PDBUSER)g->Activityp->Aptr;
 
   // Skip this record
-  while (*Mempos++ != '\n') ;      // What about Unix ???
-
-  if (Mempos >= Top)
-    return RC_EF;
+  while (*Mempos++ != '\n')					 		// What about Unix ???
+		if (Mempos == Top)
+      return RC_EF;
 
   // Update progress information
   dup->ProgCur = GetPos();
@@ -319,18 +319,23 @@ int MAPFAM::SkipRecord(PGLOBAL g, bool header)
 /***********************************************************************/
 int MAPFAM::ReadBuffer(PGLOBAL g)
   {
-  int len;
+  int rc, len, n = 1;
 
   // Are we at the end of the memory
-  if (Mempos >= Top)
-    return RC_EF;
+	if (Mempos >= Top) {
+		if ((rc = GetNext(g)) != RC_OK)
+			return rc;
+		else if (Tdbp->GetAmType() == TYPE_AM_CSV && ((PTDBCSV)Tdbp)->Header)
+			if ((rc = SkipRecord(g, true)) != RC_OK)
+				return rc;
+
+	}	// endif Mempos
+
 
   if (!Placed) {
     /*******************************************************************/
     /*  Record file position in case of UPDATE or DELETE.              */
     /*******************************************************************/
-    int rc;
-
    next:
     Fpos = Mempos;
     CurBlk = (int)Rows++;
@@ -341,8 +346,10 @@ int MAPFAM::ReadBuffer(PGLOBAL g)
     /*******************************************************************/
     switch (Tdbp->TestBlock(g)) {
       case RC_EF:
-        return RC_EF;
-      case RC_NF:
+				if ((rc = GetNext(g)) != RC_OK)
+					return rc;
+
+			case RC_NF:
         // Skip this record
         if ((rc = SkipRecord(g, false)) != RC_OK)
           return rc;
@@ -354,10 +361,14 @@ int MAPFAM::ReadBuffer(PGLOBAL g)
     Placed = false;
 
   // Immediately calculate next position (Used by DeleteDB)
-  while (*Mempos++ != '\n') ;        // What about Unix ???
+  while (*Mempos++ != '\n')          // What about Unix ???
+		if (Mempos == Top) {
+			n = 0;
+			break;
+		}	// endif Mempos
 
   // Set caller line buffer
-  len = (Mempos - Fpos) - 1;
+  len = (int)(Mempos - Fpos) - n;
 
   // Don't rely on ENDING setting
   if (len > 0 && *(Mempos - 2) == '\r')
@@ -396,7 +407,7 @@ int MAPFAM::DeleteRecords(PGLOBAL g, int irc)
   {
   int    n;
 
-  if (trace)
+  if (trace(1))
     htrc("MAP DeleteDB: irc=%d mempos=%p tobuf=%p Tpos=%p Spos=%p\n",
          irc, Mempos, To_Buf, Tpos, Spos);
 
@@ -406,7 +417,7 @@ int MAPFAM::DeleteRecords(PGLOBAL g, int irc)
     /*******************************************************************/
     Fpos = Top;
 
-    if (trace)
+    if (trace(1))
       htrc("Fpos placed at file top=%p\n", Fpos);
 
     } // endif irc
@@ -417,14 +428,14 @@ int MAPFAM::DeleteRecords(PGLOBAL g, int irc)
     /*  not required here, just setting of future Spos and Tpos.       */
     /*******************************************************************/
     Tpos = Spos = Fpos;
-  } else if ((n = Fpos - Spos) > 0) {
+  } else if ((n = (int)(Fpos - Spos)) > 0) {
     /*******************************************************************/
     /*  Non consecutive line to delete. Move intermediate lines.       */
     /*******************************************************************/
     memmove(Tpos, Spos, n);
     Tpos += n;
 
-    if (trace)
+    if (trace(1))
       htrc("move %d bytes\n", n);
 
   } // endif n
@@ -432,7 +443,7 @@ int MAPFAM::DeleteRecords(PGLOBAL g, int irc)
   if (irc == RC_OK) {
     Spos = Mempos;                               // New start position
 
-    if (trace)
+    if (trace(1))
       htrc("after: Tpos=%p Spos=%p\n", Tpos, Spos);
 
   } else if (To_Fb) {                 // Can be NULL for deleted files
@@ -450,7 +461,7 @@ int MAPFAM::DeleteRecords(PGLOBAL g, int irc)
       /*****************************************************************/
       /*  Remove extra records.                                        */
       /*****************************************************************/
-      n = Tpos - Memory;
+      n = (int)(Tpos - Memory);
 
 #if defined(__WIN__)
       DWORD drc = SetFilePointer(fp->Handle, n, NULL, FILE_BEGIN);
@@ -462,7 +473,7 @@ int MAPFAM::DeleteRecords(PGLOBAL g, int irc)
         return RC_FX;
         } // endif
 
-      if (trace)
+      if (trace(1))
        htrc("done, Tpos=%p newsize=%d drc=%d\n", Tpos, n, drc);
 
       if (!SetEndOfFile(fp->Handle)) {
@@ -498,9 +509,9 @@ int MAPFAM::DeleteRecords(PGLOBAL g, int irc)
 void MAPFAM::CloseTableFile(PGLOBAL g, bool)
   {
   PlugCloseFile(g, To_Fb);
-  To_Fb = NULL;              // To get correct file size in Cardinality
+//To_Fb = NULL;              // To get correct file size in Cardinality
 
-  if (trace)
+  if (trace(1))
     htrc("MAP Close: closing %s count=%d\n",
          To_File, (To_Fb) ? To_Fb->Count : 0);
 
@@ -569,7 +580,7 @@ int MBKFAM::GetRowID(void)
 /***********************************************************************/
 int MBKFAM::ReadBuffer(PGLOBAL g)
   {
-  int len;
+  int rc, len;
 
   /*********************************************************************/
   /*  Sequential block reading when Placed is not true.                */
@@ -577,8 +588,10 @@ int MBKFAM::ReadBuffer(PGLOBAL g)
   if (Placed) {
     Placed = false;
   } else if (Mempos >= Top) {        // Are we at the end of the memory
-    return RC_EF;
-  } else if (++CurNum < Nrec) {
+		if ((rc = GetNext(g)) != RC_OK)
+			return rc;
+
+	} else if (++CurNum < Nrec) {
     Fpos = Mempos;
   } else {
     /*******************************************************************/
@@ -588,7 +601,8 @@ int MBKFAM::ReadBuffer(PGLOBAL g)
 
    next:
     if (++CurBlk >= Block)
-      return RC_EF;
+			if ((rc = GetNext(g)) != RC_OK)
+				return rc;
 
     /*******************************************************************/
     /*  Before reading a new block, check whether block optimization   */
@@ -596,8 +610,11 @@ int MBKFAM::ReadBuffer(PGLOBAL g)
     /*******************************************************************/
     switch (Tdbp->TestBlock(g)) {
       case RC_EF:
-        return RC_EF;
-      case RC_NF:
+				if ((rc = GetNext(g)) != RC_OK)
+					return rc;
+
+				break;
+			case RC_NF:
         goto next;
       } // endswitch rc
 
@@ -605,10 +622,12 @@ int MBKFAM::ReadBuffer(PGLOBAL g)
   } // endif's
 
   // Immediately calculate next position (Used by DeleteDB)
-  while (*Mempos++ != '\n') ;        // What about Unix ???
+	while (*Mempos++ != '\n')          // What about Unix ???
+		if (Mempos == Top)
+			break;
 
   // Set caller line buffer
-  len = (Mempos - Fpos) - Ending;
+  len = (int)(Mempos - Fpos) - Ending;
   memcpy(Tdbp->GetLine(), Fpos, len);
   Tdbp->GetLine()[len] = '\0';
   return RC_OK;
@@ -697,14 +716,18 @@ int MPXFAM::InitDelete(PGLOBAL, int fpos, int)
 /***********************************************************************/
 int MPXFAM::ReadBuffer(PGLOBAL g)
   {
+	int rc;
+
   /*********************************************************************/
   /*  Sequential block reading when Placed is not true.                */
   /*********************************************************************/
   if (Placed) {
     Placed = false;
   } else if (Mempos >= Top) {        // Are we at the end of the memory
-    return RC_EF;
-  } else if (++CurNum < Nrec) {
+		if ((rc = GetNext(g)) != RC_OK)
+			return rc;
+
+	} else if (++CurNum < Nrec) {
     Fpos = Mempos;
   } else {
     /*******************************************************************/
@@ -714,7 +737,7 @@ int MPXFAM::ReadBuffer(PGLOBAL g)
 
    next:
     if (++CurBlk >= Block)
-      return RC_EF;
+			return GetNext(g);
 
     /*******************************************************************/
     /*  Before reading a new block, check whether block optimization   */
@@ -722,8 +745,11 @@ int MPXFAM::ReadBuffer(PGLOBAL g)
     /*******************************************************************/
     switch (Tdbp->TestBlock(g)) {
       case RC_EF:
-        return RC_EF;
-      case RC_NF:
+				if ((rc = GetNext(g)) != RC_OK)
+					return rc;
+
+				break;
+			case RC_NF:
         goto next;
       } // endswitch rc
 

@@ -487,14 +487,14 @@ ANALYZE
   "query_block": {
     "select_id": 1,
     "r_loops": 1,
-    "volatile parameter": "REPLACED",
+    "r_total_time_ms": "REPLACED",
     "having_condition": "(TOP > a)",
     "filesort": {
       "r_loops": 1,
-      "volatile parameter": "REPLACED",
+      "r_total_time_ms": "REPLACED",
       "r_used_priority_queue": false,
       "r_output_rows": 0,
-      "volatile parameter": "REPLACED",
+      "r_buffer_size": "REPLACED",
       "temporary_table": {
         "table": {
           "table_name": "t2",
@@ -502,7 +502,7 @@ ANALYZE
           "r_loops": 1,
           "rows": 256,
           "r_rows": 256,
-          "volatile parameter": "REPLACED",
+          "r_total_time_ms": "REPLACED",
           "filtered": 100,
           "r_filtered": 100
         }
@@ -517,13 +517,13 @@ ANALYZE
   "query_block": {
     "select_id": 1,
     "r_loops": 1,
-    "volatile parameter": "REPLACED",
+    "r_total_time_ms": "REPLACED",
     "filesort": {
       "r_loops": 1,
-      "volatile parameter": "REPLACED",
+      "r_total_time_ms": "REPLACED",
       "r_used_priority_queue": false,
       "r_output_rows": 256,
-      "volatile parameter": "REPLACED",
+      "r_buffer_size": "REPLACED",
       "temporary_table": {
         "table": {
           "table_name": "t2",
@@ -531,7 +531,7 @@ ANALYZE
           "r_loops": 1,
           "rows": 256,
           "r_rows": 256,
-          "volatile parameter": "REPLACED",
+          "r_total_time_ms": "REPLACED",
           "filtered": 100,
           "r_filtered": 100
         }
@@ -557,13 +557,13 @@ ANALYZE
   "query_block": {
     "select_id": 1,
     "r_loops": 1,
-    "volatile parameter": "REPLACED",
+    "r_total_time_ms": "REPLACED",
     "filesort": {
       "r_loops": 1,
-      "volatile parameter": "REPLACED",
+      "r_total_time_ms": "REPLACED",
       "r_used_priority_queue": false,
       "r_output_rows": 256,
-      "volatile parameter": "REPLACED",
+      "r_buffer_size": "REPLACED",
       "temporary_table": {
         "table": {
           "table_name": "t2",
@@ -571,7 +571,7 @@ ANALYZE
           "r_loops": 1,
           "rows": 256,
           "r_rows": 256,
-          "volatile parameter": "REPLACED",
+          "r_total_time_ms": "REPLACED",
           "filtered": 100,
           "r_filtered": 100
         }
@@ -593,51 +593,16 @@ ANALYZE
   "query_block": {
     "select_id": 1,
     "r_loops": 1,
-    "volatile parameter": "REPLACED",
+    "r_total_time_ms": "REPLACED",
     "table": {
       "table_name": "t1",
       "access_type": "ALL",
       "r_loops": 1,
       "rows": 2,
       "r_rows": 2,
-      "volatile parameter": "REPLACED",
+      "r_total_time_ms": "REPLACED",
       "filtered": 100,
       "r_filtered": 100
-    },
-    "block-nl-join": {
-      "table": {
-        "table_name": "<subquery2>",
-        "access_type": "ALL",
-        "possible_keys": ["distinct_key"],
-        "r_loops": 1,
-        "rows": 2,
-        "r_rows": 2,
-        "volatile parameter": "REPLACED",
-        "filtered": 100,
-        "r_filtered": 100
-      },
-      "buffer_type": "flat",
-      "buffer_size": "256Kb",
-      "join_type": "BNL",
-      "r_filtered": 100,
-      "materialized": {
-        "unique": 1,
-        "query_block": {
-          "select_id": 2,
-          "r_loops": 1,
-          "volatile parameter": "REPLACED",
-          "table": {
-            "table_name": "t1",
-            "access_type": "ALL",
-            "r_loops": 1,
-            "rows": 2,
-            "r_rows": 2,
-            "volatile parameter": "REPLACED",
-            "filtered": 100,
-            "r_filtered": 100
-          }
-        }
-      }
     },
     "block-nl-join": {
       "table": {
@@ -646,16 +611,35 @@ ANALYZE
         "r_loops": 1,
         "rows": 2,
         "r_rows": 2,
-        "volatile parameter": "REPLACED",
+        "r_total_time_ms": "REPLACED",
         "filtered": 100,
-        "r_filtered": 100
+        "r_filtered": 0,
+        "attached_condition": "<in_optimizer>(t2.b,t2.b in (subquery#2))"
       },
-      "buffer_type": "incremental",
+      "buffer_type": "flat",
       "buffer_size": "256Kb",
       "join_type": "BNL",
-      "attached_condition": "(t2.b = `<subquery2>`.a)",
-      "r_filtered": 0
-    }
+      "r_filtered": null
+    },
+    "subqueries": [
+      {
+        "query_block": {
+          "select_id": 2,
+          "r_loops": 1,
+          "r_total_time_ms": "REPLACED",
+          "table": {
+            "table_name": "t1",
+            "access_type": "ALL",
+            "r_loops": 1,
+            "rows": 2,
+            "r_rows": 2,
+            "r_total_time_ms": "REPLACED",
+            "filtered": 100,
+            "r_filtered": 100
+          }
+        }
+      }
+    ]
   }
 }
 drop table t1,t2;
@@ -678,19 +662,19 @@ ANALYZE
   "query_block": {
     "select_id": 1,
     "r_loops": 1,
-    "volatile parameter": "REPLACED",
+    "r_total_time_ms": "REPLACED",
     "filesort": {
       "r_loops": 1,
-      "volatile parameter": "REPLACED",
+      "r_total_time_ms": "REPLACED",
       "r_used_priority_queue": false,
       "r_output_rows": 0,
-      "volatile parameter": "REPLACED",
+      "r_buffer_size": "REPLACED",
       "filesort": {
         "r_loops": 1,
-        "volatile parameter": "REPLACED",
+        "r_total_time_ms": "REPLACED",
         "r_used_priority_queue": false,
         "r_output_rows": 0,
-        "volatile parameter": "REPLACED",
+        "r_buffer_size": "REPLACED",
         "temporary_table": {
           "temporary_table": {
             "table": {
@@ -699,7 +683,7 @@ ANALYZE
               "r_loops": 1,
               "rows": 2,
               "r_rows": 2,
-              "volatile parameter": "REPLACED",
+              "r_total_time_ms": "REPLACED",
               "filtered": 100,
               "r_filtered": 100
             },
@@ -710,7 +694,7 @@ ANALYZE
                 "r_loops": 1,
                 "rows": 2,
                 "r_rows": 2,
-                "volatile parameter": "REPLACED",
+                "r_total_time_ms": "REPLACED",
                 "filtered": 100,
                 "r_filtered": 0,
                 "attached_condition": "(t3.f3 in (1,2))"

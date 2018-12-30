@@ -67,23 +67,26 @@ public:
                   NOW_FUNC, TRIG_COND_FUNC,
                   SUSERVAR_FUNC, GUSERVAR_FUNC, COLLATE_FUNC,
                   EXTRACT_FUNC, CHAR_TYPECAST_FUNC, FUNC_SP, UDF_FUNC,
-                  NEG_FUNC, GSYSVAR_FUNC, DYNCOL_FUNC };
+                  NEG_FUNC, GSYSVAR_FUNC, IN_OPTIMIZER_FUNC, DYNCOL_FUNC };
   enum Type type() const { return FUNC_ITEM; }
   virtual enum Functype functype() const   { return UNKNOWN_FUNC; }
   Item_func(THD *thd): Item_func_or_sum(thd), allowed_arg_cols(1)
   {
     with_sum_func= 0;
     with_field= 0;
+    with_param= 0;
   }
   Item_func(THD *thd, Item *a): Item_func_or_sum(thd, a), allowed_arg_cols(1)
   {
     with_sum_func= a->with_sum_func;
+    with_param= a->with_param;
     with_field= a->with_field;
   }
   Item_func(THD *thd, Item *a, Item *b):
     Item_func_or_sum(thd, a, b), allowed_arg_cols(1)
   {
     with_sum_func= a->with_sum_func || b->with_sum_func;
+    with_param= a->with_param || b->with_param;
     with_field= a->with_field || b->with_field;
   }
   Item_func(THD *thd, Item *a, Item *b, Item *c):
@@ -91,6 +94,7 @@ public:
   {
     with_sum_func= a->with_sum_func || b->with_sum_func || c->with_sum_func;
     with_field= a->with_field || b->with_field || c->with_field;
+    with_param= a->with_param || b->with_param || c->with_param;
   }
   Item_func(THD *thd, Item *a, Item *b, Item *c, Item *d):
     Item_func_or_sum(thd, a, b, c, d), allowed_arg_cols(1)
@@ -99,6 +103,8 @@ public:
                    c->with_sum_func || d->with_sum_func;
     with_field= a->with_field || b->with_field ||
                 c->with_field || d->with_field;
+    with_param= a->with_param || b->with_param ||
+                c->with_param || d->with_param;
   }
   Item_func(THD *thd, Item *a, Item *b, Item *c, Item *d, Item* e):
     Item_func_or_sum(thd, a, b, c, d, e), allowed_arg_cols(1)
@@ -107,6 +113,8 @@ public:
                    c->with_sum_func || d->with_sum_func || e->with_sum_func;
     with_field= a->with_field || b->with_field ||
                 c->with_field || d->with_field || e->with_field;
+    with_param= a->with_param || b->with_param ||
+                c->with_param || d->with_param || e->with_param;
   }
   Item_func(THD *thd, List<Item> &list):
     Item_func_or_sum(thd, list), allowed_arg_cols(1)
@@ -126,7 +134,7 @@ public:
     Item_func_or_sum::cleanup();
     used_tables_and_const_cache_init();
   }
-  void fix_after_pullout(st_select_lex *new_parent, Item **ref);
+  void fix_after_pullout(st_select_lex *new_parent, Item **ref, bool merge);
   void quick_fix_field();
   table_map not_null_tables() const;
   void update_used_tables()
@@ -173,12 +181,10 @@ public:
   }
   void signal_divide_by_null();
   friend class udf_handler;
-  Field *tmp_table_field() { return result_field; }
-  Field *tmp_table_field(TABLE *t_arg);
-  Field *create_field_for_create_select(THD *thd, TABLE *table)
+  Field *create_field_for_create_select(TABLE *table)
   {
     return result_type() != STRING_RESULT ?
-           tmp_table_field(table) :
+           create_tmp_field(false, table, MY_INT32_NUM_DECIMAL_DIGITS) :
            tmp_table_field_from_field_type(table, false, false);
   }
   Item *get_tmp_table_item(THD *thd);
@@ -376,7 +382,11 @@ public:
   String *val_str(String*str);
   my_decimal *val_decimal(my_decimal *decimal_value);
   longlong val_int()
-    { DBUG_ASSERT(fixed == 1); return (longlong) rint(val_real()); }
+  {
+    DBUG_ASSERT(fixed == 1);
+    bool error;
+    return double_to_longlong(val_real(), unsigned_flag, &error);
+  }
   enum Item_result result_type () const { return REAL_RESULT; }
   void fix_length_and_dec()
   { decimals= NOT_FIXED_DEC; max_length= float_length(decimals); }
@@ -628,8 +638,15 @@ public:
   longlong val_int_from_str(int *error);
   void fix_length_and_dec()
   {
-    fix_char_length(MY_MIN(args[0]->max_char_length(),
-                           MY_INT64_NUM_DECIMAL_DIGITS));
+    uint32 char_length= MY_MIN(args[0]->max_char_length(),
+                               MY_INT64_NUM_DECIMAL_DIGITS);
+    /*
+      args[0]->max_char_length() can return 0.
+      Reserve max_length to fit at least one character for one digit,
+      plus one character for the sign (if signed).
+    */
+    set_if_bigger(char_length, 1U + (unsigned_flag ? 0 : 1));
+    fix_char_length(char_length);
   }
   virtual void print(String *str, enum_query_type query_type);
   uint decimal_precision() const { return args[0]->decimal_precision(); }
@@ -951,13 +968,6 @@ public:
   const char *func_name() const { return "cot"; }
 };
 
-class Item_func_integer :public Item_int_func
-{
-public:
-  inline Item_func_integer(THD *thd, Item *a): Item_int_func(thd, a) {}
-  void fix_length_and_dec();
-};
-
 
 class Item_func_int_val :public Item_func_num1
 {
@@ -1070,7 +1080,6 @@ class Item_func_min_max :public Item_hybrid_func
 {
   String tmp_value;
   int cmp_sign;
-  THD *thd;
 public:
   Item_func_min_max(THD *thd, List<Item> &list, int cmp_sign_arg):
     Item_hybrid_func(thd, list), cmp_sign(cmp_sign_arg)
@@ -1165,7 +1174,11 @@ public:
   longlong val_int();
   const char *func_name() const { return "coercibility"; }
   void fix_length_and_dec() { max_length=10; maybe_null= 0; }
-  table_map not_null_tables() const { return 0; }
+  bool eval_not_null_tables(uchar *)
+  {
+    not_null_tables_cache= 0;
+    return false;
+  }
   Item* propagate_equal_fields(THD *thd, const Context &ctx, COND_EQUAL *cond)
   { return this; }
   bool const_item() const { return true; }
@@ -1447,7 +1460,11 @@ public:
   }
   void cleanup();
   Item_result result_type () const { return udf.result_type(); }
-  table_map not_null_tables() const { return 0; }
+  bool eval_not_null_tables(uchar *opt_arg)
+  {
+    not_null_tables_cache= 0;
+    return 0;
+  }
   bool is_expensive() { return 1; }
   virtual void print(String *str, enum_query_type query_type);
 };
@@ -1464,7 +1481,9 @@ class Item_func_udf_float :public Item_udf_func
   longlong val_int()
   {
     DBUG_ASSERT(fixed == 1);
-    return (longlong) rint(Item_func_udf_float::val_real());
+    bool error;
+    return double_to_longlong(Item_func_udf_float::val_real(),
+                              unsigned_flag, &error);
   }
   my_decimal *val_decimal(my_decimal *dec_buf)
   {
@@ -1672,7 +1691,7 @@ public:
   Item_master_gtid_wait(THD *thd, Item *a, Item *b): Item_int_func(thd, a, b) {}
   longlong val_int();
   const char *func_name() const { return "master_gtid_wait"; }
-  void fix_length_and_dec() { max_length=10+1+10+1+20+1; maybe_null=0;}
+  void fix_length_and_dec() { max_length=2; }
   bool check_vcol_func_processor(uchar *int_arg) 
   {
     return trace_unsupported_by_check_vcol_func_processor(func_name());
@@ -1762,18 +1781,12 @@ public:
   bool update();
   bool fix_fields(THD *thd, Item **ref);
   void fix_length_and_dec();
-  Field *create_field_for_create_select(THD *thd, TABLE *table)
+  Field *create_field_for_create_select(TABLE *table)
   {
     return result_type() != STRING_RESULT ?
-           tmp_table_field(table) :
+           create_tmp_field(false, table, MY_INT32_NUM_DECIMAL_DIGITS) :
            tmp_table_field_from_field_type(table, false, true);
   }
-  table_map used_tables() const
-  {
-    return used_tables_cache | RAND_TABLE_BIT;
-  }
-  bool const_item() const { return 0; }
-  bool is_expensive() { return 1; }
   virtual void print(String *str, enum_query_type query_type);
   void print_as_stmt(String *str, enum_query_type query_type);
   const char *func_name() const { return "set_user_var"; }
@@ -1943,7 +1956,11 @@ public:
   bool is_expensive_processor(uchar *arg) { return TRUE; }
   enum Functype functype() const { return FT_FUNC; }
   const char *func_name() const { return "match"; }
-  table_map not_null_tables() const { return 0; }
+  bool eval_not_null_tables(uchar *opt_arg)
+  {
+    not_null_tables_cache= 0;
+    return 0;
+  }
   bool fix_fields(THD *thd, Item **ref);
   bool eq(const Item *, bool binary_cmp) const;
   /* The following should be safe, even if we compare doubles */
@@ -2106,8 +2123,12 @@ public:
 
   enum enum_field_types field_type() const;
 
-  Field *tmp_table_field(TABLE *t_arg);
-
+  Field *create_field_for_create_select(TABLE *table)
+  {
+    return result_type() != STRING_RESULT ?
+           sp_result_field :
+           tmp_table_field_from_field_type(table, false, false);
+  }
   void make_field(Send_field *tmp_field);
 
   Item_result result_type() const;
@@ -2180,6 +2201,11 @@ public:
   {
     return TRUE;
   }
+  bool eval_not_null_tables(uchar *opt_arg)
+  {
+    not_null_tables_cache= 0;
+    return 0;
+  }
 };
 
 
@@ -2205,6 +2231,8 @@ public:
   Item_func_uuid_short(THD *thd): Item_int_func(thd) {}
   const char *func_name() const { return "uuid_short"; }
   longlong val_int();
+  bool const_item() const { return false; }
+  table_map used_tables() const { return RAND_TABLE_BIT; }
   void fix_length_and_dec()
   { max_length= 21; unsigned_flag=1; }
   bool check_vcol_func_processor(uchar *int_arg) 
@@ -2227,7 +2255,11 @@ public:
   void fix_length_and_dec();
   enum Item_result result_type () const { return last_value->result_type(); }
   const char *func_name() const { return "last_value"; }
-  table_map not_null_tables() const { return 0; }
+  bool eval_not_null_tables(uchar *opt_arg)
+  {
+    not_null_tables_cache= 0;
+    return 0;
+  }
   enum_field_types field_type() const { return last_value->field_type(); }
   bool const_item() const { return 0; }
   void evaluate_sideeffects();

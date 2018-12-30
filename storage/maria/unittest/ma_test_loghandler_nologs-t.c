@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #include "../maria_def.h"
 #include <stdio.h>
@@ -190,6 +190,8 @@ int main(int argc __attribute__((unused)), char *argv[])
 
   if (maria_log_remove(maria_data_root))
     exit(1);
+
+  free(long_buffer);
 
   my_uuid_end();
   my_free_open_file_info();

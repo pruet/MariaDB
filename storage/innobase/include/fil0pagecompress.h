@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (C) 2013, 2016 MariaDB Corporation. All Rights Reserved.
+Copyright (C) 2013, 2018 MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -30,113 +30,31 @@ atomic writes information to table space.
 Created 11/12/2013 Jan Lindström jan.lindstrom@skysql.com
 ***********************************************************************/
 
-/*******************************************************************//**
-Returns the page compression level flag of the space, or 0 if the space
-is not compressed. The tablespace must be cached in the memory cache.
-@return	page compression level if page compressed, ULINT_UNDEFINED if space not found */
-UNIV_INTERN
-ulint
-fil_space_get_page_compression_level(
-/*=================================*/
-	ulint	id);	/*!< in: space id */
-/*******************************************************************//**
-Returns the page compression flag of the space, or false if the space
-is not compressed. The tablespace must be cached in the memory cache.
-@return	true if page compressed, false if not or space not found */
-UNIV_INTERN
-ibool
-fil_space_is_page_compressed(
-/*=========================*/
-	ulint	id);	/*!< in: space id */
-/*******************************************************************//**
-Returns the page compression flag of the space, or false if the space
-is not compressed. The tablespace must be cached in the memory cache.
-@return	true if page compressed, false if not or space not found */
-UNIV_INTERN
-ibool
-fil_space_get_page_compressed(
-/*=========================*/
-	fil_space_t*	space);	/*!< in: space id */
-/*******************************************************************//**
-Returns the atomic writes flag of the space, or false if the space
-is not using atomic writes. The tablespace must be cached in the memory cache.
-@return	atomic write table option value */
-UNIV_INTERN
-atomic_writes_t
-fil_space_get_atomic_writes(
-/*=========================*/
-	ulint	id);	/*!< in: space id */
-/*******************************************************************//**
-Find out wheather the page is index page or not
-@return	true if page type index page, false if not */
-UNIV_INTERN
-ibool
-fil_page_is_index_page(
-/*===================*/
-	byte	*buf);	/*!< in: page */
+/** Compress a page_compressed page before writing to a data file.
+@param[in]	buf		page to be compressed
+@param[out]	out_buf		compressed page
+@param[in]	level		compression level
+@param[in]	block_size	file system block size
+@param[in]	encrypted	whether the page will be subsequently encrypted
+@return actual length of compressed page
+@retval	0	if the page was not compressed */
+UNIV_INTERN ulint fil_page_compress(const byte* buf, byte* out_buf, ulint level,
+				    ulint block_size, bool encrypted)
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
-/****************************************************************//**
-Get the name of the compression algorithm used for page
-compression.
-@return compression algorithm name or "UNKNOWN" if not known*/
-UNIV_INTERN
-const char*
-fil_get_compression_alg_name(
-/*=========================*/
-       ulint	comp_alg);	/*!<in: compression algorithm number */
-
-/****************************************************************//**
-For page compressed pages compress the page before actual write
-operation.
-@return compressed page to be written*/
-UNIV_INTERN
-byte*
-fil_compress_page(
-/*==============*/
-	ulint	space_id,	/*!< in: tablespace id of the
-				table. */
-	byte*	buf,		/*!< in: buffer from which to write; in aio
-				this must be appropriately aligned */
-	byte*	out_buf,	/*!< out: compressed buffer */
-	ulint	len,		/*!< in: length of input buffer.*/
-	ulint	level,		/* in: compression level */
-	ulint	block_size,	/*!< in: block size */
-	bool	encrypted,	/*!< in: is page also encrypted */
-	ulint*	out_len,	/*!< out: actual length of compressed
-				page */
-	byte*	lzo_mem);	/*!< in: temporal memory used by LZO */
-
-/****************************************************************//**
-For page compressed pages decompress the page after actual read
-operation. */
-UNIV_INTERN
-void
-fil_decompress_page(
-/*================*/
-	byte*	page_buf,	/*!< in: preallocated buffer or NULL */
-	byte*	buf,		/*!< out: buffer from which to read; in aio
-				this must be appropriately aligned */
-	ulong	len,		/*!< in: length of output buffer.*/
-	ulint*	write_size,	/*!< in/out: Actual payload size of
-				the compressed data. */
-	bool	return_error=false);
-				/*!< in: true if only an error should
-				be produced when decompression fails.
-				By default this parameter is false. */
-
-/****************************************************************//**
-Get space id from fil node
-@return space id*/
-UNIV_INTERN
-ulint
-fil_node_get_space_id(
-/*==================*/
-        fil_node_t*	node);	/*!< in: Node where to get space id*/
+/** Decompress a page that may be subject to page_compressed compression.
+@param[in,out]	tmp_buf		temporary buffer (of innodb_page_size)
+@param[in,out]	buf		compressed page buffer
+@return size of the compressed data
+@retval	0		if decompression failed
+@retval	srv_page_size	if the page was not compressed */
+UNIV_INTERN ulint fil_page_decompress(byte* tmp_buf, byte* buf)
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /****************************************************************//**
 Get block size from fil node
 @return block size*/
-UNIV_INTERN
+UNIV_INLINE
 ulint
 fil_node_get_block_size(
 	fil_node_t*	node);	/*!< in: Node where to get block
@@ -144,7 +62,7 @@ fil_node_get_block_size(
 /*******************************************************************//**
 Find out wheather the page is page compressed
 @return	true if page is page compressed*/
-UNIV_INTERN
+UNIV_INLINE
 ibool
 fil_page_is_compressed(
 /*===================*/
@@ -153,18 +71,9 @@ fil_page_is_compressed(
 /*******************************************************************//**
 Find out wheather the page is page compressed
 @return	true if page is page compressed*/
-UNIV_INTERN
+UNIV_INLINE
 ibool
 fil_page_is_compressed_encrypted(
 /*=============================*/
-	byte*	buf);	/*!< in: page */
-
-/*******************************************************************//**
-Find out wheather the page is page compressed with lzo method
-@return	true if page is page compressed with lzo method*/
-UNIV_INTERN
-ibool
-fil_page_is_lzo_compressed(
-/*=======================*/
 	byte*	buf);	/*!< in: page */
 #endif

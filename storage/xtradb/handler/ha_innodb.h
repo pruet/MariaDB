@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2000, 2012, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2013, 2016, MariaDB Corporation.
+Copyright (c) 2000, 2017, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2013, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -100,8 +100,6 @@ class ha_innobase: public handler
 					or undefined */
 	uint		num_write_row;	/*!< number of write_row() calls */
 
-	ha_statistics*	ha_partition_stats; /*!< stats of the partition owner
-					handler (if there is one) */
 	uint store_key_val_for_row(uint keynr, char* buff, uint buff_len,
                                    const uchar* record);
 	inline void update_thd(THD* thd);
@@ -167,13 +165,19 @@ class ha_innobase: public handler
 	int index_first(uchar * buf);
 	int index_last(uchar * buf);
 
+	/* Copy a cached MySQL row. If requested, also avoids
+	overwriting non-read columns. */
+	void copy_cached_row(uchar *to_rec, const uchar *from_rec,
+				uint rec_length);
+	bool has_gap_locks() const { return true; }
+
 	int rnd_init(bool scan);
 	int rnd_end();
 	int rnd_next(uchar *buf);
 	int rnd_pos(uchar * buf, uchar *pos);
 
 	int ft_init();
-	void ft_end();
+	void ft_end() { rnd_end(); }
 	FT_INFO *ft_init_ext(uint flags, uint inx, String* key);
 	int ft_read(uchar* buf);
 
@@ -202,7 +206,7 @@ class ha_innobase: public handler
 			     char* remote_path);
 	const char* check_table_options(THD *thd, TABLE* table,
 		HA_CREATE_INFO*	create_info, const bool use_tablespace, const ulint file_format);
-	int create(const char *name, register TABLE *form,
+	int create(const char *name, TABLE *form,
 					HA_CREATE_INFO *create_info);
 	int truncate();
 	int delete_table(const char *name);
@@ -312,9 +316,9 @@ class ha_innobase: public handler
 		Alter_inplace_info*	ha_alter_info,
 		bool			commit);
 	/** @} */
-	void set_partition_owner_stats(ha_statistics *stats);
 	bool check_if_incompatible_data(HA_CREATE_INFO *info,
 					uint table_changes);
+
 	bool check_if_supported_virtual_columns(void) { return TRUE; }
 
 private:
@@ -385,10 +389,6 @@ public:
 	* @return idx_cond if pushed; NULL if not pushed
 	*/
 	class Item* idx_cond_push(uint keyno, class Item* idx_cond);
-
-        /* An helper function for index_cond_func_innodb: */
-        bool is_thd_killed();
-
 private:
 	/** The multi range read session object */
 	DsMrr_impl ds_mrr;
@@ -423,6 +423,15 @@ int thd_slave_thread(const MYSQL_THD thd);
   @retval 1 the user thread is running a non-transactional update
 */
 int thd_non_transactional_update(const MYSQL_THD thd);
+
+/**
+  Get high resolution timestamp for the current query start time.
+  The timestamp is not anchored to any specific point in time,
+  but can be used for comparison.
+
+  @retval timestamp in microseconds precision
+*/
+unsigned long long thd_start_utime(const MYSQL_THD thd);
 
 /**
   Get the user thread's binary logging format
@@ -466,7 +475,7 @@ enum durability_properties thd_get_durability_property(const MYSQL_THD thd);
 @return True if sql_mode has strict mode (all or trans), false otherwise.
 */
 bool thd_is_strict_mode(const MYSQL_THD thd)
-__attribute__((nonnull));
+MY_ATTRIBUTE((nonnull));
 } /* extern "C" */
 
 /** Get the file name and position of the MySQL binlog corresponding to the
@@ -528,7 +537,7 @@ innobase_index_name_is_reserved(
 	const KEY*	key_info,	/*!< in: Indexes to be created */
 	ulint		num_of_keys)	/*!< in: Number of indexes to
 					be created. */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull(1), warn_unused_result));
 
 /*****************************************************************//**
 #ifdef WITH_WSREP
@@ -548,7 +557,7 @@ innobase_table_flags(
 						outside system tablespace */
 	ulint*			flags,		/*!< out: DICT_TF flags */
 	ulint*			flags2)		/*!< out: DICT_TF2 flags */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /*****************************************************************//**
 Validates the create options. We may build on this function
@@ -565,7 +574,7 @@ create_options_are_invalid(
 					columns and indexes */
 	HA_CREATE_INFO*	create_info,	/*!< in: create info. */
 	bool		use_tablespace)	/*!< in: srv_file_per_table */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /*********************************************************************//**
 Retrieve the FTS Relevance Ranking result for doc with doc_id
@@ -595,7 +604,7 @@ void
 innobase_fts_close_ranking(
 /*=======================*/
 	FT_INFO*	fts_hdl)	/*!< in: FTS handler */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 /*****************************************************************//**
 Initialize the table FTS stopword list
 @return TRUE if success */
@@ -606,7 +615,7 @@ innobase_fts_load_stopword(
 	dict_table_t*	table,		/*!< in: Table has the FTS */
 	trx_t*		trx,		/*!< in: transaction */
 	THD*		thd)		/*!< in: current thread */
-	__attribute__((nonnull(1,3), warn_unused_result));
+	MY_ATTRIBUTE((nonnull(1,3), warn_unused_result));
 
 /** Some defines for innobase_fts_check_doc_id_index() return value */
 enum fts_doc_id_index_enum {
@@ -628,7 +637,7 @@ innobase_fts_check_doc_id_index(
 						that is being altered */
 	ulint*			fts_doc_col_no)	/*!< out: The column number for
 						Doc ID */
-	__attribute__((warn_unused_result));
+	MY_ATTRIBUTE((warn_unused_result));
 
 /*******************************************************************//**
 Check whether the table has a unique index with FTS_DOC_ID_INDEX_NAME
@@ -641,7 +650,7 @@ innobase_fts_check_doc_id_index_in_def(
 /*===================================*/
 	ulint		n_key,		/*!< in: Number of keys */
 	const KEY*	key_info)	/*!< in: Key definitions */
-	__attribute__((nonnull, warn_unused_result));
+	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
 /***********************************************************************
 @return version of the extended FTS API */

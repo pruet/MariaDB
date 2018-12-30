@@ -40,56 +40,6 @@ Modified 30/07/2014 Jan Lindström jan.lindstrom@mariadb.com
 
 #include <list>
 
-/**************************************************//**
-Custom nullptr implementation for under g++ 4.6
-*******************************************************/
-/*
-// #pragma once
-namespace std
-{
- // based on SC22/WG21/N2431 = J16/07-0301
- struct nullptr_t
- {
- template<typename any> operator any * () const
- {
- return 0;
- }
- template<class any, typename T> operator T any:: * () const
- {
- return 0;
- }
-
-#ifdef _MSC_VER
- struct pad {};
- pad __[sizeof(void*)/sizeof(pad)];
-#else
- char __[sizeof(void*)];
-#endif
-private:
- // nullptr_t();// {}
- // nullptr_t(const nullptr_t&);
- // void operator = (const nullptr_t&);
- void operator &() const;
- template<typename any> void operator +(any) const
- {
- // I Love MSVC 2005!
- }
- template<typename any> void operator -(any) const
- {
- // I Love MSVC 2005!
- }
- };
-static const nullptr_t __nullptr = {};
-}
-
-#ifndef nullptr
-#define nullptr std::__nullptr
-#endif
-*/
-/**************************************************//**
-End of Custom nullptr implementation for under g++ 4.6
-*******************************************************/
-
 /* When there's no work, either because defragment is disabled, or because no
 query is submitted, thread checks state every BTR_DEFRAGMENT_SLEEP_IN_USECS.*/
 #define BTR_DEFRAGMENT_SLEEP_IN_USECS		1000000
@@ -154,7 +104,6 @@ btr_defragment_init()
 		1000000.0 / srv_defragment_frequency);
 	mutex_create(btr_defragment_mutex_key, &btr_defragment_mutex,
 		     SYNC_ANY_LATCH);
-	os_thread_create(btr_defragment_thread, NULL, NULL);
 }
 
 /******************************************************************//**
@@ -227,13 +176,13 @@ btr_defragment_add_index(
 		page = buf_block_get_frame(block);
 	}
 
-	if (page == NULL && index->table->is_encrypted) {
+	if (page == NULL && index->table->file_unreadable) {
 		mtr_commit(&mtr);
 		*err = DB_DECRYPTION_FAILED;
 		return NULL;
 	}
 
-	if (btr_page_get_level(page, &mtr) == 0) {
+	if (page_is_leaf(page)) {
 		// Index root is a leaf page, no need to defragment.
 		mtr_commit(&mtr);
 		return NULL;
@@ -735,14 +684,13 @@ btr_defragment_n_pages(
 	return current_block;
 }
 
-/******************************************************************//**
-Thread that merges consecutive b-tree pages into fewer pages to defragment
-the index. */
+/** Whether btr_defragment_thread is active */
+bool btr_defragment_thread_active;
+
+/** Merge consecutive b-tree pages into fewer pages to defragment indexes */
 extern "C" UNIV_INTERN
 os_thread_ret_t
-DECLARE_THREAD(btr_defragment_thread)(
-/*==========================================*/
-	void*	arg)	/*!< in: work queue */
+DECLARE_THREAD(btr_defragment_thread)(void*)
 {
 	btr_pcur_t*	pcur;
 	btr_cur_t*	cursor;
@@ -752,6 +700,8 @@ DECLARE_THREAD(btr_defragment_thread)(
 	buf_block_t*	last_block;
 
 	while (srv_shutdown_state == SRV_SHUTDOWN_NONE) {
+		ut_ad(btr_defragment_thread_active);
+
 		/* If defragmentation is disabled, sleep before
 		checking whether it's enabled. */
 		if (!srv_defragment) {
@@ -825,9 +775,9 @@ DECLARE_THREAD(btr_defragment_thread)(
 			btr_defragment_remove_item(item);
 		}
 	}
-	btr_defragment_shutdown();
+
+	btr_defragment_thread_active = false;
 	os_thread_exit(NULL);
 	OS_THREAD_DUMMY_RETURN;
 }
-
 #endif /* !UNIV_HOTBACKUP */

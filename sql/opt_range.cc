@@ -2081,7 +2081,7 @@ public:
   /* Table read plans are allocated on MEM_ROOT and are never deleted */
   static void *operator new(size_t size, MEM_ROOT *mem_root)
   { return (void*) alloc_root(mem_root, (uint) size); }
-  static void operator delete(void *ptr,size_t size) { TRASH(ptr, size); }
+  static void operator delete(void *ptr,size_t size) { TRASH_FREE(ptr, size); }
   static void operator delete(void *ptr, MEM_ROOT *mem_root) { /* Never called */ }
   virtual ~TABLE_READ_PLAN() {}               /* Remove gcc warning */
 
@@ -2426,8 +2426,6 @@ int SQL_SELECT::test_quick_select(THD *thd, key_map keys_to_use,
     scan_time= read_time= DBL_MAX;
   if (limit < records)
     read_time= (double) records + scan_time + 1; // Force to use index
-  else if (read_time <= 2.0 && !force_quick_range)
-    DBUG_RETURN(0);				/* No need for quick select */
   
   possible_keys.clear_all();
 
@@ -2697,7 +2695,6 @@ int SQL_SELECT::test_quick_select(THD *thd, key_map keys_to_use,
     thd->no_errors=0;
   }
 
-
   DBUG_EXECUTE("info", print_quick(quick, &needed_reg););
 
   /*
@@ -2737,16 +2734,25 @@ bool create_key_parts_for_pseudo_indexes(RANGE_OPT_PARAM *param,
 {
   Field **field_ptr;
   TABLE *table= param->table;
+  partition_info *part_info= NULL;
+  #ifdef WITH_PARTITION_STORAGE_ENGINE
+    part_info= table->part_info;
+  #endif
   uint parts= 0;
 
   for (field_ptr= table->field; *field_ptr; field_ptr++)
   {
-    if (bitmap_is_set(used_fields, (*field_ptr)->field_index))
+    Field *field= *field_ptr;
+    if (bitmap_is_set(used_fields, field->field_index) &&
+        is_eits_usable(field))
       parts++;
   }
 
   KEY_PART *key_part;
   uint keys= 0;
+
+  if (!parts)
+    return TRUE;
 
   if (!(key_part= (KEY_PART *)  alloc_root(param->mem_root,
                                            sizeof(KEY_PART) * parts)))
@@ -2756,13 +2762,23 @@ bool create_key_parts_for_pseudo_indexes(RANGE_OPT_PARAM *param,
   uint max_key_len= 0;
   for (field_ptr= table->field; *field_ptr; field_ptr++)
   {
-    if (bitmap_is_set(used_fields, (*field_ptr)->field_index))
+    Field *field= *field_ptr;
+    if (bitmap_is_set(used_fields, field->field_index))
     {
-      Field *field= *field_ptr;
+      if (!is_eits_usable(field))
+        continue;
+
       uint16 store_length;
+      uint16 max_key_part_length= (uint16) table->file->max_key_part_length();
       key_part->key= keys;
       key_part->part= 0;
-      key_part->length= (uint16) field->key_length();
+      if (field->flags & BLOB_FLAG)
+        key_part->length= max_key_part_length;
+      else
+      {
+        key_part->length= (uint16) field->key_length();
+        set_if_smaller(key_part->length, max_key_part_length);
+      }
       store_length= key_part->length;
       if (field->real_maybe_null())
         store_length+= HA_KEY_NULL_LENGTH;
@@ -2909,7 +2925,18 @@ bool calculate_cond_selectivity_for_table(THD *thd, TABLE *table, Item **cond)
 
   table->cond_selectivity= 1.0;
 
-  if (!*cond || table_records == 0)
+  if (table_records == 0)
+    DBUG_RETURN(FALSE);
+
+  QUICK_SELECT_I *quick;
+  if ((quick=table->reginfo.join_tab->quick) &&
+      quick->get_type() == QUICK_SELECT_I::QS_TYPE_GROUP_MIN_MAX)
+  {
+    table->cond_selectivity*= (quick->records/table_records);
+    DBUG_RETURN(FALSE);
+  }
+
+  if (!*cond)
     DBUG_RETURN(FALSE);
 
   if (table->pos_in_table_list->schema_table)
@@ -3026,7 +3053,8 @@ bool calculate_cond_selectivity_for_table(THD *thd, TABLE *table, Item **cond)
   */
 
   if (thd->variables.optimizer_use_condition_selectivity > 2 &&
-      !bitmap_is_clear_all(used_fields))
+      !bitmap_is_clear_all(used_fields) &&
+      thd->variables.use_stat_tables > 0)
   {
     PARAM param;
     MEM_ROOT alloc;
@@ -3108,9 +3136,16 @@ bool calculate_cond_selectivity_for_table(THD *thd, TABLE *table, Item **cond)
     }
 
   free_alloc:
+    thd->no_errors= 0;
     thd->mem_root= param.old_root;
     free_root(&alloc, MYF(0));
 
+  }
+
+  if (quick && (quick->get_type() == QUICK_SELECT_I::QS_TYPE_ROR_UNION || 
+     quick->get_type() == QUICK_SELECT_I::QS_TYPE_INDEX_MERGE))
+  {
+    table->cond_selectivity*= (quick->records/table_records);
   }
 
   bitmap_union(used_fields, &handled_columns);
@@ -6962,7 +6997,10 @@ QUICK_SELECT_I *TRP_ROR_UNION::make_quick(PARAM *param,
     {
       if (!(quick= (*scan)->make_quick(param, FALSE, &quick_roru->alloc)) ||
           quick_roru->push_quick_back(quick))
+      {
+        delete quick_roru;
         DBUG_RETURN(NULL);
+      }
     }
     quick_roru->records= records;
     quick_roru->read_time= read_cost;
@@ -7114,7 +7152,7 @@ SEL_TREE *Item_func_in::get_func_mm_tree(RANGE_OPT_PARAM *param,
         DBUG_RETURN(NULL);
       }
       SEL_TREE *tree2;
-      for (; i < array->count; i++)
+      for (; i < array->used_count; i++)
       {
         if (array->compare_elems(i, i-1))
         {
@@ -7298,8 +7336,11 @@ SEL_TREE *Item_bool_func::get_full_func_mm_tree(RANGE_OPT_PARAM *param,
   table_map param_comp= ~(param->prev_tables | param->read_tables |
 		          param->current_table);
 #ifdef HAVE_SPATIAL
-  if (field_item->field->type() == MYSQL_TYPE_GEOMETRY)
+  Field::geometry_type sav_geom_type;
+  const bool geometry= field_item->field->type() == MYSQL_TYPE_GEOMETRY;
+  if (geometry)
   {
+    sav_geom_type= ((Field_geom*) field_item->field)->geom_type;
     /* We have to be able to store all sorts of spatial features here */
     ((Field_geom*) field_item->field)->geom_type= Field::GEOM_GEOMETRY;
   }
@@ -7330,6 +7371,13 @@ SEL_TREE *Item_bool_func::get_full_func_mm_tree(RANGE_OPT_PARAM *param,
       }
     }
   }
+
+#ifdef HAVE_SPATIAL
+  if (geometry)
+  {
+    ((Field_geom*) field_item->field)->geom_type= sav_geom_type;
+  }
+#endif /*HAVE_SPATIAL*/
   DBUG_RETURN(ftree);
 }
 
@@ -8321,6 +8369,34 @@ bool sel_trees_can_be_ored(RANGE_OPT_PARAM* param,
 }
 
 /*
+  Check whether the key parts inf_init..inf_end-1 of one index can compose
+  an infix for the key parts key_init..key_end-1 of another index
+*/
+
+static
+bool is_key_infix(KEY_PART *key_init, KEY_PART *key_end,
+                  KEY_PART *inf_init, KEY_PART *inf_end)
+{
+  KEY_PART *key_part, *inf_part;
+  for (key_part= key_init; key_part < key_end; key_part++)
+  {
+    if (key_part->field->eq(inf_init->field))
+      break;
+  }
+  if (key_part == key_end)
+    return false;
+  for (key_part++, inf_part= inf_init + 1;
+       key_part < key_end && inf_part < inf_end;
+       key_part++, inf_part++)
+  { 
+    if (!key_part->field->eq(inf_part->field))
+      return false;
+  }
+  return inf_part == inf_end;
+}
+
+
+/*
   Check whether range parts of two trees must be ored for some indexes
 
   SYNOPSIS
@@ -8376,14 +8452,9 @@ bool sel_trees_must_be_ored(RANGE_OPT_PARAM* param,
       
       KEY_PART *key2_init= param->key[idx2]+tree2->keys[idx2]->part;
       KEY_PART *key2_end= param->key[idx2]+tree2->keys[idx2]->max_part_no;
-      KEY_PART *part1, *part2;
-      for (part1= key1_init, part2= key2_init;
-           part1 < key1_end && part2 < key2_end;
-           part1++, part2++)
-      { 
-        if (!part1->field->eq(part2->field))
-          DBUG_RETURN(FALSE);
-      }
+      if (!is_key_infix(key1_init, key1_end, key2_init, key2_end) &&
+          !is_key_infix(key2_init, key2_end, key1_init, key1_end))
+        DBUG_RETURN(FALSE);
     }
   }
       
@@ -8566,14 +8637,31 @@ tree_or(RANGE_OPT_PARAM *param,SEL_TREE *tree1,SEL_TREE *tree2)
     imerge[0]= new SEL_IMERGE(tree1->merges.head(), 0, param);
   }
   bool no_imerge_from_ranges= FALSE;
-  if (!(result= new (param->mem_root) SEL_TREE(param->mem_root, param->keys)))
-    DBUG_RETURN(result);
 
   /* Build the range part of the tree for the formula (1) */ 
   if (sel_trees_can_be_ored(param, tree1, tree2, &ored_keys))
   {
     bool must_be_ored= sel_trees_must_be_ored(param, tree1, tree2, ored_keys);
     no_imerge_from_ranges= must_be_ored;
+
+    if (no_imerge_from_ranges && no_merges1 && no_merges2)
+    {
+      /*
+        Reuse tree1 as the result in simple cases. This reduces memory usage
+        for e.g. "key IN (c1, ..., cN)" which produces a lot of ranges.
+      */
+      result= tree1;
+      result->keys_map.clear_all();
+    }
+    else
+    {
+      if (!(result= new (param->mem_root) SEL_TREE(param->mem_root,
+                                                   param->keys)))
+      {
+        DBUG_RETURN(result);
+      }
+    }
+
     key_map::Iterator it(ored_keys);
     int key_no;
     while ((key_no= it++) != key_map::Iterator::BITMAP_END)
@@ -8590,7 +8678,13 @@ tree_or(RANGE_OPT_PARAM *param,SEL_TREE *tree1,SEL_TREE *tree2)
     }
     result->type= tree1->type;
   }
-      
+  else
+  {
+    if (!result && !(result= new (param->mem_root) SEL_TREE(param->mem_root,
+                                                            param->keys)))
+      DBUG_RETURN(result);
+  }
+
   if (no_imerge_from_ranges && no_merges1 && no_merges2)
   {
     if (result->keys_map.is_clear_all())
@@ -9272,6 +9366,13 @@ key_or(RANGE_OPT_PARAM *param, SEL_ARG *key1,SEL_ARG *key2)
 
       if (!tmp->next_key_part)
       {
+        if (key2->use_count)
+	{
+	  SEL_ARG *key2_cpy= new SEL_ARG(*key2);
+          if (key2_cpy)
+            return 0;
+          key2= key2_cpy;
+	}
         /*
           tmp->next_key_part is empty: cut the range that is covered
           by tmp from key2. 
@@ -9303,13 +9404,6 @@ key_or(RANGE_OPT_PARAM *param, SEL_ARG *key1,SEL_ARG *key2)
             key2:               [---]
             tmp:     [---------]
           */
-          if (key2->use_count)
-	  {
-	    SEL_ARG *key2_cpy= new SEL_ARG(*key2);
-            if (key2_cpy)
-              return 0;
-            key2= key2_cpy;
-	  }
           key2->copy_max_to_min(tmp);
           continue;
         }
@@ -10353,8 +10447,10 @@ get_quick_keys(PARAM *param,QUICK_RANGE_SELECT *quick,KEY_PART *key,
       KEY *table_key=quick->head->key_info+quick->index;
       flag=EQ_RANGE;
       if ((table_key->flags & HA_NOSAME) &&
+          min_part == key_tree->part &&
           key_tree->part == table_key->user_defined_key_parts-1)
       {
+        DBUG_ASSERT(min_part == max_part);
         if ((table_key->flags & HA_NULL_PART_KEY) &&
             null_part_in_key(key,
                              param->min_key,
@@ -10537,9 +10633,7 @@ QUICK_RANGE_SELECT *get_quick_select_for_ref(THD *thd, TABLE *table,
   */
   thd->mem_root= old_root;
 
-  if (!quick || create_err)
-    return 0;			/* no ranges found */
-  if (quick->init())
+  if (!quick || create_err || quick->init())
     goto err;
   quick->records= records;
 
@@ -11879,8 +11973,6 @@ void QUICK_ROR_UNION_SELECT::add_used_key_part_to_set(MY_BITMAP *col_set)
 *******************************************************************************/
 
 static inline uint get_field_keypart(KEY *index, Field *field);
-static inline SEL_ARG * get_index_range_tree(uint index, SEL_TREE* range_tree,
-                                             PARAM *param, uint *param_idx);
 static bool get_sel_arg_for_keypart(Field *field, SEL_ARG *index_range_tree,
                                     SEL_ARG **cur_range);
 static bool get_constant_key_infix(KEY *index_info, SEL_ARG *index_range_tree,
@@ -12157,8 +12249,6 @@ get_best_group_min_max(PARAM *param, SEL_TREE *tree, double read_time)
     (GA1,GA2) are all TRUE. If there is more than one such index, select the
     first one. Here we set the variables: group_prefix_len and index_info.
   */
-  KEY *cur_index_info= table->key_info;
-  KEY *cur_index_info_end= cur_index_info + table->s->keys;
   /* Cost-related variables for the best index so far. */
   double best_read_cost= DBL_MAX;
   ha_rows best_records= 0;
@@ -12170,11 +12260,12 @@ get_best_group_min_max(PARAM *param, SEL_TREE *tree, double read_time)
   uint max_key_part;  
   SEL_ARG *cur_index_tree= NULL;
   ha_rows cur_quick_prefix_records= 0;
-  uint cur_param_idx=MAX_KEY;
 
-  for (uint cur_index= 0 ; cur_index_info != cur_index_info_end ;
-       cur_index_info++, cur_index++)
+  // We go through allowed indexes
+  for (uint cur_param_idx= 0; cur_param_idx < param->keys ; ++cur_param_idx)
   {
+    const uint cur_index= param->real_keynr[cur_param_idx];
+    KEY *const cur_index_info= &table->key_info[cur_index];
     KEY_PART_INFO *cur_part;
     KEY_PART_INFO *end_part; /* Last part for loops. */
     /* Last index part. */
@@ -12197,7 +12288,8 @@ get_best_group_min_max(PARAM *param, SEL_TREE *tree, double read_time)
       (was also: "Exclude UNIQUE indexes ..." but this was removed because 
       there are cases Loose Scan over a multi-part index is useful).
     */
-    if (!table->covering_keys.is_set(cur_index))
+    if (!table->covering_keys.is_set(cur_index) ||
+        !table->keys_in_use_for_group_by.is_set(cur_index))
       continue;
     
     /*
@@ -12376,9 +12468,7 @@ get_best_group_min_max(PARAM *param, SEL_TREE *tree, double read_time)
     {
       if (tree)
       {
-        uint dummy;
-        SEL_ARG *index_range_tree= get_index_range_tree(cur_index, tree, param,
-                                                        &dummy);
+        SEL_ARG *index_range_tree= tree->keys[cur_param_idx];
         if (!get_constant_key_infix(cur_index_info, index_range_tree,
                                     first_non_group_part, min_max_arg_part,
                                     last_part, thd, cur_key_infix, 
@@ -12442,9 +12532,7 @@ get_best_group_min_max(PARAM *param, SEL_TREE *tree, double read_time)
     */
     if (tree && min_max_arg_item)
     {
-      uint dummy;
-      SEL_ARG *index_range_tree= get_index_range_tree(cur_index, tree, param,
-                                                      &dummy);
+      SEL_ARG *index_range_tree= tree->keys[cur_param_idx];
       SEL_ARG *cur_range= NULL;
       if (get_sel_arg_for_keypart(min_max_arg_part->field,
                                   index_range_tree, &cur_range) ||
@@ -12462,9 +12550,7 @@ get_best_group_min_max(PARAM *param, SEL_TREE *tree, double read_time)
     /* Compute the cost of using this index. */
     if (tree)
     {
-      /* Find the SEL_ARG sub-tree that corresponds to the chosen index. */
-      cur_index_tree= get_index_range_tree(cur_index, tree, param,
-                                           &cur_param_idx);
+      cur_index_tree= tree->keys[cur_param_idx];
       /* Check if this range tree can be used for prefix retrieval. */
       Cost_estimate dummy_cost;
       uint mrr_flags= HA_MRR_USE_DEFAULT_IMPL;
@@ -12994,44 +13080,6 @@ get_field_keypart(KEY *index, Field *field)
       return part - index->key_part + 1;
   }
   return 0;
-}
-
-
-/*
-  Find the SEL_ARG sub-tree that corresponds to the chosen index.
-
-  SYNOPSIS
-    get_index_range_tree()
-    index     [in]  The ID of the index being looked for
-    range_tree[in]  Tree of ranges being searched
-    param     [in]  PARAM from SQL_SELECT::test_quick_select
-    param_idx [out] Index in the array PARAM::key that corresponds to 'index'
-
-  DESCRIPTION
-
-    A SEL_TREE contains range trees for all usable indexes. This procedure
-    finds the SEL_ARG sub-tree for 'index'. The members of a SEL_TREE are
-    ordered in the same way as the members of PARAM::key, thus we first find
-    the corresponding index in the array PARAM::key. This index is returned
-    through the variable param_idx, to be used later as argument of
-    check_quick_select().
-
-  RETURN
-    Pointer to the SEL_ARG subtree that corresponds to index.
-*/
-
-SEL_ARG * get_index_range_tree(uint index, SEL_TREE* range_tree, PARAM *param,
-                               uint *param_idx)
-{
-  uint idx= 0; /* Index nr in param->key_parts */
-  while (idx < param->keys)
-  {
-    if (index == param->real_keynr[idx])
-      break;
-    idx++;
-  }
-  *param_idx= idx;
-  return(range_tree->keys[idx]);
 }
 
 

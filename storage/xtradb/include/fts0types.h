@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2007, 2011, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2007, 2016, Oracle and/or its affiliates. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -122,7 +122,13 @@ struct fts_sync_t {
 	doc_id_t	max_doc_id;	/*!< The doc id at which the cache was
 					noted as being full, we use this to
 					set the upper_limit field */
-        ib_time_t	start_time;	/*!< SYNC start time */
+	ib_time_t	start_time;	/*!< SYNC start time */
+	bool		in_progress;	/*!< flag whether sync is in progress.*/
+	bool		unlock_cache;	/*!< flag whether unlock cache when
+					write fts node */
+	os_event_t	event;		/*!< sync finish event;
+					only os_event_set() and os_event_wait()
+					are used */
 };
 
 /** The cache for the FTS system. It is a memory-based inverted index
@@ -155,7 +161,7 @@ struct fts_cache_t {
 					the document from the table. Each
 					element is of type fts_doc_t */
 
-	ulint		total_size;	/*!< total size consumed by the ilist
+	size_t		total_size;	/*!< total size consumed by the ilist
 					field of all nodes. SYNC is run
 					whenever this gets too big */
 	fts_sync_t*	sync;		/*!< sync structure to sync data to
@@ -164,7 +170,6 @@ struct fts_cache_t {
 					and deleted_doc_ids, ie. transient
 					objects, they are recreated after
 					a SYNC is completed */
-
 
 	ib_alloc_t*	self_heap;	/*!< This heap is the heap out of
 					which an instance of the cache itself
@@ -212,6 +217,7 @@ struct fts_node_t {
 	ulint		ilist_size_alloc;
 					/*!< Allocated size of ilist in
 					bytes */
+	bool		synced;		/*!< flag whether the node is synced */
 };
 
 /** A tokenizer word. Contains information about one word. */
@@ -237,7 +243,7 @@ struct fts_fetch_t {
 	fts_sql_callback
 			read_record;	/*!< Callback for reading index
 					record */
-	ulint		total_memory;	/*!< Total memory used */
+	size_t		total_memory;	/*!< Total memory used */
 };
 
 /** For horizontally splitting an FTS auxiliary index */

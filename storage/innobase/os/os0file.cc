@@ -1,8 +1,8 @@
 /***********************************************************************
 
-Copyright (c) 1995, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1995, 2017, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2009, Percona Inc.
-Copyright (c) 2013, 2016, MariaDB Corporation.
+Copyright (c) 2013, 2018, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted
 by Percona Inc.. Those modifications are
@@ -209,7 +209,7 @@ struct os_aio_slot_t{
 	ulint		page_size;      /*!< UNIV_PAGE_SIZE or zip_size */
 
 	os_offset_t	offset;		/*!< file offset in bytes */
-	os_file_t	file;		/*!< file where to read or write */
+	pfs_os_file_t	file;		/*!< file where to read or write */
 	const char*	name;		/*!< file name or path */
 	ibool		io_already_done;/*!< used only in simulated aio:
 					TRUE if the physical i/o already
@@ -249,11 +249,15 @@ struct os_aio_array_t{
 	os_event_t	not_full;
 				/*!< The event which is set to the
 				signaled state when there is space in
-				the aio outside the ibuf segment */
+				the aio outside the ibuf segment;
+				os_event_set() and os_event_reset()
+				are protected by os_aio_array_t::mutex */
 	os_event_t	is_empty;
 				/*!< The event which is set to the
 				signaled state when there are no
-				pending i/os in this array */
+				pending i/os in this array;
+				os_event_set() and os_event_reset()
+				are protected by os_aio_array_t::mutex */
 	ulint		n_slots;/*!< Total number of slots in the aio
 				array.  This must be divisible by
 				n_threads. */
@@ -304,8 +308,8 @@ struct os_aio_array_t{
 #define OS_AIO_IO_SETUP_RETRY_ATTEMPTS	5
 #endif
 
-/** Array of events used in simulated aio */
-static os_event_t*	os_aio_segment_wait_events = NULL;
+/** Array of events used in simulated aio. */
+static os_event_t*	os_aio_segment_wait_events;
 
 /** The aio arrays for non-ibuf i/o and ibuf i/o, as well as sync aio. These
 are NULL when the module has not yet been initialized. @{ */
@@ -335,23 +339,9 @@ UNIV_INTERN time_t	os_last_printout;
 
 UNIV_INTERN ibool	os_has_said_disk_full	= FALSE;
 
-#if !defined(UNIV_HOTBACKUP)	\
-    && (!defined(HAVE_ATOMIC_BUILTINS) || UNIV_WORD_SIZE < 8)
-/** The mutex protecting the following counts of pending I/O operations */
-static os_ib_mutex_t	os_file_count_mutex;
-#endif /* !UNIV_HOTBACKUP && (!HAVE_ATOMIC_BUILTINS || UNIV_WORD_SIZE < 8) */
-
-/** Number of pending os_file_pread() operations */
-UNIV_INTERN ulint	os_file_n_pending_preads  = 0;
-/** Number of pending os_file_pwrite() operations */
-UNIV_INTERN ulint	os_file_n_pending_pwrites = 0;
-/** Number of pending write operations */
-UNIV_INTERN ulint	os_n_pending_writes = 0;
-/** Number of pending read operations */
-UNIV_INTERN ulint	os_n_pending_reads = 0;
-
+#if defined(WIN_ASYNC_IO) || defined(LINUX_NATIVE_AIO)
 /** After first fallocate failure we will disable os_file_trim */
-UNIV_INTERN ibool       os_fallocate_failed = FALSE;
+static bool		os_fallocate_failed;
 
 /**********************************************************************//**
 Directly manipulate the allocated disk space by deallocating for the file referred to
@@ -360,11 +350,12 @@ Within the specified range, partial file system blocks are zeroed, and whole
 file system blocks are removed from the file.  After a successful call,
 subsequent reads from  this range will return zeroes.
 @return	true if success, false if error */
-UNIV_INTERN
+static
 ibool
 os_file_trim(
 /*=========*/
 	os_aio_slot_t*	slot); /*!< in: slot structure     */
+#endif /* WIN_ASYNC_IO || LINUX_NATIVE_AIO */
 
 /****************************************************************//**
 Does error handling when a file operation fails.
@@ -578,9 +569,8 @@ os_file_get_last_error_low(
 				REFMAN
 				"operating-system-error-codes.html\n");
 		}
+		fflush(stderr);
 	}
-
-	fflush(stderr);
 
 	if (err == ERROR_FILE_NOT_FOUND) {
 		return(OS_FILE_NOT_FOUND);
@@ -814,7 +804,7 @@ os_file_handle_error_cond_exit(
 		}
 
 		if (should_exit) {
-			exit(1);
+			abort();
 		}
 	}
 
@@ -909,10 +899,6 @@ void
 os_io_init_simple(void)
 /*===================*/
 {
-#if !defined(HAVE_ATOMIC_BUILTINS) || UNIV_WORD_SIZE < 8
-	os_file_count_mutex = os_mutex_create();
-#endif /* !HAVE_ATOMIC_BUILTINS || UNIV_WORD_SIZE < 8 */
-
 	for (ulint i = 0; i < OS_FILE_N_SEEK_MUTEXES; i++) {
 		os_file_seek_mutexes[i] = os_mutex_create();
 	}
@@ -1364,7 +1350,8 @@ os_file_create_simple_func(
 		/* Use default security attributes and no template file. */
 
 		file = CreateFile(
-			(LPCTSTR) name, access, FILE_SHARE_READ, NULL,
+			(LPCTSTR) name, access,
+			FILE_SHARE_READ | FILE_SHARE_DELETE, NULL,
 			create_flag, attributes, NULL);
 
 		if (file == INVALID_HANDLE_VALUE) {
@@ -1435,7 +1422,7 @@ os_file_create_simple_func(
 	}
 
 	do {
-		file = ::open(name, create_flag, os_innodb_umask);
+		file = ::open(name, create_flag | O_CLOEXEC, os_innodb_umask);
 
 		if (file == -1) {
 			*success = FALSE;
@@ -1475,7 +1462,7 @@ A simple function to open or create a file.
 @return own: handle to the file, not defined if error, error number
 can be retrieved with os_file_get_last_error */
 UNIV_INTERN
-os_file_t
+pfs_os_file_t
 os_file_create_simple_no_error_handling_func(
 /*=========================================*/
 	const char*	name,	/*!< in: name of the file or path as a
@@ -1489,7 +1476,7 @@ os_file_create_simple_no_error_handling_func(
 	ulint           atomic_writes) /*! in: atomic writes table option
 				       value */
 {
-	os_file_t	file;
+	pfs_os_file_t	file;
 	atomic_writes_t awrites = (atomic_writes_t) atomic_writes;
 
 	*success = FALSE;
@@ -1497,8 +1484,7 @@ os_file_create_simple_no_error_handling_func(
 	DWORD		access;
 	DWORD		create_flag;
 	DWORD		attributes	= 0;
-	DWORD		share_mode	= FILE_SHARE_READ;
-
+	DWORD		share_mode	= FILE_SHARE_READ | FILE_SHARE_DELETE;
 	ut_a(name);
 
 	ut_a(!(create_mode & OS_FILE_ON_ERROR_SILENT));
@@ -1515,8 +1501,8 @@ os_file_create_simple_no_error_handling_func(
 		ib_logf(IB_LOG_LEVEL_ERROR,
 			"Unknown file create mode (%lu) for file '%s'",
 			create_mode, name);
-
-		return((os_file_t) -1);
+		file = INVALID_HANDLE_VALUE;
+		return(file);
 	}
 
 	if (access_type == OS_FILE_READ_ONLY) {
@@ -1539,8 +1525,8 @@ os_file_create_simple_no_error_handling_func(
 		ib_logf(IB_LOG_LEVEL_ERROR,
 			"Unknown file access type (%lu) for file '%s'",
 			access_type, name);
-
-		return((os_file_t) -1);
+		file = INVALID_HANDLE_VALUE;
+		return(file);
 	}
 
 	file = CreateFile((LPCTSTR) name,
@@ -1568,11 +1554,10 @@ os_file_create_simple_no_error_handling_func(
 		}
 	}
 
-	*success = (file != INVALID_HANDLE_VALUE);
+	*success = file != INVALID_HANDLE_VALUE;
 #else /* __WIN__ */
 	int		create_flag;
 	const char*	mode_str	= NULL;
-
 	ut_a(name);
 	if (create_mode != OS_FILE_OPEN && create_mode != OS_FILE_OPEN_RAW)
 		WAIT_ALLOW_WRITES();
@@ -1616,13 +1601,13 @@ os_file_create_simple_no_error_handling_func(
 		ib_logf(IB_LOG_LEVEL_ERROR,
 			"Unknown file create mode (%lu) for file '%s'",
 			create_mode, name);
-
-		return((os_file_t) -1);
+		file = -1;
+		return(file);
 	}
 
-	file = ::open(name, create_flag, os_innodb_umask);
+	file = ::open(name, create_flag | O_CLOEXEC, os_innodb_umask);
 
-	*success = file == -1 ? FALSE : TRUE;
+	*success = file != -1;
 
 	/* This function is always called for data files, we should disable
 	OS caching (O_DIRECT) here as we do in os_file_create_func(), so
@@ -1632,13 +1617,13 @@ os_file_create_simple_no_error_handling_func(
 	   && (srv_unix_file_flush_method == SRV_UNIX_O_DIRECT
 	       || srv_unix_file_flush_method == SRV_UNIX_O_DIRECT_NO_FSYNC)) {
 
-	       os_file_set_nocache(file, name, mode_str);
+		os_file_set_nocache(file, name, mode_str);
 	}
 
 #ifdef USE_FILE_LOCK
 	if (!srv_read_only_mode
 	    && *success
-	    && (access_type == OS_FILE_READ_WRITE)
+	    && access_type == OS_FILE_READ_WRITE
 	    && os_file_lock(file, name)) {
 
 		*success = FALSE;
@@ -1681,8 +1666,8 @@ os_file_set_nocache(
 					__attribute__((unused)),
 	const char*	file_name	/*!< in: used in the diagnostic
 					message */
-					__attribute__((unused)),
-	const char*	operation_name __attribute__((unused)))
+					MY_ATTRIBUTE((unused)),
+	const char*	operation_name MY_ATTRIBUTE((unused)))
 					/*!< in: "open" or "create"; used
 					in the diagnostic message */
 {
@@ -1736,7 +1721,7 @@ Opens an existing file or creates a new.
 @return own: handle to the file, not defined if error, error number
 can be retrieved with os_file_get_last_error */
 UNIV_INTERN
-os_file_t
+pfs_os_file_t
 os_file_create_func(
 /*================*/
 	const char*	name,	/*!< in: name of the file or path as a
@@ -1754,7 +1739,7 @@ os_file_create_func(
 	ulint           atomic_writes) /*! in: atomic writes table option
 				       value */
 {
-	os_file_t	file;
+	pfs_os_file_t	file;
 	ibool		retry;
 	ibool		on_error_no_exit;
 	ibool		on_error_silent;
@@ -1765,20 +1750,22 @@ os_file_create_func(
 		"ib_create_table_fail_disk_full",
 		*success = FALSE;
 		SetLastError(ERROR_DISK_FULL);
-		return((os_file_t) -1);
+		file = INVALID_HANDLE_VALUE;
+		return(file);
 	);
 #else /* __WIN__ */
 	DBUG_EXECUTE_IF(
 		"ib_create_table_fail_disk_full",
 		*success = FALSE;
 		errno = ENOSPC;
-		return((os_file_t) -1);
+		file = -1;
+		return(file);
 	);
 #endif /* __WIN__ */
 
 #ifdef __WIN__
 	DWORD		create_flag;
-	DWORD		share_mode	= FILE_SHARE_READ;
+	DWORD		share_mode	= FILE_SHARE_READ | FILE_SHARE_DELETE;
 
 	on_error_no_exit = create_mode & OS_FILE_ON_ERROR_NO_EXIT
 		? TRUE : FALSE;
@@ -1823,7 +1810,8 @@ os_file_create_func(
 			"Unknown file create mode (%lu) for file '%s'",
 			create_mode, name);
 
-		return((os_file_t) -1);
+		file = INVALID_HANDLE_VALUE;
+		return(file);
 	}
 
 	DWORD		attributes = 0;
@@ -1848,8 +1836,8 @@ os_file_create_func(
 		ib_logf(IB_LOG_LEVEL_ERROR,
 			"Unknown purpose flag (%lu) while opening file '%s'",
 			purpose, name);
-
-		return((os_file_t)(-1));
+		file = INVALID_HANDLE_VALUE;
+		return(file);
 	}
 
 #ifdef UNIV_NON_BUFFERED_IO
@@ -1961,7 +1949,8 @@ os_file_create_func(
 			"Unknown file create mode (%lu) for file '%s'",
 			create_mode, name);
 
-		return((os_file_t) -1);
+		file = -1;
+		return(file);
 	}
 
 	ut_a(type == OS_LOG_FILE || type == OS_DATA_FILE);
@@ -1981,7 +1970,7 @@ os_file_create_func(
 #endif /* O_SYNC */
 
 	do {
-		file = ::open(name, create_flag, os_innodb_umask);
+		file = ::open(name, create_flag | O_CLOEXEC, os_innodb_umask);
 
 		if (file == -1) {
 			const char*	operation;
@@ -2006,13 +1995,13 @@ os_file_create_func(
 	} while (retry);
 
 	/* We disable OS caching (O_DIRECT) only on data files */
-       if (!srv_read_only_mode
-	   && *success
-	   && type != OS_LOG_FILE
-	   && (srv_unix_file_flush_method == SRV_UNIX_O_DIRECT
-	       || srv_unix_file_flush_method == SRV_UNIX_O_DIRECT_NO_FSYNC)) {
+	if (!srv_read_only_mode
+	    && *success
+	    && type != OS_LOG_FILE
+	    && (srv_unix_file_flush_method == SRV_UNIX_O_DIRECT
+		|| srv_unix_file_flush_method == SRV_UNIX_O_DIRECT_NO_FSYNC)) {
 
-	       os_file_set_nocache(file, name, mode_str);
+		os_file_set_nocache(file, name, mode_str);
 	}
 
 #ifdef USE_FILE_LOCK
@@ -2196,6 +2185,24 @@ loop:
 #endif
 }
 
+/** Handle RENAME error.
+@param name	old name of the file
+@param new_name	new name of the file */
+static void os_file_handle_rename_error(const char* name, const char* new_name)
+{
+	if (os_file_get_last_error(true) != OS_FILE_DISK_FULL) {
+		ib_logf(IB_LOG_LEVEL_ERROR, "Cannot rename file '%s' to '%s'",
+			name, new_name);
+	} else if (!os_has_said_disk_full) {
+		os_has_said_disk_full = true;
+		/* Disk full error is reported irrespective of the
+		on_error_silent setting. */
+		ib_logf(IB_LOG_LEVEL_ERROR,
+			"Full disk prevents renaming file '%s' to '%s'",
+			name, new_name);
+	}
+}
+
 /***********************************************************************//**
 NOTE! Use the corresponding macro os_file_rename(), not directly this function!
 Renames a file (can also move it to another directory). It is safest that the
@@ -2231,8 +2238,7 @@ os_file_rename_func(
 		return(TRUE);
 	}
 
-	os_file_handle_error_no_exit(oldpath, "rename", FALSE, __FILE__, __LINE__);
-
+	os_file_handle_rename_error(oldpath, newpath);
 	return(FALSE);
 #else
 	int	ret;
@@ -2241,8 +2247,7 @@ os_file_rename_func(
 	ret = rename(oldpath, newpath);
 
 	if (ret != 0) {
-		os_file_handle_error_no_exit(oldpath, "rename", FALSE, __FILE__, __LINE__);
-
+		os_file_handle_rename_error(oldpath, newpath);
 		return(FALSE);
 	}
 
@@ -2330,7 +2335,7 @@ UNIV_INTERN
 os_offset_t
 os_file_get_size(
 /*=============*/
-	os_file_t	file)	/*!< in: handle to a file */
+	pfs_os_file_t	file)	/*!< in: handle to a file */
 {
 #ifdef __WIN__
 	os_offset_t	offset;
@@ -2347,64 +2352,110 @@ os_file_get_size(
 
 	return(offset);
 #else
-	return((os_offset_t) lseek(file, 0, SEEK_END));
+	struct stat statbuf;
+	return fstat(file, &statbuf) ? os_offset_t(-1) : statbuf.st_size;
 #endif /* __WIN__ */
 }
 
-/***********************************************************************//**
-Write the specified number of zeros to a newly created file.
-@return	TRUE if success */
+/** Extend a file.
+
+On Windows, extending a file allocates blocks for the file,
+unless the file is sparse.
+
+On Unix, we will extend the file with ftruncate(), if
+file needs to be sparse. Otherwise posix_fallocate() is used
+when available, and if not, binary zeroes are added to the end
+of file.
+
+@param[in]	name	file name
+@param[in]	file	file handle
+@param[in]	size	desired file size
+@param[in]	sparse	whether to create a sparse file (no preallocating)
+@return	whether the operation succeeded */
 UNIV_INTERN
-ibool
+bool
 os_file_set_size(
-/*=============*/
-	const char*	name,	/*!< in: name of the file or path as a
-				null-terminated string */
-	os_file_t	file,	/*!< in: handle to a file */
-	os_offset_t	size)	/*!< in: file size */
+	const char*	name,
+	pfs_os_file_t	file,
+	os_offset_t	size,
+	bool		is_sparse)
 {
-	os_offset_t	current_size;
-	ibool		ret;
-	byte*		buf;
-	byte*		buf2;
-	ulint		buf_size;
-
-	current_size = 0;
-
-#ifdef HAVE_POSIX_FALLOCATE
-	if (srv_use_posix_fallocate) {
-
-		if (posix_fallocate(file, current_size, size) == -1) {
-
-			fprintf(stderr, "InnoDB: Error: preallocating file "
-				"space for file \'%s\' failed.  Current size "
-				"%lu, desired size %lu\n",
-				name, current_size, size);
-			os_file_handle_error_no_exit(name, "posix_fallocate", FALSE, __FILE__, __LINE__);
-
-			return(FALSE);
-		}
-		return(TRUE);
+#ifdef _WIN32
+	FILE_END_OF_FILE_INFO feof;
+	feof.EndOfFile.QuadPart = size;
+	bool success = SetFileInformationByHandle(file,
+						  FileEndOfFileInfo,
+						  &feof, sizeof feof);
+	if (!success) {
+		ib_logf(IB_LOG_LEVEL_ERROR, "os_file_set_size() of file %s"
+			" to " INT64PF " bytes failed with %u",
+			name, size, GetLastError());
 	}
-#endif
+	return(success);
+#else
+	if (is_sparse) {
+		bool success = !ftruncate(file, size);
+		if (!success) {
+			ib_logf(IB_LOG_LEVEL_ERROR, "ftruncate of file %s"
+				" to " INT64PF " bytes failed with error %d",
+				name, size, errno);
+		}
+		return(success);
+	}
+
+# ifdef HAVE_POSIX_FALLOCATE
+	if (srv_use_posix_fallocate) {
+		int err;
+		do {
+			os_offset_t current_size = os_file_get_size(file);
+			err = current_size >= size
+				? 0 : posix_fallocate(file, current_size,
+						      size - current_size);
+		} while (err == EINTR
+			 && srv_shutdown_state == SRV_SHUTDOWN_NONE);
+
+		switch (err) {
+		case 0:
+			return true;
+		default:
+			ib_logf(IB_LOG_LEVEL_ERROR,
+				"preallocating " INT64PF " bytes for"
+				"file %s failed with error %d",
+				size, name, err);
+			/* fall through */
+		case EINTR:
+			errno = err;
+			return false;
+		case EINVAL:
+			/* fall back to the code below */
+			break;
+		}
+	}
+# endif
+
+	os_offset_t	current_size = os_file_get_size(file);
+
+	if (current_size >= size) {
+		return true;
+	}
 
 	/* Write up to 1 megabyte at a time. */
-	buf_size = ut_min(64, (ulint) (size / UNIV_PAGE_SIZE))
+	ulint buf_size = ut_min(64, (ulint) (size / UNIV_PAGE_SIZE))
 		* UNIV_PAGE_SIZE;
-	buf2 = static_cast<byte*>(ut_malloc(buf_size + UNIV_PAGE_SIZE));
+	byte* buf2 = static_cast<byte*>(calloc(1, buf_size + UNIV_PAGE_SIZE));
 
-	/* Align the buffer for possible raw i/o */
-	buf = static_cast<byte*>(ut_align(buf2, UNIV_PAGE_SIZE));
-
-	/* Write buffer full of zeros */
-	memset(buf, 0, buf_size);
-
-	if (size >= (os_offset_t) 100 << 20) {
-
-		fprintf(stderr, "InnoDB: Progress in MB:");
+	if (!buf2) {
+		ib_logf(IB_LOG_LEVEL_ERROR,
+			"Cannot allocate " ULINTPF " bytes to extend file\n",
+			buf_size + UNIV_PAGE_SIZE);
+		return(false);
 	}
 
-	while (current_size < size) {
+	/* Align the buffer for possible raw i/o */
+	byte* buf = static_cast<byte*>(ut_align(buf2, UNIV_PAGE_SIZE));
+	bool ret;
+
+	do {
 		ulint	n_bytes;
 
 		if (size - current_size < (os_offset_t) buf_size) {
@@ -2416,37 +2467,17 @@ os_file_set_size(
 		ret = os_file_write(name, file, buf, current_size, n_bytes);
 
 		if (!ret) {
-			ut_free(buf2);
-			goto error_handling;
-		}
-
-		/* Print about progress for each 100 MB written */
-		if ((current_size + n_bytes) / (100 << 20)
-		    != current_size / (100 << 20)) {
-
-			fprintf(stderr, " %lu00",
-				(ulong) ((current_size + n_bytes)
-					 / (100 << 20)));
+			break;
 		}
 
 		current_size += n_bytes;
-	}
+	} while (current_size < size
+		 && srv_shutdown_state == SRV_SHUTDOWN_NONE);
 
-	if (size >= (os_offset_t) 100 << 20) {
+	free(buf2);
 
-		fprintf(stderr, "\n");
-	}
-
-	ut_free(buf2);
-
-	ret = os_file_flush(file);
-
-	if (ret) {
-		return(TRUE);
-	}
-
-error_handling:
-	return(FALSE);
+	return(ret && current_size >= size && os_file_flush(file));
+#endif
 }
 
 /***********************************************************************//**
@@ -2615,7 +2646,7 @@ os_file_flush_func(
 /*******************************************************************//**
 Does a synchronous read operation in Posix.
 @return	number of bytes read, -1 if error */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 ssize_t
 os_file_pread(
 /*==========*/
@@ -2625,9 +2656,6 @@ os_file_pread(
 	os_offset_t	offset)	/*!< in: file offset from where to read */
 {
 	off_t	offs;
-#if defined(HAVE_PREAD) && !defined(HAVE_BROKEN_PREAD)
-	ssize_t	n_bytes;
-#endif /* HAVE_PREAD && !HAVE_BROKEN_PREAD */
 
 	ut_ad(n);
 
@@ -2644,33 +2672,12 @@ os_file_pread(
 
 	os_n_file_reads++;
 
-#if defined(HAVE_PREAD) && !defined(HAVE_BROKEN_PREAD)
-#if defined(HAVE_ATOMIC_BUILTINS) && UNIV_WORD_SIZE == 8
-	(void) os_atomic_increment_ulint(&os_n_pending_reads, 1);
-	(void) os_atomic_increment_ulint(&os_file_n_pending_preads, 1);
-	MONITOR_ATOMIC_INC(MONITOR_OS_PENDING_READS);
-#else
-	os_mutex_enter(os_file_count_mutex);
-	os_file_n_pending_preads++;
-	os_n_pending_reads++;
-	MONITOR_INC(MONITOR_OS_PENDING_READS);
-	os_mutex_exit(os_file_count_mutex);
-#endif /* HAVE_ATOMIC_BUILTINS && UNIV_WORD == 8 */
+	const bool monitor = MONITOR_IS_ON(MONITOR_OS_PENDING_READS);
 
-	n_bytes = pread(file, buf, n, offs);
-
-#if defined(HAVE_ATOMIC_BUILTINS) && UNIV_WORD_SIZE == 8
-	(void) os_atomic_decrement_ulint(&os_n_pending_reads, 1);
-	(void) os_atomic_decrement_ulint(&os_file_n_pending_preads, 1);
-	MONITOR_ATOMIC_DEC(MONITOR_OS_PENDING_READS);
-#else
-	os_mutex_enter(os_file_count_mutex);
-	os_file_n_pending_preads--;
-	os_n_pending_reads--;
-	MONITOR_DEC(MONITOR_OS_PENDING_READS);
-	os_mutex_exit(os_file_count_mutex);
-#endif /* !HAVE_ATOMIC_BUILTINS || UNIV_WORD == 8 */
-
+#ifdef HAVE_PREAD
+	MONITOR_ATOMIC_INC_LOW(MONITOR_OS_PENDING_READS, monitor);
+	ssize_t n_bytes = pread(file, buf, n, offs);
+	MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_READS, monitor);
 	return(n_bytes);
 #else
 	{
@@ -2680,15 +2687,7 @@ os_file_pread(
 		ulint	i;
 #endif /* !UNIV_HOTBACKUP */
 
-#if defined(HAVE_ATOMIC_BUILTINS) && UNIV_WORD_SIZE == 8
-		(void) os_atomic_increment_ulint(&os_n_pending_reads, 1);
-		MONITOR_ATOMIC_INC(MONITOR_OS_PENDING_READS);
-#else
-		os_mutex_enter(os_file_count_mutex);
-		os_n_pending_reads++;
-		MONITOR_INC(MONITOR_OS_PENDING_READS);
-		os_mutex_exit(os_file_count_mutex);
-#endif /* HAVE_ATOMIC_BUILTINS && UNIV_WORD == 8 */
+		MONITOR_ATOMIC_INC_LOW(MONITOR_OS_PENDING_READS, monitor);
 #ifndef UNIV_HOTBACKUP
 		/* Protect the seek / read operation with a mutex */
 		i = ((ulint) file) % OS_FILE_N_SEEK_MUTEXES;
@@ -2708,16 +2707,7 @@ os_file_pread(
 		os_mutex_exit(os_file_seek_mutexes[i]);
 #endif /* !UNIV_HOTBACKUP */
 
-#if defined(HAVE_ATOMIC_BUILTINS) && UNIV_WORD_SIZE == 8
-		(void) os_atomic_decrement_ulint(&os_n_pending_reads, 1);
-		MONITOR_ATOIC_DEC(MONITOR_OS_PENDING_READS);
-#else
-		os_mutex_enter(os_file_count_mutex);
-		os_n_pending_reads--;
-		MONITOR_DEC(MONITOR_OS_PENDING_READS);
-		os_mutex_exit(os_file_count_mutex);
-#endif /* HAVE_ATOMIC_BUILTINS && UNIV_WORD_SIZE == 8 */
-
+		MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_READS, monitor);
 		return(ret);
 	}
 #endif
@@ -2726,7 +2716,7 @@ os_file_pread(
 /*******************************************************************//**
 Does a synchronous write operation in Posix.
 @return	number of bytes written, -1 if error */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 ssize_t
 os_file_pwrite(
 /*===========*/
@@ -2754,32 +2744,11 @@ os_file_pwrite(
 
 	os_n_file_writes++;
 
-#if defined(HAVE_PWRITE) && !defined(HAVE_BROKEN_PREAD)
-#if !defined(HAVE_ATOMIC_BUILTINS) || UNIV_WORD_SIZE < 8
-	os_mutex_enter(os_file_count_mutex);
-	os_file_n_pending_pwrites++;
-	os_n_pending_writes++;
-	MONITOR_INC(MONITOR_OS_PENDING_WRITES);
-	os_mutex_exit(os_file_count_mutex);
-#else
-	(void) os_atomic_increment_ulint(&os_n_pending_writes, 1);
-	(void) os_atomic_increment_ulint(&os_file_n_pending_pwrites, 1);
-	MONITOR_ATOMIC_INC(MONITOR_OS_PENDING_WRITES);
-#endif /* !HAVE_ATOMIC_BUILTINS || UNIV_WORD < 8 */
-
+	const bool monitor = MONITOR_IS_ON(MONITOR_OS_PENDING_WRITES);
+#ifdef HAVE_PWRITE
+	MONITOR_ATOMIC_INC_LOW(MONITOR_OS_PENDING_WRITES, monitor);
 	ret = pwrite(file, buf, (ssize_t) n, offs);
-
-#if !defined(HAVE_ATOMIC_BUILTINS) || UNIV_WORD_SIZE < 8
-	os_mutex_enter(os_file_count_mutex);
-	os_file_n_pending_pwrites--;
-	os_n_pending_writes--;
-	MONITOR_DEC(MONITOR_OS_PENDING_WRITES);
-	os_mutex_exit(os_file_count_mutex);
-#else
-	(void) os_atomic_decrement_ulint(&os_n_pending_writes, 1);
-	(void) os_atomic_decrement_ulint(&os_file_n_pending_pwrites, 1);
-	MONITOR_ATOMIC_DEC(MONITOR_OS_PENDING_WRITES);
-#endif /* !HAVE_ATOMIC_BUILTINS || UNIV_WORD < 8 */
+	MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_WRITES, monitor);
 
 	return(ret);
 #else
@@ -2789,10 +2758,7 @@ os_file_pwrite(
 		ulint	i;
 # endif /* !UNIV_HOTBACKUP */
 
-		os_mutex_enter(os_file_count_mutex);
-		os_n_pending_writes++;
-		MONITOR_INC(MONITOR_OS_PENDING_WRITES);
-		os_mutex_exit(os_file_count_mutex);
+		MONITOR_ATOMIC_INC_LOW(MONITOR_OS_PENDING_WRITES, monitor);
 
 # ifndef UNIV_HOTBACKUP
 		/* Protect the seek / write operation with a mutex */
@@ -2816,14 +2782,10 @@ func_exit:
 		os_mutex_exit(os_file_seek_mutexes[i]);
 # endif /* !UNIV_HOTBACKUP */
 
-		os_mutex_enter(os_file_count_mutex);
-		os_n_pending_writes--;
-		MONITOR_DEC(MONITOR_OS_PENDING_WRITES);
-		os_mutex_exit(os_file_count_mutex);
-
+		MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_WRITES, monitor);
 		return(ret);
 	}
-#endif /* !UNIV_HOTBACKUP */
+#endif /* HAVE_PWRITE */
 }
 #endif
 
@@ -2858,6 +2820,7 @@ os_file_read_func(
 
 	os_n_file_reads++;
 	os_bytes_read_since_printout += n;
+	const bool monitor = MONITOR_IS_ON(MONITOR_OS_PENDING_READS);
 
 try_again:
 	ut_ad(buf);
@@ -2866,10 +2829,7 @@ try_again:
 	low = (DWORD) offset & 0xFFFFFFFF;
 	high = (DWORD) (offset >> 32);
 
-	os_mutex_enter(os_file_count_mutex);
-	os_n_pending_reads++;
-	MONITOR_INC(MONITOR_OS_PENDING_READS);
-	os_mutex_exit(os_file_count_mutex);
+	MONITOR_ATOMIC_INC_LOW(MONITOR_OS_PENDING_READS, monitor);
 
 #ifndef UNIV_HOTBACKUP
 	/* Protect the seek / read operation with a mutex */
@@ -2887,11 +2847,7 @@ try_again:
 		os_mutex_exit(os_file_seek_mutexes[i]);
 #endif /* !UNIV_HOTBACKUP */
 
-		os_mutex_enter(os_file_count_mutex);
-		os_n_pending_reads--;
-		MONITOR_DEC(MONITOR_OS_PENDING_READS);
-		os_mutex_exit(os_file_count_mutex);
-
+		MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_READS, monitor);
 		goto error_handling;
 	}
 
@@ -2901,13 +2857,17 @@ try_again:
 	os_mutex_exit(os_file_seek_mutexes[i]);
 #endif /* !UNIV_HOTBACKUP */
 
-	os_mutex_enter(os_file_count_mutex);
-	os_n_pending_reads--;
-	MONITOR_DEC(MONITOR_OS_PENDING_READS);
-	os_mutex_exit(os_file_count_mutex);
+	MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_READS, monitor);
 
-	if (ret && len == n) {
+	if (!ret) {
+	} else if (len == n) {
 		return(TRUE);
+	} else {
+		ib_logf(IB_LOG_LEVEL_ERROR,
+			"Tried to read " ULINTPF " bytes at offset "
+			UINT64PF ". Was only able to read %lu.",
+			n, offset, ret);
+		return FALSE;
 	}
 #else /* __WIN__ */
 	ibool	retry;
@@ -2930,6 +2890,7 @@ try_again:
 			"Tried to read " ULINTPF " bytes at offset "
 			UINT64PF ". Was only able to read %ld.",
 			n, offset, (lint) ret);
+		return FALSE;
 	}
 #endif /* __WIN__ */
 #ifdef __WIN__
@@ -2989,6 +2950,7 @@ os_file_read_no_error_handling_func(
 
 	os_n_file_reads++;
 	os_bytes_read_since_printout += n;
+	const bool monitor = MONITOR_IS_ON(MONITOR_OS_PENDING_READS);
 
 try_again:
 	ut_ad(buf);
@@ -2997,10 +2959,7 @@ try_again:
 	low = (DWORD) offset & 0xFFFFFFFF;
 	high = (DWORD) (offset >> 32);
 
-	os_mutex_enter(os_file_count_mutex);
-	os_n_pending_reads++;
-	MONITOR_INC(MONITOR_OS_PENDING_READS);
-	os_mutex_exit(os_file_count_mutex);
+	MONITOR_ATOMIC_INC_LOW(MONITOR_OS_PENDING_READS, monitor);
 
 #ifndef UNIV_HOTBACKUP
 	/* Protect the seek / read operation with a mutex */
@@ -3018,11 +2977,7 @@ try_again:
 		os_mutex_exit(os_file_seek_mutexes[i]);
 #endif /* !UNIV_HOTBACKUP */
 
-		os_mutex_enter(os_file_count_mutex);
-		os_n_pending_reads--;
-		MONITOR_DEC(MONITOR_OS_PENDING_READS);
-		os_mutex_exit(os_file_count_mutex);
-
+		MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_READS, monitor);
 		goto error_handling;
 	}
 
@@ -3032,13 +2987,17 @@ try_again:
 	os_mutex_exit(os_file_seek_mutexes[i]);
 #endif /* !UNIV_HOTBACKUP */
 
-	os_mutex_enter(os_file_count_mutex);
-	os_n_pending_reads--;
-	MONITOR_DEC(MONITOR_OS_PENDING_READS);
-	os_mutex_exit(os_file_count_mutex);
+	MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_READS, monitor);
 
-	if (ret && len == n) {
+	if (!ret) {
+	} else if (len == n) {
 		return(TRUE);
+	} else {
+		ib_logf(IB_LOG_LEVEL_ERROR,
+			"Tried to read " ULINTPF " bytes at offset "
+			UINT64PF ". Was only able to read %lu.",
+			n, offset, len);
+		return FALSE;
 	}
 #else /* __WIN__ */
 	ibool	retry;
@@ -3061,6 +3020,7 @@ try_again:
 			"Tried to read " ULINTPF " bytes at offset "
 			UINT64PF ". Was only able to read %ld.",
 			n, offset, (lint) ret);
+		return FALSE;
 	}
 #endif /* __WIN__ */
 #ifdef __WIN__
@@ -3115,7 +3075,6 @@ os_file_write_func(
 	ulint		n)	/*!< in: number of bytes to write */
 {
 	ut_ad(!srv_read_only_mode);
-
 #ifdef __WIN__
 	BOOL		ret;
 	DWORD		len;
@@ -3137,15 +3096,12 @@ os_file_write_func(
 
 	ut_ad(buf);
 	ut_ad(n > 0);
-
+	const bool monitor = MONITOR_IS_ON(MONITOR_OS_PENDING_WRITES);
 retry:
 	low = (DWORD) offset & 0xFFFFFFFF;
 	high = (DWORD) (offset >> 32);
 
-	os_mutex_enter(os_file_count_mutex);
-	os_n_pending_writes++;
-	MONITOR_INC(MONITOR_OS_PENDING_WRITES);
-	os_mutex_exit(os_file_count_mutex);
+	MONITOR_ATOMIC_INC_LOW(MONITOR_OS_PENDING_WRITES, monitor);
 
 #ifndef UNIV_HOTBACKUP
 	/* Protect the seek / write operation with a mutex */
@@ -3163,10 +3119,7 @@ retry:
 		os_mutex_exit(os_file_seek_mutexes[i]);
 #endif /* !UNIV_HOTBACKUP */
 
-		os_mutex_enter(os_file_count_mutex);
-		os_n_pending_writes--;
-		MONITOR_DEC(MONITOR_OS_PENDING_WRITES);
-		os_mutex_exit(os_file_count_mutex);
+		MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_WRITES, monitor);
 
 		ut_print_timestamp(stderr);
 
@@ -3190,10 +3143,7 @@ retry:
 	os_mutex_exit(os_file_seek_mutexes[i]);
 #endif /* !UNIV_HOTBACKUP */
 
-	os_mutex_enter(os_file_count_mutex);
-	os_n_pending_writes--;
-	MONITOR_DEC(MONITOR_OS_PENDING_WRITES);
-	os_mutex_exit(os_file_count_mutex);
+	MONITOR_ATOMIC_DEC_LOW(MONITOR_OS_PENDING_WRITES, monitor);
 
 	if (ret && len == n) {
 
@@ -3505,7 +3455,7 @@ os_file_get_status(
 
 		access = !srv_read_only_mode ? O_RDWR : O_RDONLY;
 
-		fh = ::open(path, access, os_innodb_umask);
+		fh = ::open(path, access | O_CLOEXEC, os_innodb_umask);
 
 		if (fh == -1) {
 			stat_info->rw_perm = false;
@@ -3934,7 +3884,7 @@ os_aio_native_aio_supported(void)
 
 		strcpy(name + dirnamelen, "ib_logfile0");
 
-		fd = ::open(name, O_RDONLY);
+		fd = ::open(name, O_RDONLY | O_CLOEXEC);
 
 		if (fd == -1) {
 
@@ -4258,6 +4208,12 @@ os_aio_init(
 
 	os_aio_validate();
 
+	os_last_printout = ut_time();
+
+	if (srv_use_native_aio) {
+		return(TRUE);
+	}
+
 	os_aio_segment_wait_events = static_cast<os_event_t*>(
 		ut_malloc(n_segments * sizeof *os_aio_segment_wait_events));
 
@@ -4265,10 +4221,7 @@ os_aio_init(
 		os_aio_segment_wait_events[i] = os_event_create();
 	}
 
-	os_last_printout = ut_time();
-
 	return(TRUE);
-
 }
 
 /***********************************************************************
@@ -4296,8 +4249,10 @@ os_aio_free(void)
 
 	os_aio_array_free(os_aio_read_array);
 
-	for (ulint i = 0; i < os_aio_n_segments; i++) {
-		os_event_free(os_aio_segment_wait_events[i]);
+	if (!srv_use_native_aio) {
+		for (ulint i = 0; i < os_aio_n_segments; i++) {
+			os_event_free(os_aio_segment_wait_events[i]);
+		}
 	}
 
 	ut_free(os_aio_segment_wait_events);
@@ -4346,21 +4301,16 @@ os_aio_wake_all_threads_at_shutdown(void)
 	if (os_aio_log_array != 0) {
 		os_aio_array_wake_win_aio_at_shutdown(os_aio_log_array);
 	}
-
 #elif defined(LINUX_NATIVE_AIO)
-
 	/* When using native AIO interface the io helper threads
 	wait on io_getevents with a timeout value of 500ms. At
 	each wake up these threads check the server status.
 	No need to do anything to wake them up. */
+#endif /* !WIN_ASYNC_AIO */
 
 	if (srv_use_native_aio) {
 		return;
 	}
-
-	/* Fall through to simulated AIO handler wakeup if we are
-	not using native AIO. */
-#endif /* !WIN_ASYNC_AIO */
 
 	/* This loop wakes up all simulated ai/o threads */
 
@@ -4479,7 +4429,7 @@ os_aio_array_reserve_slot(
 				the aio operation */
 	void*		message2,/*!< in: message to be passed along with
 				the aio operation */
-	os_file_t	file,	/*!< in: file handle */
+	pfs_os_file_t	file,	/*!< in: file handle */
 	const char*	name,	/*!< in: name of the file or path as a
 				null-terminated string */
 	void*		buf,	/*!< in: buffer where to read or from which
@@ -4745,6 +4695,7 @@ os_aio_simulated_wake_handler_threads(void)
 	}
 }
 
+#ifdef _WIN32
 /**********************************************************************//**
 This function can be called if one wants to post a batch of reads and
 prefers an i/o-handler thread to handle them all at once later. You must
@@ -4752,15 +4703,14 @@ call os_aio_simulated_wake_handler_threads later to ensure the threads
 are not left sleeping! */
 UNIV_INTERN
 void
-os_aio_simulated_put_read_threads_to_sleep(void)
-/*============================================*/
+os_aio_simulated_put_read_threads_to_sleep()
 {
 
 /* The idea of putting background IO threads to sleep is only for
 Windows when using simulated AIO. Windows XP seems to schedule
 background threads too eagerly to allow for coalescing during
 readahead requests. */
-#ifdef __WIN__
+
 	os_aio_array_t*	array;
 
 	if (srv_use_native_aio) {
@@ -4779,8 +4729,8 @@ readahead requests. */
 			os_event_reset(os_aio_segment_wait_events[i]);
 		}
 	}
-#endif /* __WIN__ */
 }
+#endif /* _WIN32 */
 
 #if defined(LINUX_NATIVE_AIO)
 /*******************************************************************//**
@@ -4855,7 +4805,7 @@ os_aio_func(
 				caution! */
 	const char*	name,	/*!< in: name of the file or path as a
 				null-terminated string */
-	os_file_t	file,	/*!< in: handle to a file */
+	pfs_os_file_t	file,	/*!< in: handle to a file */
 	void*		buf,	/*!< in: buffer where to read or from which
 				to write */
 	os_offset_t	offset,	/*!< in: file offset where to read or write */
@@ -4887,7 +4837,6 @@ os_aio_func(
 	ulint		dummy_type;
 #endif /* WIN_ASYNC_IO */
 	ulint		wake_later;
-
 	ut_ad(buf);
 	ut_ad(n > 0);
 	ut_ad(n % OS_FILE_LOG_BLOCK_SIZE == 0);
@@ -4997,7 +4946,6 @@ try_again:
 #ifdef WIN_ASYNC_IO
 			ret = ReadFile(file, buf, (DWORD) n, &len,
 				       &(slot->control));
-
 #elif defined(LINUX_NATIVE_AIO)
 			if (!os_aio_linux_dispatch(array, slot)) {
 				goto err_exit;
@@ -5020,7 +4968,6 @@ try_again:
 			buffer = buf;
 			ret = WriteFile(file, buffer, (DWORD) n, &len,
 					&(slot->control));
-
 #elif defined(LINUX_NATIVE_AIO)
 			if (!os_aio_linux_dispatch(array, slot)) {
 				goto err_exit;
@@ -5174,8 +5121,7 @@ os_aio_windows_handle(
 		srv_set_io_thread_op_info(
 			orig_seg, "get windows aio return value");
 	}
-
-	ret = GetOverlappedResult(slot->file, &(slot->control), &len, TRUE);
+	ret = GetOverlappedResult(slot->file, &slot->control, &len, TRUE);
 
 	*message1 = slot->message1;
 	*message2 = slot->message2;
@@ -5212,7 +5158,8 @@ os_aio_windows_handle(
 		and os_file_write APIs, need to register with
 		performance schema explicitly here. */
 		struct PSI_file_locker* locker = NULL;
-		register_pfs_file_io_begin(locker, slot->file, slot->len,
+		PSI_file_locker_state	state;
+		register_pfs_file_io_begin(&state, locker, slot->file, slot->len,
 					   (slot->type == OS_FILE_WRITE)
 						? PSI_FILE_WRITE
 						: PSI_FILE_READ,
@@ -5221,8 +5168,8 @@ os_aio_windows_handle(
 
 		ut_a((slot->len & 0xFFFFFFFFUL) == slot->len);
 
- 		switch (slot->type) {
- 		case OS_FILE_WRITE:
+		switch (slot->type) {
+		case OS_FILE_WRITE:
 			ret = WriteFile(slot->file, slot->buf,
 					(DWORD) slot->len, &len,
 					&(slot->control));
@@ -5231,7 +5178,6 @@ os_aio_windows_handle(
 			ret = ReadFile(slot->file, slot->buf,
 				       (DWORD) slot->len, &len,
 				       &(slot->control));
-
 			break;
 		default:
 			ut_error;
@@ -5247,7 +5193,6 @@ os_aio_windows_handle(
 			file where we also use async i/o: in Windows
 			we must use the same wait mechanism as for
 			async i/o */
-
 			ret = GetOverlappedResult(slot->file,
 						  &(slot->control),
 						  &len, TRUE);
@@ -5259,7 +5204,7 @@ os_aio_windows_handle(
 	if (slot->type == OS_FILE_WRITE &&
 	    !slot->is_log &&
 	    srv_use_trim &&
-	    os_fallocate_failed == FALSE) {
+	    !os_fallocate_failed) {
 		// Deallocate unused blocks from file system
 		os_file_trim(slot);
 	}
@@ -5356,7 +5301,7 @@ retry:
 			if (slot->type == OS_FILE_WRITE &&
 			    !slot->is_log &&
 			    srv_use_trim &&
-			    os_fallocate_failed == FALSE) {
+			    !os_fallocate_failed) {
 				// Deallocate unused blocks from file system
 				os_file_trim(slot);
 			}
@@ -5718,7 +5663,6 @@ consecutive_loop:
 		os_aio_slot_t*	slot;
 
 		slot = os_aio_array_get_nth_slot(array, i + segment * n);
-
 		if (slot->reserved
 		    && slot != aio_slot
 		    && slot->offset == aio_slot->offset + aio_slot->len
@@ -6035,11 +5979,12 @@ os_aio_print(
 			srv_io_thread_op_info[i],
 			srv_io_thread_function[i]);
 
-#ifndef __WIN__
-		if (os_aio_segment_wait_events[i]->is_set) {
+#ifndef _WIN32
+		if (!srv_use_native_aio
+		    && os_aio_segment_wait_events[i]->is_set) {
 			fprintf(file, " ev set");
 		}
-#endif /* __WIN__ */
+#endif /* _WIN32 */
 
 		fprintf(file, "\n");
 	}
@@ -6073,19 +6018,24 @@ os_aio_print(
 	time_elapsed = 0.001 + difftime(current_time, os_last_printout);
 
 	fprintf(file,
-		"Pending flushes (fsync) log: %lu; buffer pool: %lu\n"
-		"%lu OS file reads, %lu OS file writes, %lu OS fsyncs\n",
-		(ulong) fil_n_pending_log_flushes,
-		(ulong) fil_n_pending_tablespace_flushes,
-		(ulong) os_n_file_reads,
-		(ulong) os_n_file_writes,
-		(ulong) os_n_fsyncs);
+		"Pending flushes (fsync) log: " ULINTPF
+		"; buffer pool: " ULINTPF "\n"
+		ULINTPF " OS file reads, "
+		ULINTPF " OS file writes, "
+		ULINTPF " OS fsyncs\n",
+		fil_n_pending_log_flushes,
+		fil_n_pending_tablespace_flushes,
+		os_n_file_reads,
+		os_n_file_writes,
+		os_n_fsyncs);
 
-	if (os_file_n_pending_preads != 0 || os_file_n_pending_pwrites != 0) {
+	const ulint n_reads = ulint(MONITOR_VALUE(MONITOR_OS_PENDING_READS));
+	const ulint n_writes = ulint(MONITOR_VALUE(MONITOR_OS_PENDING_WRITES));
+
+	if (n_reads != 0 || n_writes != 0) {
 		fprintf(file,
-			"%lu pending preads, %lu pending pwrites\n",
-			(ulong) os_file_n_pending_preads,
-			(ulong) os_file_n_pending_pwrites);
+			ULINTPF " pending reads, " ULINTPF " pending writes\n",
+			n_reads, n_writes);
 	}
 
 	if (os_n_file_reads == os_n_file_reads_old) {
@@ -6216,6 +6166,7 @@ typedef struct _FILE_LEVEL_TRIM {
 #endif
 #endif
 
+#if defined(WIN_ASYNC_IO) || defined(LINUX_NATIVE_AIO)
 /**********************************************************************//**
 Directly manipulate the allocated disk space by deallocating for the file referred to
 by fd  for  the  byte range starting at offset and continuing for len bytes.
@@ -6223,7 +6174,7 @@ Within the specified range, partial file system blocks are zeroed, and whole
 file system blocks are removed from the file.  After a successful call,
 subsequent reads from  this range will return zeroes.
 @return	true if success, false if error */
-UNIV_INTERN
+static
 ibool
 os_file_trim(
 /*=========*/
@@ -6265,17 +6216,19 @@ os_file_trim(
 
 #ifdef __linux__
 #if defined(HAVE_FALLOC_PUNCH_HOLE_AND_KEEP_SIZE)
-	int ret = fallocate(slot->file, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, off, trim_len);
+	int ret = fallocate(slot->file,
+			    FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+			    off, trim_len);
 
 	if (ret) {
 		/* After first failure do not try to trim again */
-		os_fallocate_failed = TRUE;
+		os_fallocate_failed = true;
 		srv_use_trim = FALSE;
-		ut_print_timestamp(stderr);
-		fprintf(stderr,
-			"  InnoDB: Warning: fallocate call failed with error code %d.\n"
-			"  InnoDB: start: %lu len: %lu payload: %lu\n"
-			"  InnoDB: Disabling fallocate for now.\n", errno, off, trim_len, len);
+		ib_logf(IB_LOG_LEVEL_WARN,
+			"fallocate() failed with error %d."
+			" start: " UINT64PF " len: " ULINTPF " payload: " ULINTPF "."
+			" Disabling fallocate for now.",
+			errno, off, ulint(trim_len), ulint(len));
 
 		os_file_handle_error_no_exit(slot->name,
 			" fallocate(FALLOC_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE) ",
@@ -6296,7 +6249,7 @@ os_file_trim(
 	fprintf(stderr,
 		"  InnoDB: Warning: fallocate not supported on this installation."
 		"  InnoDB: Disabling fallocate for now.");
-	os_fallocate_failed = TRUE;
+	os_fallocate_failed = true;
 	srv_use_trim = FALSE;
 	if (slot->write_size) {
 		*slot->write_size = 0;
@@ -6316,7 +6269,7 @@ os_file_trim(
 
 	if (!ret) {
 		/* After first failure do not try to trim again */
-		os_fallocate_failed = TRUE;
+		os_fallocate_failed = true;
 		srv_use_trim=FALSE;
 		ut_print_timestamp(stderr);
 		fprintf(stderr,
@@ -6370,6 +6323,7 @@ os_file_trim(
 	return (TRUE);
 
 }
+#endif /* WIN_ASYNC_IO || LINUX_NATIVE_AIO */
 #endif /* !UNIV_HOTBACKUP */
 
 /***********************************************************************//**

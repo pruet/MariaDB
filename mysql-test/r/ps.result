@@ -821,7 +821,7 @@ Warnings:
 Warning	1292	Truncated incorrect max_prepared_stmt_count value: '10000000000000000'
 select @@max_prepared_stmt_count;
 @@max_prepared_stmt_count
-1048576
+4294967295
 set global max_prepared_stmt_count=default;
 select @@max_prepared_stmt_count;
 @@max_prepared_stmt_count
@@ -1203,12 +1203,21 @@ prepare my_stmt from @aux;
 execute my_stmt;
 COUNT(*)
 46
+Warnings:
+Warning	1286	Unknown storage engine 'InnoDB'
+Warning	1286	Unknown storage engine 'InnoDB'
 execute my_stmt;
 COUNT(*)
 46
+Warnings:
+Warning	1286	Unknown storage engine 'InnoDB'
+Warning	1286	Unknown storage engine 'InnoDB'
 execute my_stmt;
 COUNT(*)
 46
+Warnings:
+Warning	1286	Unknown storage engine 'InnoDB'
+Warning	1286	Unknown storage engine 'InnoDB'
 deallocate prepare my_stmt;
 drop procedure if exists p1|
 drop table if exists t1|
@@ -3950,6 +3959,7 @@ Handler_read_key	1
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	0
@@ -3964,6 +3974,7 @@ Handler_read_key	1
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	0
@@ -3978,6 +3989,7 @@ Handler_read_key	0
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	8
@@ -3992,6 +4004,7 @@ Handler_read_key	1
 Handler_read_last	0
 Handler_read_next	0
 Handler_read_prev	0
+Handler_read_retry	0
 Handler_read_rnd	0
 Handler_read_rnd_deleted	0
 Handler_read_rnd_next	0
@@ -4073,4 +4086,310 @@ id	value
 deallocate prepare stmt;
 SET SESSION sql_mode = @save_sql_mode;
 DROP TABLE t1,t2;
-# End of 10.0 tests
+#
+# MDEV-8833: Crash of server on prepared statement with
+# conversion to semi-join
+#
+CREATE TABLE t1 (column1 INT);
+INSERT INTO t1 VALUES (3),(9);
+CREATE TABLE t2 (column2 INT);
+INSERT INTO t2 VALUES (1),(4);
+CREATE TABLE t3 (column3 INT);
+INSERT INTO t3 VALUES (6),(8);
+CREATE TABLE t4 (column4 INT);
+INSERT INTO t4 VALUES (2),(5);
+PREPARE stmt FROM "SELECT ( SELECT MAX( table1.column1 ) AS field1 
+FROM t1 AS table1
+WHERE table3.column3 IN ( SELECT table2.column2 AS field2 FROM t2 AS table2 ) 
+) AS sq
+FROM t3 AS table3, t4 AS table4";
+EXECUTE stmt;
+sq
+NULL
+NULL
+NULL
+NULL
+EXECUTE stmt;
+sq
+NULL
+NULL
+NULL
+NULL
+deallocate prepare stmt;
+drop table t1,t2,t3,t4;
+#
+# MDEV-11859: the plans for the first and the second executions
+#             of PS are not the same
+#
+create table t1 (id int, c varchar(3), key idx(c))engine=myisam;
+insert into t1 values (3,'bar'), (1,'xxx'), (2,'foo'), (5,'yyy');
+prepare stmt1 from
+"explain extended
+ select * from t1 where (1, 2) in ( select 3, 4 ) or c = 'foo'";
+execute stmt1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	t1	ref	idx	idx	6	const	1	100.00	Using index condition
+2	SUBQUERY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+Warnings:
+Note	1003	select `test`.`t1`.`id` AS `id`,`test`.`t1`.`c` AS `c` from `test`.`t1` where (`test`.`t1`.`c` = 'foo')
+execute stmt1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	t1	ref	idx	idx	6	const	1	100.00	Using index condition
+2	SUBQUERY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+Warnings:
+Note	1003	select `test`.`t1`.`id` AS `id`,`test`.`t1`.`c` AS `c` from `test`.`t1` where (`test`.`t1`.`c` = 'foo')
+deallocate prepare stmt1;
+prepare stmt1 from
+"select * from t1 where (1, 2) in ( select 3, 4 ) or c = 'foo'";
+flush status;
+execute stmt1;
+id	c
+2	foo
+show status like '%Handler_read%';
+Variable_name	Value
+Handler_read_first	0
+Handler_read_key	1
+Handler_read_last	0
+Handler_read_next	1
+Handler_read_prev	0
+Handler_read_retry	0
+Handler_read_rnd	0
+Handler_read_rnd_deleted	0
+Handler_read_rnd_next	0
+flush status;
+execute stmt1;
+id	c
+2	foo
+show status like '%Handler_read%';
+Variable_name	Value
+Handler_read_first	0
+Handler_read_key	1
+Handler_read_last	0
+Handler_read_next	1
+Handler_read_prev	0
+Handler_read_retry	0
+Handler_read_rnd	0
+Handler_read_rnd_deleted	0
+Handler_read_rnd_next	0
+deallocate prepare stmt1;
+prepare stmt2 from
+"explain extended
+ select * from t1 where (1, 2) in ( select 3, 4 )";
+execute stmt2;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	Impossible WHERE
+2	SUBQUERY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+Warnings:
+Note	1003	select `test`.`t1`.`id` AS `id`,`test`.`t1`.`c` AS `c` from `test`.`t1` where 0
+execute stmt2;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	Impossible WHERE
+2	SUBQUERY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+Warnings:
+Note	1003	select `test`.`t1`.`id` AS `id`,`test`.`t1`.`c` AS `c` from `test`.`t1` where 0
+deallocate prepare stmt2;
+drop table t1;
+#
+# MDEV-9208: Function->Function->View = Mysqld segfault
+# (Server crashes in Dependency_marker::visit_field on 2nd
+# execution with merged subquery)
+#
+CREATE TABLE t1 (i1 INT);
+insert into t1 values(1),(2);
+CREATE TABLE t2 (i2 INT);
+insert into t2 values(1),(2);
+prepare stmt from "
+  select 1 from (
+    select
+      if (i1<0, 0, 0) as f1,
+      (select f1) as f2
+    from t1, t2
+  ) sq
+";
+execute stmt;
+1
+1
+1
+1
+1
+execute stmt;
+1
+1
+1
+1
+1
+drop table t1,t2;
+#
+# MDEV-9619: Assertion `null_ref_table' failed in virtual
+# table_map Item_direct_view_ref::used_tables() const on 2nd
+# execution of PS
+#
+CREATE TABLE t1 (f1 VARCHAR(10)) ENGINE=MyISAM;
+CREATE ALGORITHM=MERGE VIEW v1 AS SELECT * FROM t1;
+INSERT INTO t1 VALUES ('a'),('b');
+CREATE TABLE t2 (f2 VARCHAR(10)) ENGINE=MyISAM;
+INSERT INTO t2 VALUES ('c'),('d');
+PREPARE stmt FROM "SELECT * FROM v1 WHERE f1 = SOME ( SELECT f2 FROM t2 )";
+EXECUTE stmt;
+f1
+EXECUTE stmt;
+f1
+insert into t1 values ('c');
+EXECUTE stmt;
+f1
+c
+EXECUTE stmt;
+f1
+c
+deallocate prepare stmt;
+drop view v1;
+drop table t1,t2;
+CREATE TABLE t1 (f1 VARCHAR(10)) ENGINE=MyISAM;
+CREATE ALGORITHM=MERGE VIEW v1 AS SELECT * FROM t1;
+INSERT INTO t1 VALUES ('a'),('b');
+CREATE TABLE t2 (f2 VARCHAR(10)) ENGINE=MyISAM;
+INSERT INTO t2 VALUES ('c'),('d');
+PREPARE stmt FROM "SELECT * FROM v1 WHERE (f1,f1) = SOME ( SELECT f2,f2 FROM t2 )";
+EXECUTE stmt;
+f1
+EXECUTE stmt;
+f1
+insert into t1 values ('c');
+EXECUTE stmt;
+f1
+c
+EXECUTE stmt;
+f1
+c
+deallocate prepare stmt;
+drop view v1;
+drop table t1,t2;
+CREATE TABLE t1 (column1 INT) ENGINE=MyISAM;
+INSERT INTO t1 VALUES (3),(9);
+CREATE TABLE t2 (column2 INT) ENGINE=MyISAM;
+INSERT INTO t2 VALUES (1),(4);
+CREATE TABLE t3 (column3 INT) ENGINE=MyISAM;
+INSERT INTO t3 VALUES (6),(8);
+CREATE TABLE t4 (column4 INT) ENGINE=MyISAM;
+INSERT INTO t4 VALUES (2),(5);
+PREPARE stmt FROM "
+SELECT ( 
+  SELECT MAX( table1.column1 ) AS field1 
+  FROM t1 AS table1
+  WHERE (111,table3.column3) IN ( SELECT 111,table2.column2 AS field2 FROM t2 AS table2 ) 
+) AS sq
+FROM t3 AS table3, t4 AS table4 GROUP BY sq
+";
+EXECUTE stmt;
+sq
+NULL
+EXECUTE stmt;
+sq
+NULL
+deallocate prepare stmt;
+drop table t1,t2,t3,t4;
+create table t1 (a int, b int, c int);
+create table t2 (x int, y int, z int);
+create table t3 as select * from t1;
+insert into t1 values (1,2,3),(4,5,6),(100,200,300),(400,500,600);
+insert into t2 values (1,2,3),(7,8,9),(100,200,300),(400,500,600);
+insert into t3 values (1,2,3),(11,12,13),(100,0,0),(400,500,600);
+set @optimizer_switch_save=@@optimizer_switch;
+set @join_cache_level_save=@@join_cache_level;
+set optimizer_switch='materialization=off';
+set join_cache_level=0;
+select * from t1 where (select a,b from t3 where t3.c=t1.c) in (select x,y from t2 where t1.c= t2.z);
+a	b	c
+1	2	3
+400	500	600
+prepare stmt from "select * from t1 where (select a,b from t3 where t3.c=t1.c) in (select x,y from t2 where t1.c= t2.z)";
+EXECUTE stmt;
+a	b	c
+1	2	3
+400	500	600
+EXECUTE stmt;
+a	b	c
+1	2	3
+400	500	600
+create view v1 as select * from t1;
+create view v2 as select * from t2;
+create view v3 as select * from t3;
+select * from v1 where (select a,b from v3 where v3.c=v1.c) in (select x,y from v2 where v1.c= v2.z);
+a	b	c
+1	2	3
+400	500	600
+prepare stmt from "select * from v1 where (select a,b from v3 where v3.c=v1.c) in (select x,y from v2 where v1.c= v2.z)";
+EXECUTE stmt;
+a	b	c
+1	2	3
+400	500	600
+EXECUTE stmt;
+a	b	c
+1	2	3
+400	500	600
+set optimizer_switch=@optimizer_switch_save;
+set join_cache_level=@join_cache_level_save;
+deallocate prepare stmt;
+drop view v1,v2,v3;
+drop table t1,t2,t3;
+#
+# MDEV-10657: incorrect result returned with binary protocol
+# (prepared statements)
+#
+create table  t1 (code varchar(10) primary key);
+INSERT INTO t1(code) VALUES ('LINE1'), ('LINE2'), ('LINE3');
+SELECT X.*
+FROM
+(SELECT CODE, RN
+FROM
+(SELECT A.CODE, @cnt := @cnt + 1 AS RN
+FROM  t1 A, (SELECT @cnt := 0) C) T
+) X;
+CODE	RN
+LINE1	1
+LINE2	2
+LINE3	3
+drop table t1;
+# End of 5.5 tests
+#
+# Start of 10.1 tests
+#
+#
+# MDEV-12060 Crash in EXECUTE IMMEDIATE with an expression returning a GRANT command
+# (the 10.1 part)
+#
+CREATE PROCEDURE p2 ()
+BEGIN
+SET STATEMENT join_cache_level=CAST(CONCAT(_utf8'6',_latin1'') AS INT) FOR PREPARE stmt FROM 'SELECT 1';
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+END;
+/
+CALL p2();
+1
+1
+DROP PROCEDURE p2;
+BEGIN NOT ATOMIC
+SET STATEMENT join_cache_level=CAST(CONCAT(_utf8'6',_latin1'') AS INT) FOR PREPARE stmt FROM 'SELECT 1';
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+END;
+/
+1
+1
+BEGIN NOT ATOMIC
+SET STATEMENT join_cache_level=CAST(CONCAT(_utf8'6',_latin1'') AS INT) FOR PREPARE stmt FROM 'SELECT 1';
+DEALLOCATE PREPARE stmt;
+END;
+/
+BEGIN NOT ATOMIC
+PREPARE stmt FROM 'SELECT 1';
+SET STATEMENT join_cache_level=CAST(CONCAT(_utf8'6',_latin1'') AS INT) FOR EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+END;
+/
+1
+1
+#
+# End of 10.1 tests
+#

@@ -1,5 +1,5 @@
-/* Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2015, MariaDB
+/* Copyright (c) 2000, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2008, 2018, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -411,6 +411,7 @@ void TABLE_SHARE::destroy()
     ha_share= NULL;                             // Safety
   }
 
+  delete_stat_values_for_table_share(this);
   free_root(&stats_cb.mem_root, MYF(0));
   stats_cb.stats_can_be_read= FALSE;
   stats_cb.stats_is_read= FALSE;
@@ -571,7 +572,7 @@ enum open_frm_error open_table_def(THD *thd, TABLE_SHARE *share, uint flags)
   {
     DBUG_ASSERT(flags & GTS_TABLE);
     DBUG_ASSERT(flags & GTS_USE_DISCOVERY);
-    mysql_file_delete_with_symlink(key_file_frm, path, MYF(0));
+    mysql_file_delete_with_symlink(key_file_frm, path, "", MYF(0));
     file= -1;
   }
   else
@@ -1340,9 +1341,10 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
   extra_rec_buf_length= uint2korr(frm_image+59);
   rec_buff_length= ALIGN_SIZE(share->reclength + 1 + extra_rec_buf_length);
   share->rec_buff_length= rec_buff_length;
-  if (!(record= (uchar *) alloc_root(&share->mem_root,
-                                     rec_buff_length)))
+  if (!(record= (uchar *) alloc_root(&share->mem_root, rec_buff_length)))
     goto err;                          /* purecov: inspected */
+  MEM_NOACCESS(record, rec_buff_length);
+  MEM_UNDEFINED(record, share->reclength);
   share->default_values= record;
   memcpy(record, frm_image + record_offset, share->reclength);
 
@@ -1532,7 +1534,8 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
 
       if ((uchar)field_type == (uchar)MYSQL_TYPE_VIRTUAL)
       {
-        DBUG_ASSERT(interval_nr); // Expect non-null expression
+        if (!interval_nr) // Expect non-null expression
+          goto err;
         /* 
           The interval_id byte in the .frm file stores the length of the
           expression statement for a virtual column.
@@ -1721,6 +1724,7 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
     keyinfo= share->key_info;
     uint primary_key= my_strcasecmp(system_charset_info, share->keynames.type_names[0],
                                     primary_key_name) ? MAX_KEY : 0;
+    KEY* key_first_info= NULL;
 
     if (primary_key >= MAX_KEY && keyinfo->flags & HA_NOSAME)
     {
@@ -1800,34 +1804,72 @@ int TABLE_SHARE::init_from_binary_frm_image(THD *thd, bool write,
                keyinfo->name_length+1);
       }
 
+      if (!key)
+        key_first_info= keyinfo;
+
       if (ext_key_parts > share->key_parts && key)
       {
         KEY_PART_INFO *new_key_part= (keyinfo-1)->key_part +
                                      (keyinfo-1)->ext_key_parts;
+        uint add_keyparts_for_this_key= add_first_key_parts;
+        uint length_bytes= 0, len_null_byte= 0, ext_key_length= 0;
+        Field *field;
 
         /* 
           Do not extend the key that contains a component
           defined over the beginning of a field.
 	*/ 
         for (i= 0; i < keyinfo->user_defined_key_parts; i++)
-	{
+        {
           uint fieldnr= keyinfo->key_part[i].fieldnr;
+          field= share->field[keyinfo->key_part[i].fieldnr-1];
+
+          if (field->null_ptr)
+            len_null_byte= HA_KEY_NULL_LENGTH;
+
+          if (field->type() == MYSQL_TYPE_BLOB ||
+             field->real_type() == MYSQL_TYPE_VARCHAR ||
+             field->type() == MYSQL_TYPE_GEOMETRY)
+          {
+            length_bytes= HA_KEY_BLOB_LENGTH;
+          }
+
+          ext_key_length+= keyinfo->key_part[i].length + len_null_byte
+                            + length_bytes;
           if (share->field[fieldnr-1]->key_length() !=
               keyinfo->key_part[i].length)
 	  {
-            add_first_key_parts= 0;
+            add_keyparts_for_this_key= 0;
             break;
           }
         }
 
-        if (add_first_key_parts < keyinfo->ext_key_parts-keyinfo->user_defined_key_parts)
+        if (add_keyparts_for_this_key)
+        {
+          for (i= 0; i < add_keyparts_for_this_key; i++)
+          {
+            uint pk_part_length= key_first_info->key_part[i].store_length;
+            if (keyinfo->ext_key_part_map & 1<<i)
+            {
+              if (ext_key_length + pk_part_length > MAX_KEY_LENGTH)
+              {
+                add_keyparts_for_this_key= i;
+                break;
+              }
+              ext_key_length+= pk_part_length;
+            }
+          }
+        }
+
+        if (add_keyparts_for_this_key < (keyinfo->ext_key_parts -
+                                        keyinfo->user_defined_key_parts))
 	{
           share->ext_key_parts-= keyinfo->ext_key_parts;
           key_part_map ext_key_part_map= keyinfo->ext_key_part_map;
           keyinfo->ext_key_parts= keyinfo->user_defined_key_parts;
           keyinfo->ext_key_flags= keyinfo->flags;
 	  keyinfo->ext_key_part_map= 0; 
-          for (i= 0; i < add_first_key_parts; i++)
+          for (i= 0; i < add_keyparts_for_this_key; i++)
 	  {
             if (ext_key_part_map & 1<<i)
 	    {
@@ -2193,6 +2235,9 @@ int TABLE_SHARE::init_from_sql_statement_string(THD *thd, bool write,
     goto ret;
 
   thd->lex->create_info.db_type= hton;
+#ifdef WITH_PARTITION_STORAGE_ENGINE
+  thd->work_part_info= 0;                       // For partitioning
+#endif
 
   if (tabledef_version.str)
     thd->lex->create_info.tabledef_version= tabledef_version;
@@ -2646,6 +2691,7 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
   if (!(record= (uchar*) alloc_root(&outparam->mem_root,
                                    share->rec_buff_length * records)))
     goto err;                                   /* purecov: inspected */
+  MEM_NOACCESS(record, share->rec_buff_length * records);
 
   if (records == 0)
   {
@@ -2660,6 +2706,8 @@ enum open_frm_error open_table_from_share(THD *thd, TABLE_SHARE *share,
     else
       outparam->record[1]= outparam->record[0];   // Safety
   }
+  MEM_UNDEFINED(outparam->record[0], share->reclength);
+  MEM_UNDEFINED(outparam->record[1], share->reclength);
 
   if (!(field_ptr = (Field **) alloc_root(&outparam->mem_root,
                                           (uint) ((share->fields+1)*
@@ -3442,18 +3490,23 @@ bool get_field(MEM_ROOT *mem, Field *field, String *res)
 {
   char buff[MAX_FIELD_WIDTH], *to;
   String str(buff,sizeof(buff),&my_charset_bin);
-  uint length;
+  bool rc;
+  THD *thd= field->get_thd();
+  ulonglong sql_mode_backup= thd->variables.sql_mode;
+  thd->variables.sql_mode&= ~MODE_PAD_CHAR_TO_FULL_LENGTH;
 
   field->val_str(&str);
-  if (!(length= str.length()))
+  if ((rc= !str.length() ||
+           !(to= strmake_root(mem, str.ptr(), str.length()))))
   {
     res->length(0);
-    return 1;
+    goto ex;
   }
-  if (!(to= strmake_root(mem, str.ptr(), length)))
-    length= 0;                                  // Safety fix
-  res->set(to, length, field->charset());
-  return 0;
+  res->set(to, str.length(), field->charset());
+
+ex:
+  thd->variables.sql_mode= sql_mode_backup;
+  return rc;
 }
 
 
@@ -3472,17 +3525,10 @@ bool get_field(MEM_ROOT *mem, Field *field, String *res)
 
 char *get_field(MEM_ROOT *mem, Field *field)
 {
-  char buff[MAX_FIELD_WIDTH], *to;
-  String str(buff,sizeof(buff),&my_charset_bin);
-  uint length;
-
-  field->val_str(&str);
-  length= str.length();
-  if (!length || !(to= (char*) alloc_root(mem,length+1)))
-    return NullS;
-  memcpy(to,str.ptr(),(uint) length);
-  to[length]=0;
-  return to;
+  String str;
+  bool rc= get_field(mem, field, &str);
+  DBUG_ASSERT(rc || str.ptr()[str.length()] == '\0');
+  return  rc ? NullS : (char *) str.ptr();
 }
 
 /*
@@ -3693,7 +3739,7 @@ Table_check_intact::check(TABLE *table, const TABLE_FIELD_DEF *table_def)
 
   /* Whether the table definition has already been validated. */
   if (table->s->table_field_def_cache == table_def)
-    DBUG_RETURN(FALSE);
+    goto end;
 
   if (table->s->fields != table_def->count)
   {
@@ -3857,7 +3903,26 @@ Table_check_intact::check(TABLE *table, const TABLE_FIELD_DEF *table_def)
   if (! error)
     table->s->table_field_def_cache= table_def;
 
+end:
+
+  if (has_keys && !error && !table->key_info)
+  {
+    report_error(0, "Incorrect definition of table %s.%s: "
+                 "indexes are missing",
+                 table->s->db.str, table->alias.c_ptr());
+    error= TRUE;
+  }
+
   DBUG_RETURN(error);
+}
+
+
+void Table_check_intact_log_error::report_error(uint, const char *fmt, ...)
+{
+  va_list args;
+  va_start(args, fmt);
+  error_log_print(ERROR_LEVEL, fmt, args);
+  va_end(args);
 }
 
 
@@ -4104,16 +4169,7 @@ void TABLE::init(THD *thd, TABLE_LIST *tl)
 
   DBUG_ASSERT(key_read == 0);
 
-  /* mark the record[0] uninitialized */
-  TRASH(record[0], s->reclength);
-
-  /*
-    Initialize the null marker bits, to ensure that if we are doing a read
-    of only selected columns (like in keyread), all null markers are
-    initialized.
-  */
-  memset(record[0], 255, s->null_bytes); 
-  memset(record[1], 255, s->null_bytes); 
+  restore_record(this, s->default_values);
 
   /* Tables may be reused in a sub statement. */
   DBUG_ASSERT(!file->extra(HA_EXTRA_IS_ATTACHED_CHILDREN));
@@ -4223,6 +4279,9 @@ bool TABLE_LIST::create_field_translation(THD *thd)
   Query_arena *arena, backup;
   bool res= FALSE;
   DBUG_ENTER("TABLE_LIST::create_field_translation");
+  DBUG_PRINT("enter", ("Alias: '%s'  Unit: %p",
+                      (alias ? alias : "<NULL>"),
+                       get_unit()));
 
   if (thd->stmt_arena->is_conventional() ||
       thd->stmt_arena->is_stmt_prepare_or_first_sp_execute())
@@ -4678,20 +4737,29 @@ void TABLE_LIST::cleanup_items()
 
 int TABLE_LIST::view_check_option(THD *thd, bool ignore_failure)
 {
-  if (check_option && check_option->val_int() == 0)
+  if (check_option)
   {
-    TABLE_LIST *main_view= top_table();
-    if (ignore_failure)
+    Counting_error_handler ceh;
+    thd->push_internal_handler(&ceh);
+    bool res= check_option->val_int() == 0;
+    thd->pop_internal_handler();
+    if (ceh.errors)
+      return(VIEW_CHECK_ERROR);
+    if (res)
     {
-      push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
-                          ER_VIEW_CHECK_FAILED,
-                          ER_THD(thd, ER_VIEW_CHECK_FAILED),
-                          main_view->view_db.str, main_view->view_name.str);
-      return(VIEW_CHECK_SKIP);
+      TABLE_LIST *main_view= top_table();
+      if (ignore_failure)
+      {
+        push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
+                            ER_VIEW_CHECK_FAILED,
+                            ER_THD(thd, ER_VIEW_CHECK_FAILED),
+                            main_view->view_db.str, main_view->view_name.str);
+        return(VIEW_CHECK_SKIP);
+      }
+      my_error(ER_VIEW_CHECK_FAILED, MYF(0), main_view->view_db.str,
+               main_view->view_name.str);
+      return(VIEW_CHECK_ERROR);
     }
-    my_error(ER_VIEW_CHECK_FAILED, MYF(0), main_view->view_db.str,
-             main_view->view_name.str);
-    return(VIEW_CHECK_ERROR);
   }
   return(VIEW_CHECK_OK);
 }
@@ -5302,7 +5370,8 @@ Item *Field_iterator_table::create_item(THD *thd)
 
   Item_field *item= new (thd->mem_root) Item_field(thd, &select->context, *ptr);
   if (item && thd->variables.sql_mode & MODE_ONLY_FULL_GROUP_BY &&
-      !thd->lex->in_sum_func && select->cur_pos_in_select_list != UNDEF_POS)
+      !thd->lex->in_sum_func && select->cur_pos_in_select_list != UNDEF_POS &&
+      select->join)
   {
     select->join->non_agg_fields.push_back(item);
     item->marker= select->cur_pos_in_select_list;
@@ -5361,6 +5430,8 @@ Item *create_view_field(THD *thd, TABLE_LIST *view, Item **field_ref,
                Item_direct_view_ref(thd, &view->view->select_lex.context,
                                     field_ref, view->alias,
                                     name, view));
+  if (!item)
+    return NULL;
   /*
     Force creation of nullable item for the result tmp table for outer joined
     views/derived tables.
@@ -5595,7 +5666,7 @@ Field_iterator_table_ref::get_or_create_column_ref(THD *thd, TABLE_LIST *parent_
     nj_col= natural_join_it.column_ref();
     DBUG_ASSERT(nj_col);
   }
-  DBUG_ASSERT(!nj_col->table_field ||
+  DBUG_ASSERT(!nj_col->table_field || !nj_col->table_field->field ||
               nj_col->table_ref->table == nj_col->table_field->field->table);
 
   /*
@@ -5644,7 +5715,7 @@ Field_iterator_table_ref::get_or_create_column_ref(THD *thd, TABLE_LIST *parent_
 
   RETURN
     #     Pointer to a column of a natural join (or its operand)
-    NULL  No memory to allocate the column
+    NULL  We didn't originally have memory to allocate the column
 */
 
 Natural_join_column *
@@ -5660,7 +5731,7 @@ Field_iterator_table_ref::get_natural_column_ref()
   */
   nj_col= natural_join_it.column_ref();
   DBUG_ASSERT(nj_col &&
-              (!nj_col->table_field ||
+              (!nj_col->table_field || !nj_col->table_field->field ||
                nj_col->table_ref->table == nj_col->table_field->field->table));
   return nj_col;
 }
@@ -6290,6 +6361,14 @@ void TABLE::create_key_part_by_field(KEY_PART_INFO *key_part_info,
     might be reused.
   */
   key_part_info->store_length= key_part_info->length;
+  /*
+    For BIT fields null_bit is not set to 0 even if the field is defined
+    as NOT NULL, look at Field_bit::Field_bit
+  */
+  if (!field->real_maybe_null())
+  {
+    key_part_info->null_bit= 0;
+  }
 
   /*
      The total store length of the key part is the raw length of the field +
@@ -6332,6 +6411,14 @@ void TABLE::create_key_part_by_field(KEY_PART_INFO *key_part_info,
   The function checks whether a possible key satisfies the constraints
   imposed on the keys of any temporary table.
 
+  We need to filter out BLOB columns here, because ref access optimizer creates
+  KEYUSE objects for equalities for non-key columns for two puproses:
+  1. To discover possible keys for derived_with_keys optimization
+  2. To do hash joins
+  For the purpose of #1, KEYUSE objects are not created for "blob_column=..." .
+  However, they might be created for #2. In order to catch that case, we filter
+  them out here.
+
   @return TRUE if the key is valid
   @return FALSE otherwise
 */
@@ -6347,11 +6434,12 @@ bool TABLE::check_tmp_key(uint key, uint key_parts,
   {
     uint fld_idx= next_field_no(arg);
     reg_field= field + fld_idx;
+    if ((*reg_field)->type() == MYSQL_TYPE_BLOB)
+      return FALSE;
     uint fld_store_len= (uint16) (*reg_field)->key_length();
     if ((*reg_field)->real_maybe_null())
       fld_store_len+= HA_KEY_NULL_LENGTH;
-    if ((*reg_field)->type() == MYSQL_TYPE_BLOB ||
-        (*reg_field)->real_type() == MYSQL_TYPE_VARCHAR ||
+    if ((*reg_field)->real_type() == MYSQL_TYPE_VARCHAR ||
         (*reg_field)->type() == MYSQL_TYPE_GEOMETRY)
       fld_store_len+= HA_KEY_BLOB_LENGTH;
     key_len+= fld_store_len;
@@ -6863,11 +6951,9 @@ bool is_simple_order(ORDER *order)
   @details
     The function computes the values of the virtual columns of the table and
     stores them in the table record buffer.
-    If vcol_update_mode is set to VCOL_UPDATE_ALL then all virtual column are
-    computed. Otherwise, only fields from vcol_set are computed: all of them,
-    if vcol_update_mode is set to VCOL_UPDATE_FOR_WRITE, and, only those with
-    the stored_in_db flag set to false, if vcol_update_mode is equal to
-    VCOL_UPDATE_FOR_READ.
+    Only fields from vcol_set are computed: all of them, if vcol_update_mode is
+    set to VCOL_UPDATE_FOR_WRITE, and, only those with the stored_in_db flag
+    set to false, if vcol_update_mode is equal to VCOL_UPDATE_FOR_READ.
 
   @retval
     0    Success
@@ -6883,15 +6969,16 @@ int update_virtual_fields(THD *thd, TABLE *table,
   int error __attribute__ ((unused))= 0;
   DBUG_ASSERT(table && table->vfield);
 
-  thd->reset_arena_for_cached_items(table->expr_arena);
+  Query_arena backup_arena;
+  thd->set_n_backup_active_arena(table->expr_arena, &backup_arena);
+
   /* Iterate over virtual fields in the table */
   for (vfield_ptr= table->vfield; *vfield_ptr; vfield_ptr++)
   {
     vfield= (*vfield_ptr);
     DBUG_ASSERT(vfield->vcol_info && vfield->vcol_info->expr_item);
-    if ((bitmap_is_set(table->vcol_set, vfield->field_index) &&
-         (vcol_update_mode == VCOL_UPDATE_FOR_WRITE || !vfield->stored_in_db)) ||
-        vcol_update_mode == VCOL_UPDATE_ALL)
+    if (bitmap_is_set(table->vcol_set, vfield->field_index) &&
+        (vcol_update_mode == VCOL_UPDATE_FOR_WRITE || !vfield->stored_in_db))
     {
       /* Compute the actual value of the virtual fields */
       error= vfield->vcol_info->expr_item->save_in_field(vfield, 0);
@@ -6902,7 +6989,7 @@ int update_virtual_fields(THD *thd, TABLE *table,
       DBUG_PRINT("info", ("field '%s' - skipped", vfield->field_name));
     }
   }
-  thd->reset_arena_for_cached_items(0);
+  thd->restore_active_arena(table->expr_arena, &backup_arena);
   DBUG_RETURN(0);
 }
 
@@ -7284,7 +7371,15 @@ int TABLE_LIST::fetch_number_of_rows()
 {
   int error= 0;
   if (jtbm_subselect)
+  {
+    if (jtbm_subselect->is_jtbm_merged)
+    {
+      table->file->stats.records= jtbm_subselect->jtbm_record_count;
+      set_if_bigger(table->file->stats.records, 2);
+      table->used_stat_records= table->file->stats.records;
+    }
     return 0;
+  }
   if (is_materialized_derived() && !fill_me)
 
   {
@@ -7414,4 +7509,24 @@ double KEY::actual_rec_per_key(uint i)
     return 0;
   return (is_statistics_from_stat_tables ?
           read_stats->get_avg_frequency(i) : (double) rec_per_key[i]);
+}
+
+LEX_CSTRING *fk_option_name(enum_fk_option opt)
+{
+  static LEX_CSTRING names[]=
+  {
+    { STRING_WITH_LEN("???") },
+    { STRING_WITH_LEN("RESTRICT") },
+    { STRING_WITH_LEN("CASCADE") },
+    { STRING_WITH_LEN("SET NULL") },
+    { STRING_WITH_LEN("NO ACTION") },
+    { STRING_WITH_LEN("SET DEFAULT") }
+  };
+  return names + opt;
+}
+
+bool fk_modifies_child(enum_fk_option opt)
+{
+  static bool can_write[]= { false, false, true, true, false, true };
+  return can_write[opt];
 }

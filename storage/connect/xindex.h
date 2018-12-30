@@ -184,7 +184,7 @@ class DllExport XXBASE : public CSORT, public BLOCK {
   virtual bool IsRandom(void) {return true;}
   virtual bool IsDynamic(void) {return Dynamic;}
   virtual void SetDynamic(bool dyn) {Dynamic = dyn;}
-  virtual bool HaveSame(void) {return false;}
+//virtual bool HaveSame(void) {return false;}
   virtual int  GetCurPos(void) {return Cur_K;}
   virtual void SetNval(int n) {assert(n == 1);}
   virtual void SetOp(OPVAL op) {Op = op;}
@@ -200,8 +200,8 @@ class DllExport XXBASE : public CSORT, public BLOCK {
           void FreeIndex(void) {PlgDBfree(Index);}
 
   // Methods
-  virtual void Print(PGLOBAL g, FILE *f, uint n);
-  virtual void Print(PGLOBAL g, char *ps, uint z);
+  virtual void Printf(PGLOBAL g, FILE *f, uint n);
+  virtual void Prints(PGLOBAL g, char *ps, uint z);
   virtual bool Init(PGLOBAL g) = 0;
   virtual bool Make(PGLOBAL g, PIXDEF sxp) = 0;
 #if defined(XMAP)
@@ -256,7 +256,7 @@ class DllExport XINDEX : public XXBASE {
   // Implementation
   virtual IDT  GetType(void) {return TYPE_IDX_INDX;}
   virtual bool IsMul(void) {return (Nval < Nk) ? true : Mul;}
-  virtual bool HaveSame(void) {return Op == OP_SAME;}
+//virtual bool HaveSame(void) {return Op == OP_SAME;}
   virtual int  GetCurPos(void) {return (Pex) ? Pex[Cur_K] : Cur_K;}
   virtual void SetNval(int n) {Nval = n;}
           int  GetMaxSame(void) {return MaxSame;}

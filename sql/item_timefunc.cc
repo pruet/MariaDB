@@ -41,6 +41,7 @@
 #include "set_var.h"
 #include "sql_locale.h"          // MY_LOCALE my_locale_en_US
 #include "strfunc.h"             // check_word
+#include "sql_type_int.h"        // Longlong_hybrid
 #include "sql_time.h"            // make_truncated_value_warning,
                                  // get_date_from_daynr,
                                  // calc_weekday, calc_week,
@@ -426,7 +427,7 @@ static bool extract_date_time(DATE_TIME_FORMAT *format,
     {
       if (!my_isspace(&my_charset_latin1,*val))
       {
-	make_truncated_value_warning(current_thd,
+        make_truncated_value_warning(current_thd,
                                      Sql_condition::WARN_LEVEL_WARN,
                                      val_begin, length,
 				     cached_timestamp_type, NullS);
@@ -702,7 +703,7 @@ static bool get_interval_info(const char *str,uint length,CHARSET_INFO *cs,
 {
   const char *end=str+length;
   uint i;
-  long msec_length= 0;
+  long field_length= 0;
 
   while (str != end && !my_isdigit(cs,*str))
     str++;
@@ -711,9 +712,10 @@ static bool get_interval_info(const char *str,uint length,CHARSET_INFO *cs,
   {
     longlong value;
     const char *start= str;
-    for (value=0; str != end && my_isdigit(cs, *str) ; str++)
+    for (value= 0; str != end && my_isdigit(cs, *str); str++)
       value= value*10 + *str - '0';
-    msec_length= 6 - (str - start);
+    if ((field_length= str - start) >= 20)
+      return true;
     values[i]= value;
     while (str != end && !my_isdigit(cs,*str))
       str++;
@@ -728,8 +730,13 @@ static bool get_interval_info(const char *str,uint length,CHARSET_INFO *cs,
     }
   }
 
-  if (transform_msec && msec_length > 0)
-    values[count - 1] *= (long) log_10_int[msec_length];
+  if (transform_msec && field_length > 0)
+  {
+    if (field_length < 6)
+      values[count - 1] *= log_10_int[6 - field_length];
+    else if (field_length > 6)
+      values[count - 1] /= log_10_int[field_length - 6];
+  }
 
   return (str != end);
 }
@@ -939,9 +946,8 @@ void Item_func_monthname::fix_length_and_dec()
 {
   THD* thd= current_thd;
   CHARSET_INFO *cs= thd->variables.collation_connection;
-  uint32 repertoire= my_charset_repertoire(cs);
   locale= thd->variables.lc_time_names;  
-  collation.set(cs, DERIVATION_COERCIBLE, repertoire);
+  collation.set(cs, DERIVATION_COERCIBLE, locale->repertoire());
   decimals=0;
   max_length= locale->max_month_name_length * collation.collation->mbmaxlen;
   maybe_null=1; 
@@ -1086,9 +1092,8 @@ void Item_func_dayname::fix_length_and_dec()
 {
   THD* thd= current_thd;
   CHARSET_INFO *cs= thd->variables.collation_connection;
-  uint32 repertoire= my_charset_repertoire(cs);
   locale= thd->variables.lc_time_names;  
-  collation.set(cs, DERIVATION_COERCIBLE, repertoire);
+  collation.set(cs, DERIVATION_COERCIBLE, locale->repertoire());
   decimals=0;
   max_length= locale->max_day_name_length * collation.collation->mbmaxlen;
   maybe_null=1; 
@@ -1466,6 +1471,7 @@ void Item_temporal_func::fix_length_and_dec()
     time can get us to return NULL.
   */ 
   maybe_null= 1;
+
   if (decimals)
   {
     if (decimals == NOT_FIXED_DEC)
@@ -1794,9 +1800,18 @@ overflow:
 
   ltime->hour= TIME_MAX_HOUR+1;
   check_time_range(ltime, decimals, &unused);
-  make_truncated_value_warning(current_thd, Sql_condition::WARN_LEVEL_WARN,
-                               err->ptr(), err->length(),
-                               MYSQL_TIMESTAMP_TIME, NullS);
+  if (!err)
+  {
+    ErrConvInteger err2(sec, unsigned_flag);
+    make_truncated_value_warning(current_thd, Sql_condition::WARN_LEVEL_WARN,
+                                 &err2, MYSQL_TIMESTAMP_TIME, NullS);
+  }
+  else
+  {
+    ErrConvString err2(err);
+    make_truncated_value_warning(current_thd, Sql_condition::WARN_LEVEL_WARN,
+                                 &err2, MYSQL_TIMESTAMP_TIME, NullS);
+  }
   return 0;
 }
 
@@ -2194,26 +2209,26 @@ void Item_extract::fix_length_and_dec()
 {
   maybe_null=1;					// If wrong date
   switch (int_type) {
-  case INTERVAL_YEAR:		max_length=4; date_value=1; break;
-  case INTERVAL_YEAR_MONTH:	max_length=6; date_value=1; break;
-  case INTERVAL_QUARTER:        max_length=2; date_value=1; break;
-  case INTERVAL_MONTH:		max_length=2; date_value=1; break;
-  case INTERVAL_WEEK:		max_length=2; date_value=1; break;
-  case INTERVAL_DAY:		max_length=2; date_value=1; break;
-  case INTERVAL_DAY_HOUR:	max_length=9; date_value=0; break;
-  case INTERVAL_DAY_MINUTE:	max_length=11; date_value=0; break;
-  case INTERVAL_DAY_SECOND:	max_length=13; date_value=0; break;
-  case INTERVAL_HOUR:		max_length=2; date_value=0; break;
-  case INTERVAL_HOUR_MINUTE:	max_length=4; date_value=0; break;
-  case INTERVAL_HOUR_SECOND:	max_length=6; date_value=0; break;
-  case INTERVAL_MINUTE:		max_length=2; date_value=0; break;
-  case INTERVAL_MINUTE_SECOND:	max_length=4; date_value=0; break;
-  case INTERVAL_SECOND:		max_length=2; date_value=0; break;
-  case INTERVAL_MICROSECOND:	max_length=2; date_value=0; break;
-  case INTERVAL_DAY_MICROSECOND: max_length=20; date_value=0; break;
-  case INTERVAL_HOUR_MICROSECOND: max_length=13; date_value=0; break;
-  case INTERVAL_MINUTE_MICROSECOND: max_length=11; date_value=0; break;
-  case INTERVAL_SECOND_MICROSECOND: max_length=9; date_value=0; break;
+  case INTERVAL_YEAR:             set_date_length(4); break; // YYYY
+  case INTERVAL_YEAR_MONTH:       set_date_length(6); break; // YYYYMM
+  case INTERVAL_QUARTER:          set_date_length(2); break; // 1..4
+  case INTERVAL_MONTH:            set_date_length(2); break; // MM
+  case INTERVAL_WEEK:             set_date_length(2); break; // 0..52
+  case INTERVAL_DAY:              set_date_length(2); break; // DD
+  case INTERVAL_DAY_HOUR:         set_time_length(4); break; // DDhh
+  case INTERVAL_DAY_MINUTE:       set_time_length(6); break; // DDhhmm
+  case INTERVAL_DAY_SECOND:       set_time_length(8); break; // DDhhmmss
+  case INTERVAL_HOUR:             set_time_length(2); break; // hh
+  case INTERVAL_HOUR_MINUTE:      set_time_length(4); break; // hhmm
+  case INTERVAL_HOUR_SECOND:      set_time_length(6); break; // hhmmss
+  case INTERVAL_MINUTE:           set_time_length(2); break; // mm
+  case INTERVAL_MINUTE_SECOND:    set_time_length(4); break; // mmss
+  case INTERVAL_SECOND:           set_time_length(2); break; // ss
+  case INTERVAL_MICROSECOND:      set_time_length(6); break; // ffffff
+  case INTERVAL_DAY_MICROSECOND:  set_time_length(14); break; // DDhhmmssffffff
+  case INTERVAL_HOUR_MICROSECOND: set_time_length(12); break; // hhmmssffffff
+  case INTERVAL_MINUTE_MICROSECOND: set_time_length(10); break; // mmssffffff
+  case INTERVAL_SECOND_MICROSECOND: set_time_length(8); break; // ssffffff
   case INTERVAL_LAST: DBUG_ASSERT(0); break; /* purecov: deadcode */
   }
 }
@@ -2397,7 +2412,7 @@ String *Item_char_typecast::copy(String *str, CHARSET_INFO *strcs)
   if (copier.copy_with_warn(cast_cs, &tmp_value, strcs,
                             str->ptr(), str->length(), cast_length))
   {
-    null_value= 1; // In strict mode: malformed data or could not convert
+    null_value= 1; // EOM
     return 0;
   }
   check_truncation_with_warn(str, copier.source_end_pos() - str->ptr());
@@ -2788,8 +2803,7 @@ bool Item_func_timediff::get_date(MYSQL_TIME *ltime, ulonglong fuzzy_date)
 bool Item_func_maketime::get_date(MYSQL_TIME *ltime, ulonglong fuzzy_date)
 {
   DBUG_ASSERT(fixed == 1);
-  bool overflow= 0;
-  longlong hour=   args[0]->val_int();
+  Longlong_hybrid hour(args[0]->val_int(), args[0]->unsigned_flag);
   longlong minute= args[1]->val_int();
   ulonglong second;
   ulong microsecond;
@@ -2801,32 +2815,23 @@ bool Item_func_maketime::get_date(MYSQL_TIME *ltime, ulonglong fuzzy_date)
 
   bzero(ltime, sizeof(*ltime));
   ltime->time_type= MYSQL_TIMESTAMP_TIME;
+  ltime->neg= hour.neg();
 
-  /* Check for integer overflows */
-  if (hour < 0)
+  if (hour.abs() <= TIME_MAX_HOUR)
   {
-    if (args[0]->unsigned_flag)
-      overflow= 1;
-    else
-      ltime->neg= 1;
-  }
-  if (-hour > TIME_MAX_HOUR || hour > TIME_MAX_HOUR)
-    overflow= 1;
-
-  if (!overflow)
-  {
-    ltime->hour=   (uint) ((hour < 0 ? -hour : hour));
+    ltime->hour=   (uint) hour.abs();
     ltime->minute= (uint) minute;
     ltime->second= (uint) second;
     ltime->second_part= microsecond;
   }
   else
   {
-    ltime->hour= TIME_MAX_HOUR;
-    ltime->minute= TIME_MAX_MINUTE;
-    ltime->second= TIME_MAX_SECOND;
+    // use check_time_range() to set ltime to the max value depending on dec
+    int unused;
+    ltime->hour= TIME_MAX_HOUR + 1;
+    check_time_range(ltime, decimals, &unused);
     char buf[28];
-    char *ptr= longlong10_to_str(hour, buf, args[0]->unsigned_flag ? 10 : -10);
+    char *ptr= longlong10_to_str(hour.value(), buf, hour.is_unsigned() ? 10 : -10);
     int len = (int)(ptr - buf) + sprintf(ptr, ":%02u:%02u", (uint)minute, (uint)second);
     make_truncated_value_warning(current_thd, Sql_condition::WARN_LEVEL_WARN,
                                  buf, len, MYSQL_TIMESTAMP_TIME,
@@ -3101,7 +3106,7 @@ get_date_time_result_type(const char *format, uint length)
   const char *val= format;
   const char *end= format + length;
 
-  for (; val != end && val != end; val++)
+  for (; val != end; val++)
   {
     if (*val == '%' && val+1 != end)
     {

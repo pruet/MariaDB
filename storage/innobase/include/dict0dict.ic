@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2015, Oracle and/or its affiliates
-Copyright (c) 2013, 2015, SkySQL Ab
+Copyright (c) 1996, 2017, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2013, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -41,7 +41,7 @@ dict_col_get_mbminlen(
 /*==================*/
 	const dict_col_t*	col)	/*!< in: column */
 {
-	return(DATA_MBMINLEN(col->mbminmaxlen));
+	return col->mbminlen;
 }
 /*********************************************************************//**
 Gets the maximum number of bytes per character.
@@ -52,25 +52,7 @@ dict_col_get_mbmaxlen(
 /*==================*/
 	const dict_col_t*	col)	/*!< in: column */
 {
-	return(DATA_MBMAXLEN(col->mbminmaxlen));
-}
-/*********************************************************************//**
-Sets the minimum and maximum number of bytes per character. */
-UNIV_INLINE
-void
-dict_col_set_mbminmaxlen(
-/*=====================*/
-	dict_col_t*	col,		/*!< in/out: column */
-	ulint		mbminlen,	/*!< in: minimum multi-byte
-					character size, in bytes */
-	ulint		mbmaxlen)	/*!< in: minimum multi-byte
-					character size, in bytes */
-{
-	ut_ad(mbminlen < DATA_MBMAX);
-	ut_ad(mbmaxlen < DATA_MBMAX);
-	ut_ad(mbminlen <= mbmaxlen);
-
-	col->mbminmaxlen = DATA_MBMINMAXLEN(mbminlen, mbmaxlen);
+	return col->mbmaxlen;
 }
 /*********************************************************************//**
 Gets the column data type. */
@@ -81,12 +63,14 @@ dict_col_copy_type(
 	const dict_col_t*	col,	/*!< in: column */
 	dtype_t*		type)	/*!< out: data type */
 {
-	ut_ad(col && type);
+	ut_ad(col != NULL);
+	ut_ad(type != NULL);
 
 	type->mtype = col->mtype;
 	type->prtype = col->prtype;
 	type->len = col->len;
-	type->mbminmaxlen = col->mbminmaxlen;
+	type->mbminlen = col->mbminlen;
+	type->mbmaxlen = col->mbmaxlen;
 }
 #endif /* !UNIV_HOTBACKUP */
 
@@ -108,7 +92,8 @@ dict_col_type_assert_equal(
 	ut_ad(col->prtype == type->prtype);
 	//ut_ad(col->len == type->len);
 # ifndef UNIV_HOTBACKUP
-	ut_ad(col->mbminmaxlen == type->mbminmaxlen);
+	ut_ad(col->mbminlen == type->mbminlen);
+	ut_ad(col->mbmaxlen == type->mbmaxlen);
 # endif /* !UNIV_HOTBACKUP */
 
 	return(TRUE);
@@ -126,7 +111,7 @@ dict_col_get_min_size(
 	const dict_col_t*	col)	/*!< in: column */
 {
 	return(dtype_get_min_size_low(col->mtype, col->prtype, col->len,
-				      col->mbminmaxlen));
+				      col->mbminlen, col->mbmaxlen));
 }
 /***********************************************************************//**
 Returns the maximum size of the column.
@@ -151,7 +136,7 @@ dict_col_get_fixed_size(
 	ulint			comp)	/*!< in: nonzero=ROW_FORMAT=COMPACT */
 {
 	return(dtype_get_fixed_size_low(col->mtype, col->prtype, col->len,
-					col->mbminmaxlen, comp));
+					col->mbminlen, col->mbmaxlen, comp));
 }
 /***********************************************************************//**
 Returns the ROW_FORMAT=REDUNDANT stored SQL NULL size of a column.
@@ -266,7 +251,6 @@ dict_index_is_clust(
 /*================*/
 	const dict_index_t*	index)	/*!< in: index */
 {
-	ut_ad(index);
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
 
 	return(index->type & DICT_CLUSTERED);
@@ -280,7 +264,6 @@ dict_index_is_unique(
 /*=================*/
 	const dict_index_t*	index)	/*!< in: index */
 {
-	ut_ad(index);
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
 
 	return(index->type & DICT_UNIQUE);
@@ -295,7 +278,6 @@ dict_index_is_ibuf(
 /*===============*/
 	const dict_index_t*	index)	/*!< in: index */
 {
-	ut_ad(index);
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
 
 	return(index->type & DICT_IBUF);
@@ -327,7 +309,6 @@ dict_index_is_sec_or_ibuf(
 {
 	ulint	type;
 
-	ut_ad(index);
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
 
 	type = index->type;
@@ -345,7 +326,6 @@ dict_table_get_n_user_cols(
 /*=======================*/
 	const dict_table_t*	table)	/*!< in: table */
 {
-	ut_ad(table);
 	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
 
 	return(table->n_cols - DATA_N_SYS_COLS);
@@ -358,7 +338,7 @@ UNIV_INLINE
 ulint
 dict_table_get_n_sys_cols(
 /*======================*/
-	const dict_table_t*	table __attribute__((unused)))	/*!< in: table */
+	const dict_table_t*	table MY_ATTRIBUTE((unused)))	/*!< in: table */
 {
 	ut_ad(table);
 	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
@@ -377,7 +357,6 @@ dict_table_get_n_cols(
 /*==================*/
 	const dict_table_t*	table)	/*!< in: table */
 {
-	ut_ad(table);
 	ut_ad(table->magic_n == DICT_TABLE_MAGIC_N);
 
 	return(table->n_cols);
@@ -546,13 +525,15 @@ dict_tf_is_valid(
 	/* Make sure there are no bits that we do not know about. */
 	if (unused != 0) {
 		fprintf(stderr,
-			"InnoDB: Error: table unused flags are %ld"
+			"InnoDB: Error: table unused flags are " ULINTPF
 			" in the data dictionary and are corrupted\n"
 			"InnoDB: Error: data dictionary flags are\n"
-			"InnoDB: compact %ld atomic_blobs %ld\n"
-			"InnoDB: unused %ld data_dir %ld zip_ssize %ld\n"
-			"InnoDB: page_compression %ld page_compression_level %ld\n"
-			"InnoDB: atomic_writes %ld\n",
+			"InnoDB: compact " ULINTPF " atomic_blobs " ULINTPF
+			"\nInnoDB: unused " ULINTPF " data_dir " ULINTPF
+			" zip_ssize " ULINTPF
+			"\nInnoDB: page_compression " ULINTPF
+			" page_compression_level " ULINTPF
+			"\nInnoDB: atomic_writes " ULINTPF "\n",
 			unused,
 			compact, atomic_blobs, unused, data_dir, zip_ssize,
 			page_compression, page_compression_level, atomic_writes
@@ -568,13 +549,17 @@ dict_tf_is_valid(
 
 		if (!compact) {
 			fprintf(stderr,
-				"InnoDB: Error: table compact flags are %ld"
+				"InnoDB: Error: table compact flags are "
+				ULINTPF
 				" in the data dictionary and are corrupted\n"
 				"InnoDB: Error: data dictionary flags are\n"
-				"InnoDB: compact %ld atomic_blobs %ld\n"
-				"InnoDB: unused %ld data_dir %ld zip_ssize %ld\n"
-				"InnoDB: page_compression %ld page_compression_level %ld\n"
-				"InnoDB: atomic_writes %ld\n",
+				"InnoDB: compact " ULINTPF
+				" atomic_blobs " ULINTPF "\n"
+				"InnoDB: unused " ULINTPF
+				" data_dir " ULINTPF " zip_ssize " ULINTPF
+				"\nInnoDB: page_compression " ULINTPF
+				" page_compression_level " ULINTPF
+				"\nInnoDB: atomic_writes " ULINTPF "\n",
 				compact, compact, atomic_blobs, unused, data_dir, zip_ssize,
 				page_compression, page_compression_level, atomic_writes
 			);
@@ -585,13 +570,15 @@ dict_tf_is_valid(
 
 		/* Antelope does not support COMPRESSED row format. */
 		fprintf(stderr,
-			"InnoDB: Error: table flags are %ld"
+			"InnoDB: Error: table flags are " ULINTPF
 			" in the data dictionary and are corrupted\n"
 			"InnoDB: Error: data dictionary flags are\n"
-			"InnoDB: compact %ld atomic_blobs %ld\n"
-			"InnoDB: unused %ld data_dir %ld zip_ssize %ld\n"
-			"InnoDB: page_compression %ld page_compression_level %ld\n"
-			"InnoDB: atomic_writes %ld\n",
+			"InnoDB: compact " ULINTPF " atomic_blobs " ULINTPF
+			"\nInnoDB: unused " ULINTPF " data_dir " ULINTPF
+			" zip_ssize " ULINTPF
+			"\nInnoDB: page_compression " ULINTPF
+			" page_compression_level " ULINTPF
+			"\nInnoDB: atomic_writes " ULINTPF "\n",
 			flags, compact, atomic_blobs, unused, data_dir, zip_ssize,
 			page_compression, page_compression_level, atomic_writes
 		);
@@ -608,12 +595,17 @@ dict_tf_is_valid(
 		    || zip_ssize > PAGE_ZIP_SSIZE_MAX) {
 
 			fprintf(stderr,
-				"InnoDB: Error: table compact flags are %ld in the data dictionary and are corrupted\n"
+				"InnoDB: Error: table compact flags are "
+				ULINTPF
+				" in the data dictionary and are corrupted\n"
 				"InnoDB: Error: data dictionary flags are\n"
-				"InnoDB: compact %ld atomic_blobs %ld\n"
-				"InnoDB: unused %ld data_dir %ld zip_ssize %ld\n"
-				"InnoDB: page_compression %ld page_compression_level %ld\n"
-				"InnoDB: atomic_writes %ld\n",
+				"InnoDB: compact " ULINTPF
+				" atomic_blobs " ULINTPF "\n"
+				"InnoDB: unused " ULINTPF
+				" data_dir " ULINTPF " zip_ssize " ULINTPF
+				"\nInnoDB: page_compression " ULINTPF
+				" page_compression_level " ULINTPF
+				"\nInnoDB: atomic_writes " ULINTPF "\n",
 				flags,
 				compact, atomic_blobs, unused, data_dir, zip_ssize,
 				page_compression, page_compression_level, atomic_writes
@@ -632,12 +624,16 @@ dict_tf_is_valid(
 			|| !atomic_blobs) {
 
 			fprintf(stderr,
-				"InnoDB: Error: table flags are %ld in the data dictionary and are corrupted\n"
+				"InnoDB: Error: table flags are " ULINTPF
+				" in the data dictionary and are corrupted\n"
 				"InnoDB: Error: data dictionary flags are\n"
-				"InnoDB: compact %ld atomic_blobs %ld\n"
-				"InnoDB: unused %ld data_dir %ld zip_ssize %ld\n"
-				"InnoDB: page_compression %ld page_compression_level %ld\n"
-				"InnoDB: atomic_writes %ld\n",
+				"InnoDB: compact " ULINTPF
+				" atomic_blobs " ULINTPF "\n"
+				"InnoDB: unused " ULINTPF
+				" data_dir " ULINTPF " zip_ssize " ULINTPF
+				"\nInnoDB: page_compression " ULINTPF
+				" page_compression_level " ULINTPF
+				"\nInnoDB: atomic_writes " ULINTPF "\n",
 				flags, compact, atomic_blobs, unused, data_dir, zip_ssize,
 				page_compression, page_compression_level, atomic_writes
 			);
@@ -650,12 +646,16 @@ dict_tf_is_valid(
 		if(atomic_writes > ATOMIC_WRITES_OFF) {
 
 			fprintf(stderr,
-				"InnoDB: Error: table flags are %ld in the data dictionary and are corrupted\n"
+				"InnoDB: Error: table flags are " ULINTPF
+				" in the data dictionary and are corrupted\n"
 				"InnoDB: Error: data dictionary flags are\n"
-				"InnoDB: compact %ld atomic_blobs %ld\n"
-				"InnoDB: unused %ld data_dir %ld zip_ssize %ld\n"
-				"InnoDB: page_compression %ld page_compression_level %ld\n"
-				"InnoDB: atomic_writes %ld\n",
+				"InnoDB: compact " ULINTPF
+				" atomic_blobs " ULINTPF "\n"
+				"InnoDB: unused " ULINTPF
+				" data_dir " ULINTPF " zip_ssize " ULINTPF
+				"\nInnoDB: page_compression " ULINTPF
+				" page_compression_level " ULINTPF
+				"\nInnoDB: atomic_writes " ULINTPF "\n",
 				flags, compact, atomic_blobs, unused, data_dir, zip_ssize,
 				page_compression, page_compression_level, atomic_writes
 			);
@@ -689,8 +689,6 @@ dict_sys_tables_type_validate(
 	ulint	page_compression_level = DICT_TF_GET_PAGE_COMPRESSION_LEVEL(type);
 	ulint	atomic_writes = DICT_TF_GET_ATOMIC_WRITES(type);
 
-	ut_a(atomic_writes <= ATOMIC_WRITES_OFF);
-
 	/* The low order bit of SYS_TABLES.TYPE is always set to 1.
 	If the format is UNIV_FORMAT_B or higher, this field is the same
 	as dict_table_t::flags. Zero is not allowed here. */
@@ -700,16 +698,12 @@ dict_sys_tables_type_validate(
 
 	if (redundant) {
 		if (zip_ssize || atomic_blobs) {
-			fprintf(stderr, "InnoDB: Error: SYS_TABLES::TYPE=Redundant, zip_ssize %lu atomic_blobs %lu\n",
-				zip_ssize, atomic_blobs);
 			return(ULINT_UNDEFINED);
 		}
 	}
 
 	/* Make sure there are no bits that we do not know about. */
 	if (unused) {
-		fprintf(stderr, "InnoDB: Error: SYS_TABLES::TYPE=%lu, unused %lu\n",
-			type, unused);
 		return(ULINT_UNDEFINED);
 	}
 
@@ -721,11 +715,8 @@ dict_sys_tables_type_validate(
 
 		The DICT_N_COLS_COMPACT flag should be in N_COLS,
 		but we already know that. */
-
 	} else if (zip_ssize) {
 		/* Antelope does not support COMPRESSED format. */
-		fprintf(stderr, "InnoDB: Error: SYS_TABLES::TYPE=%lu, zip_ssize %lu\n",
-			type, zip_ssize);
 		return(ULINT_UNDEFINED);
 	}
 
@@ -735,15 +726,11 @@ dict_sys_tables_type_validate(
 		should be in N_COLS, but we already know about the
 		low_order_bit and DICT_N_COLS_COMPACT flags. */
 		if (!atomic_blobs) {
-			fprintf(stderr, "InnoDB: Error: SYS_TABLES::TYPE=%lu, zip_ssize %lu atomic_blobs %lu\n",
-				type, zip_ssize, atomic_blobs);
 			return(ULINT_UNDEFINED);
 		}
 
 		/* Validate that the number is within allowed range. */
 		if (zip_ssize > PAGE_ZIP_SSIZE_MAX) {
-			fprintf(stderr, "InnoDB: Error: SYS_TABLES::TYPE=%lu, zip_ssize %lu max %d\n",
-				type, zip_ssize, PAGE_ZIP_SSIZE_MAX);
 			return(ULINT_UNDEFINED);
 		}
 	}
@@ -760,18 +747,13 @@ dict_sys_tables_type_validate(
 		low_order_bit and DICT_N_COLS_COMPACT flags. */
 
                 if (!atomic_blobs || !page_compression) {
-			fprintf(stderr, "InnoDB: Error: SYS_TABLES::TYPE=%lu, page_compression %lu page_compression_level %lu\n"
-				"InnoDB: Error: atomic_blobs %lu\n",
-				type, page_compression, page_compression_level, atomic_blobs);
 			return(ULINT_UNDEFINED);
 		}
 	}
 
 	/* Validate that the atomic writes number is within allowed range. */
 	if (atomic_writes > ATOMIC_WRITES_OFF) {
-		fprintf(stderr, "InnoDB: Error: SYS_TABLES::TYPE=%lu, atomic_writes %lu\n",
-				type, atomic_writes);
-			return(ULINT_UNDEFINED);
+		return(ULINT_UNDEFINED);
 	}
 
 	/* Return the validated SYS_TABLES.TYPE. */
@@ -913,9 +895,12 @@ dict_tf_to_fsp_flags(
 	ulint	table_flags)	/*!< in: dict_table_t::flags */
 {
 	ulint fsp_flags;
-	ulint page_compression = DICT_TF_GET_PAGE_COMPRESSION(table_flags);
-	ulint page_compression_level = DICT_TF_GET_PAGE_COMPRESSION_LEVEL(table_flags);
+	ulint page_compression_level = DICT_TF_GET_PAGE_COMPRESSION_LEVEL(
+		table_flags);
 	ulint atomic_writes = DICT_TF_GET_ATOMIC_WRITES(table_flags);
+
+	ut_ad((DICT_TF_GET_PAGE_COMPRESSION(table_flags) == 0)
+	      == (page_compression_level == 0));
 
 	DBUG_EXECUTE_IF("dict_tf_to_fsp_flags_failure",
 			return(ULINT_UNDEFINED););
@@ -924,30 +909,23 @@ dict_tf_to_fsp_flags(
 	fsp_flags = DICT_TF_HAS_ATOMIC_BLOBS(table_flags) ? 1 : 0;
 
 	/* ZIP_SSIZE and ATOMIC_BLOBS are at the same position. */
-	fsp_flags |= table_flags & DICT_TF_MASK_ZIP_SSIZE;
-	fsp_flags |= table_flags & DICT_TF_MASK_ATOMIC_BLOBS;
+	fsp_flags |= table_flags
+		& (DICT_TF_MASK_ZIP_SSIZE | DICT_TF_MASK_ATOMIC_BLOBS);
 
-	/* In addition, tablespace flags also contain the page size. */
-	fsp_flags |= fsp_flags_set_page_size(fsp_flags, UNIV_PAGE_SIZE);
+	fsp_flags |= FSP_FLAGS_PAGE_SSIZE();
 
-	/* The DATA_DIR flag is in a different position in fsp_flag */
-	fsp_flags |= DICT_TF_HAS_DATA_DIR(table_flags)
-		     ? FSP_FLAGS_MASK_DATA_DIR : 0;
+	if (page_compression_level) {
+		fsp_flags |= FSP_FLAGS_MASK_PAGE_COMPRESSION;
+	}
 
-	/* In addition, tablespace flags also contain if the page
-	compression is used for this table. */
-	fsp_flags |= FSP_FLAGS_SET_PAGE_COMPRESSION(fsp_flags, page_compression);
+	ut_a(fsp_flags_is_valid(fsp_flags, false));
 
-	/* In addition, tablespace flags also contain page compression level
-	if page compression is used for this table. */
-	fsp_flags |= FSP_FLAGS_SET_PAGE_COMPRESSION_LEVEL(fsp_flags, page_compression_level);
+	if (DICT_TF_HAS_DATA_DIR(table_flags)) {
+		fsp_flags |= 1U << FSP_FLAGS_MEM_DATA_DIR;
+	}
 
-	/* In addition, tablespace flags also contain flag if atomic writes
-	is used for this table */
-	fsp_flags |= FSP_FLAGS_SET_ATOMIC_WRITES(fsp_flags, atomic_writes);
-
-	ut_a(fsp_flags_is_valid(fsp_flags));
-	ut_a(dict_tf_verify_flags(table_flags, fsp_flags));
+	fsp_flags |= atomic_writes << FSP_FLAGS_MEM_ATOMIC_WRITES;
+	fsp_flags |= page_compression_level << FSP_FLAGS_MEM_COMPRESSION_LEVEL;
 
 	return(fsp_flags);
 }
@@ -1082,6 +1060,27 @@ dict_table_x_lock_indexes(
 	}
 }
 
+/*********************************************************************//**
+Returns true if the particular FTS index in the table is still syncing
+in the background, false otherwise.
+@param [in] table      Table containing FTS index
+@return True if sync of fts index is still going in the background  */
+UNIV_INLINE
+bool
+dict_fts_index_syncing(
+	dict_table_t*   table)
+{
+	 dict_index_t*   index;
+
+	for (index = dict_table_get_first_index(table);
+	    index != NULL;
+	    index = dict_table_get_next_index(index)) {
+		if (index->index_fts_syncing) {
+			 return(true);
+		}
+	}
+	return(false);
+}
 /*********************************************************************//**
 Release the exclusive locks on all index tree. */
 UNIV_INLINE
@@ -1549,11 +1548,10 @@ dict_index_is_corrupted(
 /*====================*/
 	const dict_index_t*	index)	/*!< in: index */
 {
-	ut_ad(index);
 	ut_ad(index->magic_n == DICT_INDEX_MAGIC_N);
 
 	return((index->type & DICT_CORRUPT)
-	       || (index->table && index->table->corrupted));
+	        || (index->table && index->table->corrupted));
 }
 
 /********************************************************************//**

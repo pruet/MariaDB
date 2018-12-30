@@ -1,6 +1,6 @@
 /*
-   Copyright (c) 2000, 2014, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2016, MariaDB
+   Copyright (c) 2000, 2018, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2018, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -13,7 +13,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /* mysql command tool
  * Commands compatible with mSQL by David J. Hughes
@@ -149,7 +149,7 @@ static my_bool ignore_errors=0,wait_flag=0,quick=0,
                default_pager_set= 0, opt_sigint_ignore= 0,
                auto_vertical_output= 0,
                show_warnings= 0, executing_query= 0,
-               ignore_spaces= 0, opt_progress_reports;
+               ignore_spaces= 0, opt_binhex= 0, opt_progress_reports;
 static my_bool debug_info_flag, debug_check_flag, batch_abort_on_error;
 static my_bool column_types_flag;
 static my_bool preserve_comments= 0;
@@ -245,7 +245,8 @@ static void end_pager();
 static void init_tee(const char *);
 static void end_tee();
 static const char* construct_prompt();
-static char *get_arg(char *line, my_bool get_next_arg);
+enum get_arg_mode { CHECK, GET, GET_NEXT};
+static char *get_arg(char *line, get_arg_mode mode);
 static void init_username();
 static void add_int_to_prompt(int toadd);
 static int get_result_width(MYSQL_RES *res);
@@ -1064,8 +1065,7 @@ static void fix_history(String *final_command);
 
 static COMMANDS *find_command(char *name);
 static COMMANDS *find_command(char cmd_name);
-static bool add_line(String &buffer, char *line, ulong line_length,
-                     char *in_string, bool *ml_comment, bool truncated);
+static bool add_line(String &, char *, ulong, char *, bool *, bool);
 static void remove_cntrl(String &buffer);
 static void print_table_data(MYSQL_RES *result);
 static void print_table_data_html(MYSQL_RES *result);
@@ -1077,7 +1077,7 @@ static ulong start_timer(void);
 static void end_timer(ulong start_time,char *buff);
 static void mysql_end_timer(ulong start_time,char *buff);
 static void nice_time(double sec,char *buff,bool part_second);
-extern "C" sig_handler mysql_end(int sig);
+extern "C" sig_handler mysql_end(int sig) __attribute__ ((noreturn));
 extern "C" sig_handler handle_sigint(int sig);
 #if defined(HAVE_TERMIOS_H) && defined(GWINSZ_IN_SYS_IOCTL)
 static sig_handler window_resize(int sig);
@@ -1094,7 +1094,7 @@ inline bool is_delimiter_command(char *name, ulong len)
     only name(first DELIMITER_NAME_LEN bytes) is checked.
   */
   return (len >= DELIMITER_NAME_LEN &&
-          !my_strnncoll(charset_info, (uchar*) name, DELIMITER_NAME_LEN,
+          !my_strnncoll(&my_charset_latin1, (uchar*) name, DELIMITER_NAME_LEN,
                         (uchar *) DELIMITER_NAME, DELIMITER_NAME_LEN));
 }
 
@@ -1140,6 +1140,7 @@ int main(int argc,char *argv[])
   current_prompt = my_strdup(default_prompt,MYF(MY_WME));
   prompt_counter=0;
   aborted= 0;
+  sf_leaking_memory= 1; /* no memory leak reports yet */
 
   outfile[0]=0;			// no (default) outfile
   strmov(pager, "stdout");	// the default, if --pager wasn't given
@@ -1174,11 +1175,7 @@ int main(int argc,char *argv[])
       close(stdout_fileno_copy);             /* Clean up dup(). */
   }
 
-  if (load_defaults("my",load_default_groups,&argc,&argv))
-  {
-    my_end(0);
-    exit(1);
-  }
+  load_defaults_or_exit("my", load_default_groups, &argc, &argv);
   defaults_argv=argv;
   if ((status.exit_status= get_options(argc, (char **) argv)))
     mysql_end(-1);
@@ -1200,6 +1197,7 @@ int main(int argc,char *argv[])
     my_end(0);
     exit(1);
   }
+  sf_leaking_memory= 0;
   glob_buffer.realloc(512);
   completion_hash_init(&ht, 128);
   init_alloc_root(&hash_mem_root, 16384, 0, MYF(0));
@@ -1227,15 +1225,17 @@ int main(int argc,char *argv[])
   window_resize(0);
 #endif
 
-  put_info("Welcome to the MariaDB monitor.  Commands end with ; or \\g.",
-	   INFO_INFO);
-  my_snprintf((char*) glob_buffer.ptr(), glob_buffer.alloced_length(),
-	  "Your %s connection id is %lu\nServer version: %s\n",
-          mysql_get_server_name(&mysql),
-	  mysql_thread_id(&mysql), server_version_string(&mysql));
-  put_info((char*) glob_buffer.ptr(),INFO_INFO);
-
-  put_info(ORACLE_WELCOME_COPYRIGHT_NOTICE("2000"), INFO_INFO);
+  if (!status.batch)
+  {
+    put_info("Welcome to the MariaDB monitor.  Commands end with ; or \\g.",
+             INFO_INFO);
+    my_snprintf((char*) glob_buffer.ptr(), glob_buffer.alloced_length(),
+            "Your %s connection id is %lu\nServer version: %s\n",
+            mysql_get_server_name(&mysql),
+            mysql_thread_id(&mysql), server_version_string(&mysql));
+    put_info((char*) glob_buffer.ptr(),INFO_INFO);
+    put_info(ORACLE_WELCOME_COPYRIGHT_NOTICE("2000"), INFO_INFO);
+  }
 
 #ifdef HAVE_READLINE
   initialize_readline((char*) my_progname);
@@ -1491,6 +1491,8 @@ static struct my_option my_long_options[] =
   {"batch", 'B',
    "Don't use history file. Disable interactive behavior. (Enables --silent.)",
    0, 0, 0, GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0},
+  {"binary-as-hex", 0, "Print binary data as hex", &opt_binhex, &opt_binhex,
+   0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
   {"character-sets-dir", OPT_CHARSETS_DIR,
    "Directory for character set files.", &charsets_dir,
    &charsets_dir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
@@ -1791,8 +1793,9 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
     break;
   case OPT_MYSQL_PROTOCOL:
 #ifndef EMBEDDED_LIBRARY
-    opt_protocol= find_type_or_exit(argument, &sql_protocol_typelib,
-                                    opt->name);
+    if ((opt_protocol= find_type_with_warning(argument, &sql_protocol_typelib,
+                                              opt->name)) <= 0)
+      exit(1);
 #endif
     break;
   case OPT_SERVER_ARG:
@@ -2255,7 +2258,7 @@ static COMMANDS *find_command(char *name)
       if (!my_strnncoll(&my_charset_latin1, (uchar*) name, len,
                         (uchar*) commands[i].name, len) &&
           (commands[i].name[len] == '\0') &&
-          (!end || commands[i].takes_params))
+          (!end || (commands[i].takes_params && get_arg(name, CHECK))))
       {
         index= i;
         break;
@@ -2318,8 +2321,10 @@ static bool add_line(String &buffer, char *line, ulong line_length,
       continue;
     }
 #endif
-    if (!*ml_comment && inchar == '\\' &&
-        !(*in_string && 
+    if (!*ml_comment && inchar == '\\' && *in_string != '`' &&
+        !(*in_string == '"' &&
+          (mysql.server_status & SERVER_STATUS_ANSI_QUOTES)) &&
+        !(*in_string &&
           (mysql.server_status & SERVER_STATUS_NO_BACKSLASH_ESCAPES)))
     {
       // Found possbile one character command like \c
@@ -3058,7 +3063,6 @@ static int com_server_help(String *buffer __attribute__((unused)),
   {
     unsigned int num_fields= mysql_num_fields(result);
     my_ulonglong num_rows= mysql_num_rows(result);
-    mysql_fetch_fields(result);
     if (num_fields==3 && num_rows==1)
     {
       if (!(cur= mysql_fetch_row(result)))
@@ -3173,7 +3177,7 @@ com_charset(String *buffer __attribute__((unused)), char *line)
   char buff[256], *param;
   CHARSET_INFO * new_cs;
   strmake_buf(buff, line);
-  param= get_arg(buff, 0);
+  param= get_arg(buff, GET);
   if (!param || !*param)
   {
     return put_info("Usage: \\C charset_name | charset charset_name", 
@@ -3312,7 +3316,8 @@ com_go(String *buffer,char *line __attribute__((unused)))
 	  print_table_data_html(result);
 	else if (opt_xml)
 	  print_table_data_xml(result);
-  else if (vertical || (auto_vertical_output && (terminal_width < get_result_width(result))))
+        else if (vertical || (auto_vertical_output &&
+                (terminal_width < get_result_width(result))))
 	  print_table_data_vertically(result);
 	else if (opt_silent && verbose <= 2 && !output_tables)
 	  print_tab_data(result);
@@ -3531,6 +3536,41 @@ print_field_types(MYSQL_RES *result)
 }
 
 
+/* Used to determine if we should invoke print_as_hex for this field */
+
+static bool
+is_binary_field(MYSQL_FIELD *field)
+{
+  if ((field->charsetnr == 63) &&
+      (field->type == MYSQL_TYPE_BIT ||
+       field->type == MYSQL_TYPE_BLOB ||
+       field->type == MYSQL_TYPE_LONG_BLOB ||
+       field->type == MYSQL_TYPE_MEDIUM_BLOB ||
+       field->type == MYSQL_TYPE_TINY_BLOB ||
+       field->type == MYSQL_TYPE_VAR_STRING ||
+       field->type == MYSQL_TYPE_STRING ||
+       field->type == MYSQL_TYPE_VARCHAR ||
+       field->type == MYSQL_TYPE_GEOMETRY))
+    return 1;
+  return 0;
+}
+
+
+/* Print binary value as hex literal (0x ...) */
+
+static void
+print_as_hex(FILE *output_file, const char *str, ulong len, ulong total_bytes_to_send)
+{
+  const char *ptr= str, *end= ptr+len;
+  ulong i;
+  fprintf(output_file, "0x");
+  for(; ptr < end; ptr++)
+    fprintf(output_file, "%02X", *((uchar*)ptr));
+  for (i= 2*len+2; i < total_bytes_to_send; i++)
+    tee_putc((int)' ', output_file);
+}
+
+
 static void
 print_table_data(MYSQL_RES *result)
 {
@@ -3557,6 +3597,8 @@ print_table_data(MYSQL_RES *result)
       length= MY_MAX(length,field->max_length);
     if (length < 4 && !IS_NOT_NULL(field->flags))
       length=4;					// Room for "NULL"
+    if (opt_binhex && is_binary_field(field))
+      length= 2 + length * 2;
     field->max_length=length;
     num_flag[mysql_field_tell(result) - 1]= IS_NUM(field->type);
     separator.fill(separator.length()+length+2,'-');
@@ -3624,9 +3666,11 @@ print_table_data(MYSQL_RES *result)
        many extra padding-characters we should send with the printing function.
       */
       visible_length= charset_info->cset->numcells(charset_info, buffer, buffer + data_length);
-      extra_padding= data_length - visible_length;
+      extra_padding= (uint) (data_length - visible_length);
 
-      if (field_max_length > MAX_COLUMN_LENGTH)
+      if (opt_binhex && is_binary_field(field))
+        print_as_hex(PAGER, cur[off], lengths[off], field_max_length);
+      else if (field_max_length > MAX_COLUMN_LENGTH)
         tee_print_sized_data(buffer, data_length, MAX_COLUMN_LENGTH+extra_padding, FALSE);
       else
       {
@@ -3760,11 +3804,15 @@ print_table_data_html(MYSQL_RES *result)
     if (interrupted_query)
       break;
     ulong *lengths=mysql_fetch_lengths(result);
+    field= mysql_fetch_fields(result);
     (void) tee_fputs("<TR>", PAGER);
     for (uint i=0; i < mysql_num_fields(result); i++)
     {
       (void) tee_fputs("<TD>", PAGER);
-      xmlencode_print(cur[i], lengths[i]);
+      if (opt_binhex && is_binary_field(&field[i]))
+        print_as_hex(PAGER, cur[i], lengths[i], lengths[i]);
+      else
+        xmlencode_print(cur[i], lengths[i]);
       (void) tee_fputs("</TD>", PAGER);
     }
     (void) tee_fputs("</TR>", PAGER);
@@ -3800,7 +3848,10 @@ print_table_data_xml(MYSQL_RES *result)
       if (cur[i])
       {
         tee_fprintf(PAGER, "\">");
-        xmlencode_print(cur[i], lengths[i]);
+        if (opt_binhex && is_binary_field(&fields[i]))
+          print_as_hex(PAGER, cur[i], lengths[i], lengths[i]);
+        else
+          xmlencode_print(cur[i], lengths[i]);
         tee_fprintf(PAGER, "</field>\n");
       }
       else
@@ -3847,22 +3898,27 @@ print_table_data_vertically(MYSQL_RES *result)
       {
         unsigned int i;
         const char *p;
-
+        if (opt_binhex && is_binary_field(field))
+           fprintf(PAGER, "0x");
         for (i= 0, p= cur[off]; i < lengths[off]; i+= 1, p+= 1)
         {
-          if (*p == '\0')
-            tee_putc((int)' ', PAGER);
+          if (opt_binhex && is_binary_field(field))
+            fprintf(PAGER, "%02X", *((uchar*)p));
           else
-            tee_putc((int)*p, PAGER);
+          {
+            if (*p == '\0')
+              tee_putc((int)' ', PAGER);
+            else
+              tee_putc((int)*p, PAGER);
+          }
         }
         tee_putc('\n', PAGER);
       }
-      else
+       else
         tee_fprintf(PAGER, "NULL\n");
     }
   }
 }
-
 
 /* print_warnings should be called right after executing a statement */
 
@@ -4000,11 +4056,19 @@ print_tab_data(MYSQL_RES *result)
   while ((cur = mysql_fetch_row(result)))
   {
     lengths=mysql_fetch_lengths(result);
-    safe_put_field(cur[0],lengths[0]);
+    field= mysql_fetch_fields(result);
+    if (opt_binhex && is_binary_field(&field[0]))
+      print_as_hex(PAGER, cur[0], lengths[0], lengths[0]);
+    else
+      safe_put_field(cur[0],lengths[0]);
+
     for (uint off=1 ; off < mysql_num_fields(result); off++)
     {
       (void) tee_fputs("\t", PAGER);
-      safe_put_field(cur[off], lengths[off]);
+      if (opt_binhex && field && is_binary_field(&field[off]))
+        print_as_hex(PAGER, cur[off], lengths[off], lengths[off]);
+      else
+        safe_put_field(cur[off], lengths[off]);
     }
     (void) tee_fputs("\n", PAGER);
   }
@@ -4259,12 +4323,12 @@ com_connect(String *buffer, char *line)
 #ifdef EXTRA_DEBUG
     tmp[1]= 0;
 #endif
-    tmp= get_arg(buff, 0);
+    tmp= get_arg(buff, GET);
     if (tmp && *tmp)
     {
       my_free(current_db);
       current_db= my_strdup(tmp, MYF(MY_WME));
-      tmp= get_arg(buff, 1);
+      tmp= get_arg(buff, GET_NEXT);
       if (tmp)
       {
 	my_free(current_host);
@@ -4367,7 +4431,7 @@ com_delimiter(String *buffer __attribute__((unused)), char *line)
   char buff[256], *tmp;
 
   strmake_buf(buff, line);
-  tmp= get_arg(buff, 0);
+  tmp= get_arg(buff, GET);
 
   if (!tmp || !*tmp)
   {
@@ -4398,7 +4462,7 @@ com_use(String *buffer __attribute__((unused)), char *line)
 
   bzero(buff, sizeof(buff));
   strmake_buf(buff, line);
-  tmp= get_arg(buff, 0);
+  tmp= get_arg(buff, GET);
   if (!tmp || !*tmp)
   {
     put_info("USE must be followed by a database name", INFO_ERROR);
@@ -4483,23 +4547,22 @@ com_nowarnings(String *buffer __attribute__((unused)),
 }
 
 /*
-  Gets argument from a command on the command line. If get_next_arg is
-  not defined, skips the command and returns the first argument. The
-  line is modified by adding zero to the end of the argument. If
-  get_next_arg is defined, then the function searches for end of string
-  first, after found, returns the next argument and adds zero to the
-  end. If you ever wish to use this feature, remember to initialize all
-  items in the array to zero first.
+  Gets argument from a command on the command line. If mode is not GET_NEXT,
+  skips the command and returns the first argument. The line is modified by
+  adding zero to the end of the argument. If mode is GET_NEXT, then the
+  function searches for end of string first, after found, returns the next
+  argument and adds zero to the end. If you ever wish to use this feature,
+  remember to initialize all items in the array to zero first.
 */
 
-char *get_arg(char *line, my_bool get_next_arg)
+static char *get_arg(char *line, get_arg_mode mode)
 {
   char *ptr, *start;
-  my_bool quoted= 0, valid_arg= 0;
+  bool short_cmd= false;
   char qtype= 0;
 
   ptr= line;
-  if (get_next_arg)
+  if (mode == GET_NEXT)
   {
     for (; *ptr; ptr++) ;
     if (*(ptr + 1))
@@ -4510,7 +4573,7 @@ char *get_arg(char *line, my_bool get_next_arg)
     /* skip leading white spaces */
     while (my_isspace(charset_info, *ptr))
       ptr++;
-    if (*ptr == '\\') // short command was used
+    if ((short_cmd= *ptr == '\\')) // short command was used
       ptr+= 2;
     else
       while (*ptr &&!my_isspace(charset_info, *ptr)) // skip command
@@ -4523,24 +4586,31 @@ char *get_arg(char *line, my_bool get_next_arg)
   if (*ptr == '\'' || *ptr == '\"' || *ptr == '`')
   {
     qtype= *ptr;
-    quoted= 1;
     ptr++;
   }
   for (start=ptr ; *ptr; ptr++)
   {
-    if (*ptr == '\\' && ptr[1]) // escaped character
+    /* if short_cmd use historical rules (only backslash) otherwise SQL rules */
+    if (short_cmd
+        ? (*ptr == '\\' && ptr[1])                     // escaped character
+        : (*ptr == '\\' && ptr[1] && qtype != '`') ||  // escaped character
+          (qtype && *ptr == qtype && ptr[1] == qtype)) // quote
     {
-      // Remove the backslash
-      strmov_overlapp(ptr, ptr+1);
+      // Remove (or skip) the backslash (or a second quote)
+      if (mode != CHECK)
+        strmov_overlapp(ptr, ptr+1);
+      else
+        ptr++;
     }
-    else if ((!quoted && *ptr == ' ') || (quoted && *ptr == qtype))
+    else if (*ptr == (qtype ? qtype : ' '))
     {
-      *ptr= 0;
+      qtype= 0;
+      if (mode != CHECK)
+        *ptr= 0;
       break;
     }
   }
-  valid_arg= ptr != start;
-  return valid_arg ? start : NullS;
+  return ptr != start && !qtype ? start : NullS;
 }
 
 
@@ -4793,10 +4863,11 @@ com_status(String *buffer __attribute__((unused)),
     tee_fprintf(stdout, "Protocol:\t\tCompressed\n");
 #endif
 
-  if ((status_str= mysql_stat(&mysql)) && !mysql_error(&mysql)[0])
+  const char *pos;
+  if ((status_str= mysql_stat(&mysql)) && !mysql_error(&mysql)[0] &&
+      (pos= strchr(status_str,' ')))
   {
     ulong sec;
-    const char *pos= strchr(status_str,' ');
     /* print label */
     tee_fprintf(stdout, "%.*s\t\t\t", (int) (pos-status_str), status_str);
     if ((status_str= str2int(pos,10,0,LONG_MAX,(long*) &sec)))

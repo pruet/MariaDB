@@ -2066,7 +2066,7 @@ static uchar *find_entry_named(DYN_HEADER *hdr, LEX_STRING *key)
 /**
   Write number in the buffer (backward direction - starts from the buffer end)
 
-  @return pointer on the number begining
+  @return pointer on the number beginning
 */
 
 static char *backwritenum(char *chr, uint numkey)
@@ -2136,7 +2136,7 @@ find_column(DYN_HEADER *hdr, uint numkey, LEX_STRING *strkey)
   hdr->length= hdr_interval_length(hdr, hdr->entry + hdr->entry_size);
   hdr->data= hdr->dtpool + hdr->offset;
   /*
-    Check that the found data is withing the ranges. This can happen if
+    Check that the found data is within the ranges. This can happen if
     we get data with wrong offsets.
   */
   if (hdr->length == DYNCOL_OFFSET_ERROR ||
@@ -3480,7 +3480,7 @@ dynamic_column_update_many_fmt(DYNAMIC_COLUMN *str,
 
       if (plan[i].val->type == DYN_COL_NULL)
       {
-        plan[i].act= PLAN_NOP;                  /* Mark entry to be skiped */
+        plan[i].act= PLAN_NOP;                  /* Mark entry to be skipped */
       }
       else
       {
@@ -3818,6 +3818,58 @@ end:
   DBUG_RETURN(rc);
 }
 
+static
+my_bool dynstr_append_json_quoted(DYNAMIC_STRING *str,
+                                  const char *append, size_t len)
+{
+  uint additional= ((str->alloc_increment && str->alloc_increment > 6) ?
+                    str->alloc_increment :
+                    10);
+  uint lim= additional;
+  uint i;
+  if (dynstr_realloc(str, len + additional + 2))
+    return TRUE;
+  str->str[str->length++]= '"';
+  for (i= 0; i < len; i++)
+  {
+    register char c= append[i];
+    if (unlikely(((uchar)c) <= 0x1F))
+    {
+      if (lim < 5)
+        {
+          if (dynstr_realloc(str, additional))
+            return TRUE;
+          lim+= additional;
+        }
+        lim-= 5;
+        str->str[str->length++]= '\\';
+        str->str[str->length++]= 'u';
+        str->str[str->length++]= '0';
+        str->str[str->length++]= '0';
+        str->str[str->length++]= (c < 0x10 ? '0' : '1');
+        c%= 0x10;
+        str->str[str->length++]= (c < 0xA ? '0' + c  : 'A' + (c - 0xA));
+    }
+    else
+    {
+      if (c == '"' || c == '\\')
+      {
+        if (!lim)
+        {
+          if (dynstr_realloc(str, additional))
+            return TRUE;
+          lim= additional;
+        }
+        lim--;
+        str->str[str->length++]= '\\';
+      }
+      str->str[str->length++]= c;
+    }
+  }
+  str->str[str->length++]= '"';
+  return FALSE;
+}
+
 
 enum enum_dyncol_func_result
 mariadb_dyncol_val_str(DYNAMIC_STRING *str, DYNAMIC_COLUMN_VALUE *val,
@@ -3883,7 +3935,10 @@ mariadb_dyncol_val_str(DYNAMIC_STRING *str, DYNAMIC_COLUMN_VALUE *val,
             return ER_DYNCOL_RESOURCE;
         }
         if (quote)
-          rc= dynstr_append_quoted(str, from, len, quote);
+          if (quote == DYNCOL_JSON_ESC)
+            rc= dynstr_append_json_quoted(str, from, len);
+          else
+            rc= dynstr_append_quoted(str, from, len, quote);
         else
           rc= dynstr_append_mem(str, from, len);
         if (alloc)
@@ -4038,6 +4093,8 @@ mariadb_dyncol_val_double(double *dbl, DYNAMIC_COLUMN_VALUE *val)
         *dbl= strtod(str, &end);
         if (*end != '\0')
           rc= ER_DYNCOL_TRUNCATED;
+        free(str);
+        break;
       }
     case DYN_COL_DECIMAL:
       if (decimal2double(&val->x.decimal.value, dbl) != E_DEC_OK)
@@ -4129,7 +4186,7 @@ mariadb_dyncol_json_internal(DYNAMIC_COLUMN *str, DYNAMIC_STRING *json,
       hdr_interval_length(&header, header.entry + header.entry_size);
     header.data= header.dtpool + header.offset;
     /*
-      Check that the found data is withing the ranges. This can happen if
+      Check that the found data is within the ranges. This can happen if
       we get data with wrong offsets.
     */
     if (header.length == DYNCOL_OFFSET_ERROR ||
@@ -4181,8 +4238,8 @@ mariadb_dyncol_json_internal(DYNAMIC_COLUMN *str, DYNAMIC_STRING *json,
     }
     else
     {
-      if ((rc= mariadb_dyncol_val_str(json, &val,
-                                      &my_charset_utf8_general_ci, '"')) < 0)
+      if ((rc= mariadb_dyncol_val_str(json, &val, DYNCOL_UTF, DYNCOL_JSON_ESC))
+           < 0)
         goto err;
     }
   }
@@ -4269,7 +4326,7 @@ mariadb_dyncol_unpack(DYNAMIC_COLUMN *str,
       hdr_interval_length(&header, header.entry + header.entry_size);
     header.data= header.dtpool + header.offset;
     /*
-      Check that the found data is withing the ranges. This can happen if
+      Check that the found data is within the ranges. This can happen if
       we get data with wrong offsets.
     */
     if (header.length == DYNCOL_OFFSET_ERROR ||

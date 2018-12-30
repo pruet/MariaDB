@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2008, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2008, 2017, Oracle and/or its affiliates. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -247,7 +247,7 @@ ib_open_table_by_id(
 
 	table = dict_table_open_on_id(table_id, TRUE, DICT_TABLE_OP_NORMAL);
 
-	if (table != NULL && table->ibd_file_missing) {
+	if (table != NULL && table->file_unreadable) {
 		table = NULL;
 	}
 
@@ -272,7 +272,7 @@ ib_open_table_by_name(
 	table = dict_table_open_on_name(name, FALSE, FALSE,
 					DICT_ERR_IGNORE_NONE);
 
-	if (table != NULL && table->ibd_file_missing) {
+	if (table != NULL && table->file_unreadable) {
 		table = NULL;
 	}
 
@@ -292,7 +292,7 @@ ib_lookup_table_by_name(
 
 	table = dict_table_get_low(name);
 
-	if (table != NULL && table->ibd_file_missing) {
+	if (table != NULL && table->file_unreadable) {
 		table = NULL;
 	}
 
@@ -398,7 +398,7 @@ ib_read_tuple(
 
 			data = btr_rec_copy_externally_stored_field(
 				copy, offsets, zip_size, i, &len,
-				tuple->heap, NULL);
+				tuple->heap);
 
 			ut_a(len != UNIV_SQL_NULL);
 		}
@@ -1988,6 +1988,7 @@ ib_cursor_read_row(
 
 			page_format = static_cast<ib_bool_t>(
 				dict_table_is_comp(tuple->index->table));
+
 			rec = btr_pcur_get_rec(pcur);
 
 			if (prebuilt->innodb_api_rec &&
@@ -2028,6 +2029,7 @@ ib_cursor_position(
 	unsigned char*	buf;
 
 	buf = static_cast<unsigned char*>(mem_alloc(UNIV_PAGE_SIZE));
+
 
 	/* We want to position at one of the ends, row_search_for_mysql()
 	uses the search_tuple fields to work out what to do. */

@@ -1,5 +1,5 @@
-/* Copyright (c) 2005, 2012, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2012, Monty Program Ab
+/* Copyright (c) 2005, 2016, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2016, Monty Program Ab
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -559,7 +559,13 @@ class MYSQL_BIN_LOG: public TC_LOG, private MYSQL_LOG
   bool write_transaction_to_binlog_events(group_commit_entry *entry);
   void trx_group_commit_leader(group_commit_entry *leader);
   bool is_xidlist_idle_nolock();
-
+#ifdef WITH_WSREP
+  /*
+   When this mariadb node is slave and galera enabled. So in this case
+   we write the gtid in wsrep_run_commit itself.
+  */
+  inline bool is_gtid_cached(THD *thd);
+#endif
 public:
   /*
     A list of struct xid_count_per_binlog is used to keep track of how many
@@ -755,7 +761,7 @@ public:
   int update_log_index(LOG_INFO* linfo, bool need_update_threads);
   int rotate(bool force_rotate, bool* check_purge);
   void checkpoint_and_purge(ulong binlog_id);
-  int rotate_and_purge(bool force_rotate);
+  int rotate_and_purge(bool force_rotate, DYNAMIC_ARRAY* drop_gtid_domain= NULL);
   /**
      Flush binlog cache and synchronize to disk.
 
@@ -788,6 +794,7 @@ public:
   bool reset_logs(THD* thd, bool create_new_log,
                   rpl_gtid *init_state, uint32 init_state_len,
                   ulong next_log_number);
+  void wait_for_last_checkpoint_event();
   void close(uint exiting);
   void clear_inuse_flag_when_closing(File file);
 
@@ -1163,5 +1170,10 @@ static inline TC_LOG *get_tc_log_implementation()
     return &mysql_bin_log;
   return &tc_log_mmap;
 }
+
+
+class Gtid_list_log_event;
+const char *
+get_gtid_list_event(IO_CACHE *cache, Gtid_list_log_event **out_gtid_list);
 
 #endif /* LOG_H */

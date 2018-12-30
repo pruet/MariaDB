@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2013, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1995, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -35,7 +35,6 @@ Created 11/26/1995 Heikki Tuuri
 #include "ut0byte.h"
 #include "mtr0types.h"
 #include "page0types.h"
-#include "trx0types.h"
 
 /* Logging modes for a mini-transaction */
 #define MTR_LOG_ALL		21	/* default mode: log all operations
@@ -213,30 +212,17 @@ functions).  The page number parameter was originally written as 0. @{ */
 Starts a mini-transaction. */
 UNIV_INLINE
 void
-mtr_start_trx(
-/*======*/
-	mtr_t*	mtr,	/*!< out: mini-transaction */
-	trx_t*	trx)	/*!< in: transaction */
-	__attribute__((nonnull (1)));
-/***************************************************************//**
-Starts a mini-transaction. */
-UNIV_INLINE
-void
 mtr_start(
 /*======*/
 	mtr_t*	mtr)	/*!< out: mini-transaction */
-{
-	mtr_start_trx(mtr, NULL);
-}
-	__attribute__((nonnull))
+	MY_ATTRIBUTE((nonnull));
 /***************************************************************//**
 Commits a mini-transaction. */
 UNIV_INTERN
 void
 mtr_commit(
 /*=======*/
-	mtr_t*	mtr)	/*!< in/out: mini-transaction */
-	__attribute__((nonnull));
+	mtr_t*	mtr);	/*!< in/out: mini-transaction */
 /**********************************************************//**
 Sets and returns a savepoint in mtr.
 @return	savepoint */
@@ -341,7 +327,7 @@ mtr_memo_release(
 	mtr_t*	mtr,	/*!< in/out: mini-transaction */
 	void*	object,	/*!< in: object */
 	ulint	type)	/*!< in: object type: MTR_MEMO_S_LOCK, ... */
-	__attribute__((nonnull));
+	MY_ATTRIBUTE((nonnull));
 #ifdef UNIV_DEBUG
 # ifndef UNIV_HOTBACKUP
 /**********************************************************//**
@@ -354,7 +340,7 @@ mtr_memo_contains(
 	mtr_t*		mtr,	/*!< in: mtr */
 	const void*	object,	/*!< in: object to search */
 	ulint		type)	/*!< in: type of object */
-	__attribute__((warn_unused_result, nonnull));
+	MY_ATTRIBUTE((warn_unused_result));
 
 /**********************************************************//**
 Checks if memo contains the given page.
@@ -436,7 +422,6 @@ struct mtr_t{
 #ifdef UNIV_DEBUG
 	ulint		magic_n;
 #endif /* UNIV_DEBUG */
-	trx_t*		trx;	/*!< transaction */
 };
 
 #ifdef UNIV_DEBUG

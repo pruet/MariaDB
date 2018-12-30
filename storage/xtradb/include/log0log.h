@@ -2,6 +2,7 @@
 
 Copyright (c) 1995, 2013, Oracle and/or its affiliates. All rights reserved.
 Copyright (c) 2009, Google Inc.
+Copyright (c) 2017, MariaDB Corporation. All Rights Reserved.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -352,17 +353,6 @@ log_archive_do(
 	ulint*	n_bytes);/*!< out: archive log buffer size, 0 if nothing to
 			archive */
 /****************************************************************//**
-Writes the log contents to the archive up to the lsn when this function was
-called, and stops the archiving. When archiving is started again, the archived
-log file numbers start from a number one higher, so that the archiving will
-not write again to the archived log files which exist when this function
-returns.
-@return	DB_SUCCESS or DB_ERROR */
-UNIV_INTERN
-ulint
-log_archive_stop(void);
-/*==================*/
-/****************************************************************//**
 Starts again archiving which has been stopped.
 @return	DB_SUCCESS or DB_ERROR */
 UNIV_INTERN
@@ -624,25 +614,14 @@ log_mem_free(void);
 /*==============*/
 
 /****************************************************************//**
-Safely reads the log_sys->tracked_lsn value.  Uses atomic operations
-if available, otherwise this field is protected with the log system
-mutex.  The writer counterpart function is log_set_tracked_lsn() in
-log0online.c.
+Safely reads the log_sys->tracked_lsn value.  The writer counterpart function
+is log_set_tracked_lsn() in log0online.c.
 
 @return log_sys->tracked_lsn value. */
 UNIV_INLINE
 lsn_t
 log_get_tracked_lsn(void);
 /*=====================*/
-/****************************************************************//**
-Unsafely reads the log_sys->tracked_lsn value.  Uses atomic operations
-if available, or use dirty read. Use for printing only.
-
-@return log_sys->tracked_lsn value. */
-UNIV_INLINE
-lsn_t
-log_get_tracked_lsn_peek(void);
-/*==========================*/
 
 extern log_t*	log_sys;
 
@@ -955,10 +934,8 @@ struct log_t{
 	be 'flush_or_write'! */
 	os_event_t	no_flush_event;	/*!< this event is in the reset state
 					when a flush or a write is running;
-					a thread should wait for this without
-					owning the log mutex, but NOTE that
-					to set or reset this event, the
-					thread MUST own the log mutex! */
+					os_event_set() and os_event_reset()
+					are protected by log_sys_t::mutex */
 	ibool		one_flushed;	/*!< during a flush, this is
 					first FALSE and becomes TRUE
 					when one log group has been
@@ -967,11 +944,9 @@ struct log_t{
 					flush or write has not yet completed
 					for any log group; e.g., this means
 					that a transaction has been committed
-					when this is set; a thread should wait
-					for this without owning the log mutex,
-					but NOTE that to set or reset this
-					event, the thread MUST own the log
-					mutex! */
+					when this is set;
+					os_event_set() and os_event_reset()
+					are protected by log_sys_t::mutex */
 	ulint		n_log_ios;	/*!< number of log i/os initiated thus
 					far */
 	ulint		n_log_ios_old;	/*!< number of log i/o's at the
@@ -1057,9 +1032,9 @@ struct log_t{
 	byte*		archive_buf_ptr;/*!< unaligned archived_buf */
 	byte*		archive_buf;	/*!< log segment is written to the
 					archive from this buffer */
-	os_event_t	archiving_on;	/*!< if archiving has been stopped,
-					a thread can wait for this event to
-					become signaled */
+	os_event_t	archiving_on;	/*!< if archiving has been stopped;
+					os_event_set() and os_event_reset()
+					are protected by log_sys_t::mutex */
 	/* @} */
 #endif /* UNIV_LOG_ARCHIVE */
 	lsn_t		tracked_lsn;	/*!< log tracking has advanced to this
@@ -1092,21 +1067,8 @@ struct log_t{
 /* @} */
 #endif /* UNIV_LOG_ARCHIVE */
 
-extern os_event_t log_scrub_event;
 /* log scrubbing speed, in bytes/sec */
 extern ulonglong innodb_scrub_log_speed;
-
-/*****************************************************************//**
-This is the main thread for log scrub. It waits for an event and
-when waked up fills current log block with dummy records and
-sleeps again.
-@return this function does not return, it calls os_thread_exit() */
-extern "C" UNIV_INTERN
-os_thread_ret_t
-DECLARE_THREAD(log_scrub_thread)(
-/*===============================*/
-	void* arg);				/*!< in: a dummy parameter
-						required by os_thread_create */
 
 #ifndef UNIV_NONINL
 #include "log0log.ic"

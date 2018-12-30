@@ -130,7 +130,6 @@ int toku_testsetup_get_sersize(FT_HANDLE ft_handle, BLOCKNUM diskoff) // Return 
         ft_handle->ft->cf, diskoff,
         toku_cachetable_hash(ft_handle->ft->cf, diskoff),
         &node_v,
-        NULL,
         get_write_callbacks_for_node(ft_handle->ft),
         toku_ftnode_fetch_callback,
         toku_ftnode_pf_req_callback,
@@ -158,7 +157,6 @@ int toku_testsetup_insert_to_leaf (FT_HANDLE ft_handle, BLOCKNUM blocknum, const
         blocknum,
         toku_cachetable_hash(ft_handle->ft->cf, blocknum),
         &node_v,
-        NULL,
         get_write_callbacks_for_node(ft_handle->ft),
 	toku_ftnode_fetch_callback,
         toku_ftnode_pf_req_callback,
@@ -172,21 +170,26 @@ int toku_testsetup_insert_to_leaf (FT_HANDLE ft_handle, BLOCKNUM blocknum, const
     assert(node->height==0);
 
     DBT kdbt, vdbt;
-    ft_msg msg(toku_fill_dbt(&kdbt, key, keylen), toku_fill_dbt(&vdbt, val, vallen),
-               FT_INSERT, next_dummymsn(), toku_xids_get_root_xids());
+    ft_msg msg(
+        toku_fill_dbt(&kdbt, key, keylen),
+        toku_fill_dbt(&vdbt, val, vallen),
+        FT_INSERT,
+        next_dummymsn(),
+        toku_xids_get_root_xids());
 
     static size_t zero_flow_deltas[] = { 0, 0 };
     txn_gc_info gc_info(nullptr, TXNID_NONE, TXNID_NONE, true);
-    toku_ftnode_put_msg(ft_handle->ft->cmp,
-                        ft_handle->ft->update_fun,
-                        node,
-                        -1,
-                        msg,
-                        true,
-                        &gc_info,
-                        zero_flow_deltas,
-                        NULL
-                        );
+    toku_ftnode_put_msg(
+        ft_handle->ft->cmp,
+        ft_handle->ft->update_fun,
+        node,
+        -1,
+        msg,
+        true,
+        &gc_info,
+        zero_flow_deltas,
+        NULL,
+        NULL);
 
     toku_verify_or_set_counts(node);
 
@@ -231,7 +234,6 @@ int toku_testsetup_insert_to_nonleaf (FT_HANDLE ft_handle, BLOCKNUM blocknum, en
         blocknum,
         toku_cachetable_hash(ft_handle->ft->cf, blocknum),
         &node_v,
-        NULL,
         get_write_callbacks_for_node(ft_handle->ft),
 	toku_ftnode_fetch_callback,
         toku_ftnode_pf_req_callback,

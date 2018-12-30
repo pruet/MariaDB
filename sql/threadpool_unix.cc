@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #include <my_global.h>
 #include <violite.h>
@@ -169,6 +169,7 @@ struct pool_timer_t
   volatile uint64 next_timeout_check;
   int  tick_interval;
   bool shutdown;
+  pthread_t timer_thread_id;
 };
 
 static pool_timer_t pool_timer;
@@ -462,7 +463,7 @@ static void timeout_check(pool_timer_t *timer)
     {
       /* Wait timeout exceeded, kill connection. */
       mysql_mutex_lock(&thd->LOCK_thd_data);
-      thd->killed = KILL_CONNECTION;
+      thd->set_killed(KILL_CONNECTION);
       post_kill_notification(thd);
       mysql_mutex_unlock(&thd->LOCK_thd_data);
     }
@@ -606,12 +607,12 @@ void check_stall(thread_group_t *thread_group)
 
 static void start_timer(pool_timer_t* timer)
 {
-  pthread_t thread_id;
   DBUG_ENTER("start_timer");
   mysql_mutex_init(key_timer_mutex,&timer->mutex, NULL);
   mysql_cond_init(key_timer_cond, &timer->cond, NULL);
   timer->shutdown = false;
-  mysql_thread_create(key_timer_thread,&thread_id, NULL, timer_thread, timer);
+  mysql_thread_create(key_timer_thread, &timer->timer_thread_id, NULL,
+                      timer_thread, timer);
   DBUG_VOID_RETURN;
 }
 
@@ -623,6 +624,7 @@ static void stop_timer(pool_timer_t *timer)
   timer->shutdown = true;
   mysql_cond_signal(&timer->cond);
   mysql_mutex_unlock(&timer->mutex);
+  pthread_join(timer->timer_thread_id, NULL);
   DBUG_VOID_RETURN;
 }
 
@@ -980,24 +982,26 @@ static void thread_group_close(thread_group_t *thread_group)
 
   if (pipe(thread_group->shutdown_pipe))
   {
-    DBUG_VOID_RETURN;
+    goto end;
   }
   
   /* Wake listener */
   if (io_poll_associate_fd(thread_group->pollfd, 
       thread_group->shutdown_pipe[0], NULL))
   {
-    DBUG_VOID_RETURN;
+    goto end;
   }
-  char c= 0;
-  if (write(thread_group->shutdown_pipe[1], &c, 1) < 0)
-    DBUG_VOID_RETURN;
-
+  {
+    char c= 0;
+    if (write(thread_group->shutdown_pipe[1], &c, 1) < 0)
+      goto end;
+  }
   /* Wake all workers. */
   while(wake_thread(thread_group) == 0) 
   { 
   }
   
+end:
   mysql_mutex_unlock(&thread_group->mutex);
 
   DBUG_VOID_RETURN;

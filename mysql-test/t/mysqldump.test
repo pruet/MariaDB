@@ -2485,6 +2485,56 @@ DROP TABLE t2;
 DROP DATABASE db_20772273;
 USE test;
 
+--echo #
+--echo # Bug #25717383: MYSQLDUMP MAY EXECUTE ANY ARBITRARY QUERY
+--echo #
+
+
+CREATE DATABASE bug25717383;
+use bug25717383;
+
+CREATE TABLE `tab
+one` (a int);
+CREATE VIEW `view
+one` as SELECT * FROM `tab
+one`;
+
+CREATE PROCEDURE `proc
+one`() SELECT * from `tab
+one`;
+
+CREATE TEMPORARY TABLE `temp
+one` (id INT);
+
+CREATE TRIGGER `trig
+one` BEFORE INSERT ON `tab
+one` FOR EACH ROW SET NEW.a = 1;
+
+CREATE EVENT `event
+one` ON SCHEDULE AT '2030-01-01 00:00:00' DO SET @a=5;
+
+SHOW TABLES FROM bug25717383;
+SHOW TRIGGERS FROM bug25717383;
+--replace_column 6 #
+SHOW EVENTS FROM bug25717383;
+
+SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES
+       WHERE ROUTINE_SCHEMA='bug25717383' AND ROUTINE_TYPE= 'PROCEDURE'
+       ORDER BY ROUTINE_NAME;
+
+--exec $MYSQL_DUMP --triggers --events --routines --add-drop-database --databases bug25717383 > $MYSQLTEST_VARDIR/tmp/bug25717383.sql
+
+SHOW TABLES FROM bug25717383;
+SHOW TRIGGERS FROM bug25717383;
+--replace_column 6 #
+SHOW EVENTS FROM bug25717383;
+
+SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES
+       WHERE ROUTINE_SCHEMA='bug25717383' AND ROUTINE_TYPE= 'PROCEDURE'
+       ORDER BY ROUTINE_NAME;
+
+DROP DATABASE bug25717383;
+
 #
 # MDEV-6091 mysqldump goes in a loop and segfaults if --dump-slave is specified and it cannot connect to the server
 #
@@ -2513,6 +2563,7 @@ if (`select convert(@@version_compile_os using latin1) IN ("Win32","Win64","Wind
 }
 --exec $MYSQL_DUMP --routines --compact $shell_ready_db_name
 DROP DATABASE `a\"'``b`;
+
 #"
 use test;
 
@@ -2568,3 +2619,33 @@ CREATE VIEW nonunique_table_view_name AS SELECT 1;
 
 DROP DATABASE db1;
 DROP DATABASE db2;
+
+#"
+# MDEV-11505 wrong databasename in mysqldump comment
+#
+let SEARCH_FILE=$MYSQLTEST_VARDIR/tmp/bug11505.sql;
+let SEARCH_PATTERN=Database: mysql;
+exec $MYSQL_DUMP mysql func  > $SEARCH_FILE;
+source include/search_pattern_in_file.inc;
+
+--echo #
+--echo # MDEV-15021: Fix the order in which routines are called
+--echo #
+use test;
+CREATE FUNCTION f() RETURNS INT RETURN 1;
+CREATE VIEW v1 AS SELECT f();
+
+--echo # Running mysqldump -uroot test --routines --tables v1 > **vardir**/test.dmp
+--exec $MYSQL_DUMP -uroot test --routines --tables v1 > $MYSQLTEST_VARDIR/test.dmp
+
+DROP VIEW v1;
+DROP FUNCTION f;
+
+--echo # Running mysql -uroot test < **vardir**/test.dmp
+--exec $MYSQL -uroot test < $MYSQLTEST_VARDIR/test.dmp
+
+--echo #
+--echo # Cleanup after succesful import.
+--echo #
+DROP VIEW v1;
+DROP FUNCTION f;

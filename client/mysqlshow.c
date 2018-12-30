@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2016, MariaDB
+   Copyright (c) 2010, 2017, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -51,9 +51,9 @@ static int list_tables(MYSQL *mysql,const char *db,const char *table);
 static int list_table_status(MYSQL *mysql,const char *db,const char *table);
 static int list_fields(MYSQL *mysql,const char *db,const char *table,
 		       const char *field);
-static void print_header(const char *header,uint head_length,...);
-static void print_row(const char *header,uint head_length,...);
-static void print_trailer(uint length,...);
+static void print_header(const char *header,size_t head_length,...);
+static void print_row(const char *header,size_t head_length,...);
+static void print_trailer(size_t length,...);
 static void print_res_header(MYSQL_RES *result);
 static void print_res_top(MYSQL_RES *result);
 static void print_res_row(MYSQL_RES *result,MYSQL_ROW cur);
@@ -71,8 +71,7 @@ int main(int argc, char **argv)
   static char **defaults_argv;
   MY_INIT(argv[0]);
   sf_leaking_memory=1; /* don't report memory leaks on early exits */
-  if (load_defaults("my",load_default_groups,&argc,&argv))
-    exit(1);
+  load_defaults_or_exit("my", load_default_groups, &argc, &argv);
   defaults_argv=argv;
 
   get_options(&argc,&argv);
@@ -328,8 +327,12 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
 #endif
     break;
   case OPT_MYSQL_PROTOCOL:
-    opt_protocol= find_type_or_exit(argument, &sql_protocol_typelib,
-                                    opt->name);
+    if ((opt_protocol= find_type_with_warning(argument, &sql_protocol_typelib,
+                                              opt->name)) <= 0)
+    {
+      sf_leaking_memory= 1; /* no memory leak reports here */
+      exit(1);
+    }
     break;
   case '#':
     DBUG_PUSH(argument ? argument : "d:t:o");
@@ -379,7 +382,8 @@ static int
 list_dbs(MYSQL *mysql,const char *wild)
 {
   const char *header;
-  uint length, counter = 0;
+  size_t length = 0;
+  uint counter = 0;
   ulong rowcount = 0L;
   char tables[NAME_LEN+1], rows[NAME_LEN+1];
   char query[NAME_LEN + 100];
@@ -417,7 +421,7 @@ list_dbs(MYSQL *mysql,const char *wild)
     printf("Wildcard: %s\n",wild);
 
   header="Databases";
-  length=(uint) strlen(header);
+  length= strlen(header);
   field=mysql_fetch_field(result);
   if (length < field->max_length)
     length=field->max_length;
@@ -505,7 +509,8 @@ static int
 list_tables(MYSQL *mysql,const char *db,const char *table)
 {
   const char *header;
-  uint head_length, counter = 0;
+  size_t head_length;
+  uint counter = 0;
   char query[NAME_LEN + 100], rows[NAME_LEN], fields[16];
   MYSQL_FIELD *field;
   MYSQL_RES *result;
@@ -542,7 +547,7 @@ list_tables(MYSQL *mysql,const char *db,const char *table)
   putchar('\n');
 
   header="Tables";
-  head_length=(uint) strlen(header);
+  head_length= strlen(header);
   field=mysql_fetch_field(result);
   if (head_length < field->max_length)
     head_length=field->max_length;
@@ -660,7 +665,7 @@ list_table_status(MYSQL *mysql,const char *db,const char *wild)
   len= sizeof(query);
   len-= my_snprintf(query, len, "show table status from `%s`", db);
   if (wild && wild[0] && len)
-    strxnmov(query + strlen(query), len, " like '", wild, "'", NullS);
+    strxnmov(query + strlen(query), len - 1, " like '", wild, "'", NullS);
   if (mysql_query(mysql,query) || !(result=mysql_store_result(mysql)))
   {
     fprintf(stderr,"%s: Cannot get status for db: %s, table: %s: %s\n",
@@ -693,7 +698,7 @@ list_fields(MYSQL *mysql,const char *db,const char *table,
 	    const char *wild)
 {
   char query[NAME_LEN + 100];
-  int len;
+  size_t len;
   MYSQL_RES *result;
   MYSQL_ROW row;
   ulong UNINIT_VAR(rows);
@@ -723,7 +728,7 @@ list_fields(MYSQL *mysql,const char *db,const char *table,
   len-= my_snprintf(query, len, "show /*!32332 FULL */ columns from `%s`",
                     table);
   if (wild && wild[0] && len)
-    strxnmov(query + strlen(query), len, " like '", wild, "'", NullS);
+    strxnmov(query + strlen(query), len - 1, " like '", wild, "'", NullS);
   if (mysql_query(mysql,query) || !(result=mysql_store_result(mysql)))
   {
     fprintf(stderr,"%s: Cannot list columns in db: %s, table: %s: %s\n",
@@ -771,10 +776,10 @@ list_fields(MYSQL *mysql,const char *db,const char *table,
 *****************************************************************************/
 
 static void
-print_header(const char *header,uint head_length,...)
+print_header(const char *header,size_t head_length,...)
 {
   va_list args;
-  uint length,i,str_length,pre_space;
+  size_t length,i,str_length,pre_space;
   const char *field;
 
   va_start(args,head_length);
@@ -797,10 +802,10 @@ print_header(const char *header,uint head_length,...)
   putchar('|');
   for (;;)
   {
-    str_length=(uint) strlen(field);
+    str_length= strlen(field);
     if (str_length > length)
       str_length=length+1;
-    pre_space=(uint) (((int) length-(int) str_length)/2)+1;
+    pre_space= ((length- str_length)/2)+1;
     for (i=0 ; i < pre_space ; i++)
       putchar(' ');
     for (i = 0 ; i < str_length ; i++)
@@ -834,11 +839,11 @@ print_header(const char *header,uint head_length,...)
 
 
 static void
-print_row(const char *header,uint head_length,...)
+print_row(const char *header,size_t head_length,...)
 {
   va_list args;
   const char *field;
-  uint i,length,field_length;
+  size_t i,length,field_length;
 
   va_start(args,head_length);
   field=header; length=head_length;
@@ -847,7 +852,7 @@ print_row(const char *header,uint head_length,...)
     putchar('|');
     putchar(' ');
     fputs(field,stdout);
-    field_length=(uint) strlen(field);
+    field_length= strlen(field);
     for (i=field_length ; i <= length ; i++)
       putchar(' ');
     if (!(field=va_arg(args,char *)))
@@ -861,10 +866,10 @@ print_row(const char *header,uint head_length,...)
 
 
 static void
-print_trailer(uint head_length,...)
+print_trailer(size_t head_length,...)
 {
   va_list args;
-  uint length,i;
+  size_t length,i;
 
   va_start(args,head_length);
   length=head_length;
@@ -907,7 +912,7 @@ static void print_res_top(MYSQL_RES *result)
   mysql_field_seek(result,0);
   while((field = mysql_fetch_field(result)))
   {
-    if ((length=(uint) strlen(field->name)) > field->max_length)
+    if ((length= strlen(field->name)) > field->max_length)
       field->max_length=length;
     else
       length=field->max_length;

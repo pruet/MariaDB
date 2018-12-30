@@ -1,4 +1,5 @@
-/* Copyright (c) 2000, 2011, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2017, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2011, 2018, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -24,7 +25,7 @@
  pre- and end 'blank space' are removed from options and values. The
  following escape sequences are recognized in values:  \b \t \n \r \\
 
- The following arguments are handled automaticly;  If used, they must be
+ The following arguments are handled automatically;  If used, they must be
  first argument on the command line!
  --no-defaults	; no options are read.
  --defaults-file=full-path-to-default-file	; Only this file will be read.
@@ -62,7 +63,7 @@
    check the pointer, use "----args-separator----" here to ease debug
    if someone misused it.
 
-   The args seprator will only be added when
+   The args separator will only be added when
    my_getopt_use_args_seprator is set to TRUE before calling
    load_defaults();
 
@@ -90,7 +91,7 @@ static my_bool defaults_already_read= FALSE;
 
 /* Which directories are searched for options (and in which order) */
 
-#define MAX_DEFAULT_DIRS 6
+#define MAX_DEFAULT_DIRS 7
 #define DEFAULT_DIRS_SIZE (MAX_DEFAULT_DIRS + 1)  /* Terminate with NULL */
 static const char **default_directories = NULL;
 
@@ -233,7 +234,7 @@ int my_search_option_files(const char *conf_file, int *argc, char ***argv,
                                     (char **) &my_defaults_group_suffix);
 
   if (! my_defaults_group_suffix)
-    my_defaults_group_suffix= getenv(STRINGIFY_ARG(DEFAULT_GROUP_SUFFIX_ENV));
+    my_defaults_group_suffix= getenv("MYSQL_GROUP_SUFFIX");
 
   if (forced_extra_defaults && !defaults_already_read)
   {
@@ -487,8 +488,7 @@ int load_defaults(const char *conf_file, const char **groups,
    easily command line options override options in configuration files
 
    NOTES
-    In case of fatal error, the function will print a warning and do
-    exit(1)
+    In case of fatal error, the function will print a warning and returns 2
  
     To free used memory one should call free_defaults() with the argument
     that was put in *argv
@@ -597,7 +597,7 @@ int my_load_defaults(const char *conf_file, const char **groups,
   (*argv)+= args_used;
 
   /*
-    Check if we wan't to see the new argument list
+    Check if we want to see the new argument list
     This options must always be the last of the default options
   */
   if (*argc >= 2 && !strcmp(argv[0][1],"--print-defaults"))
@@ -631,7 +631,7 @@ int my_load_defaults(const char *conf_file, const char **groups,
       if (!my_getopt_is_args_separator((*argv)[i])) /* skip arguments separator */
         printf("%s ", (*argv)[i]);
     puts("");
-    exit(0);
+    DBUG_RETURN(4);
   }
 
   if (default_directories)
@@ -641,8 +641,7 @@ int my_load_defaults(const char *conf_file, const char **groups,
 
  err:
   fprintf(stderr,"Fatal error in defaults handling. Program aborted\n");
-  exit(1);
-  return 0;					/* Keep compiler happy */
+  DBUG_RETURN(2);
 }
 
 
@@ -1100,10 +1099,12 @@ void print_defaults(const char *conf_file, const char **groups)
     }
   }
   puts("\nThe following options may be given as the first argument:\n\
---print-defaults        Print the program argument list and exit.\n\
---no-defaults           Don't read default options from any option file.\n\
---defaults-file=#       Only read default options from the given file #.\n\
---defaults-extra-file=# Read this file after the global files are read.");
+--print-defaults          Print the program argument list and exit.\n\
+--no-defaults             Don't read default options from any option file.\n\
+The following specify which files/extra groups are read (specified before remaining options):\n\
+--defaults-file=#         Only read default options from the given file #.\n\
+--defaults-extra-file=#   Read this file after the global files are read.\n\
+--defaults-group-suffix=# Additionally read default groups with # appended as a suffix.");
 }
 
 
@@ -1218,7 +1219,12 @@ static const char **init_default_directories(MEM_ROOT *alloc)
     errors += add_directory(alloc, "C:/", dirs);
 
     if (my_get_module_parent(fname_buffer, sizeof(fname_buffer)) != NULL)
+    {
       errors += add_directory(alloc, fname_buffer, dirs);
+
+      strncat(fname_buffer, "/data", sizeof(fname_buffer));
+      errors += add_directory(alloc, fname_buffer, dirs);
+    }
   }
 
 #else

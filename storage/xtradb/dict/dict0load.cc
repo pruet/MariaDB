@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2013, Oracle and/or its affiliates. All Rights Reserved.
-Copyright (c) 2016, MariaDB Corporation.
+Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2016, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -490,7 +490,7 @@ err_len:
 	}
 
 	/* This recieves a dict_foreign_t* that points to a stack variable.
-	So mem_heap_free(foreign->heap) is not used as elsewhere.
+	So dict_foreign_free(foreign) is not used as elsewhere.
 	Since the heap used here is freed elsewhere, foreign->heap
 	is not assigned. */
 	foreign->id = mem_heap_strdupl(heap, (const char*) field, len);
@@ -945,6 +945,10 @@ dict_insert_tablespace_and_filepath(
 	return(err);
 }
 
+/* Set by Xtrabackup */
+my_bool (*dict_check_if_skip_table)(const char*	name) = 0;
+
+
 /********************************************************************//**
 This function looks at each table defined in SYS_TABLES.  It checks the
 tablespace for any table with a space_id > 0.  It looks up the tablespace
@@ -1052,8 +1056,6 @@ loop:
 
 		btr_pcur_store_position(&pcur, &mtr);
 
-		mtr_commit(&mtr);
-
 		/* For tables created with old versions of InnoDB,
 		SYS_TABLES.MIX_LEN may contain garbage.  Such tables
 		would always be in ROW_FORMAT=REDUNDANT. Pretend that
@@ -1066,6 +1068,9 @@ loop:
 
 		bool		is_temp = false;
 		bool		discarded = false;
+		bool		print_error_if_does_not_exist;
+		bool		remove_from_data_dict_if_does_not_exist;
+
 		ib_uint32_t	flags2 = static_cast<ib_uint32_t>(
 			mach_read_from_4(field));
 
@@ -1087,16 +1092,32 @@ loop:
 		if (space_id == 0) {
 			/* The system tablespace always exists. */
 			ut_ad(!discarded);
-			goto next_tablespace;
+			mem_free(name);
+			goto loop;
 		}
+
+
+		ut_a(!IS_XTRABACKUP() || dict_check_if_skip_table);
+
+		if (is_temp || discarded ||
+			(IS_XTRABACKUP() && dict_check_if_skip_table(name))) {
+			print_error_if_does_not_exist = false;
+		}
+		else {
+			print_error_if_does_not_exist = true;
+		}
+
+		remove_from_data_dict_if_does_not_exist = IS_XTRABACKUP() && !(is_temp || discarded);
+
+		mtr_commit(&mtr);
 
 		switch (dict_check) {
 		case DICT_CHECK_ALL_LOADED:
 			/* All tablespaces should have been found in
 			fil_load_single_table_tablespaces(). */
 			if (fil_space_for_table_exists_in_mem(
-				space_id, name, TRUE, !(is_temp || discarded),
-				false, NULL, 0)
+				space_id, name, print_error_if_does_not_exist,
+				remove_from_data_dict_if_does_not_exist , false, NULL, 0, flags)
 			    && !(is_temp || discarded)) {
 				/* If user changes the path of .ibd files in
 				   *.isl files before doing crash recovery ,
@@ -1128,8 +1149,8 @@ loop:
 			/* Some tablespaces may have been opened in
 			trx_resurrect_table_locks(). */
 			if (fil_space_for_table_exists_in_mem(
-				    space_id, name, FALSE, FALSE,
-				    false, NULL, 0)) {
+				    space_id, name, false,
+				    false, false, NULL, 0, flags)) {
 				break;
 			}
 			/* fall through */
@@ -1154,11 +1175,14 @@ loop:
 					space_id, name);
 			}
 
-			/* We need to read page 0 to get (optional) IV
-			regardless if encryptions is turned on or not,
-			since if it's off we should decrypt a potentially
-			already encrypted table */
-			bool read_page_0 = true;
+			/* We could read page 0 to get (optional) IV
+			if encryption is turned on, if it's off
+			we will read the page 0 later and find out
+			if we should decrypt a potentially
+			already encrypted table
+			bool read_page_0 = srv_encrypt_tables; */
+
+			bool read_page_0 = false;
 
 			/* We set the 2nd param (fix_dict = true)
 			here because we already have an x-lock on
@@ -1169,7 +1193,7 @@ loop:
 			dberr_t	err = fil_open_single_table_tablespace(
 				read_page_0, srv_read_only_mode ? false : true,
 				space_id, dict_tf_to_fsp_flags(flags),
-				name, filepath, NULL);
+				name, filepath);
 
 			if (err != DB_SUCCESS) {
 				ib_logf(IB_LOG_LEVEL_ERROR,
@@ -1188,7 +1212,6 @@ loop:
 			max_space_id = space_id;
 		}
 
-next_tablespace:
 		mem_free(name);
 		mtr_start(&mtr);
 
@@ -1751,7 +1774,7 @@ err_len:
 		goto err_len;
 	}
 	type = mach_read_from_4(field);
-	if (type & (~0 << DICT_IT_BITS)) {
+	if (type & (~0U << DICT_IT_BITS)) {
 		return("unknown SYS_INDEXES.TYPE bits");
 	}
 
@@ -1791,7 +1814,7 @@ Loads definitions for table indexes. Adds them to the data dictionary
 cache.
 @return DB_SUCCESS if ok, DB_CORRUPTION if corruption of dictionary
 table or DB_UNSUPPORTED if table has unknown index type */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 dberr_t
 dict_load_indexes(
 /*==============*/
@@ -1961,7 +1984,7 @@ dict_load_indexes(
 			dict_mem_index_free(index);
 			goto func_exit;
 		} else if (index->page == FIL_NULL
-			   && !table->ibd_file_missing
+			   && !table->file_unreadable
 			   && (!(index->type & DICT_FTS))) {
 
 			fprintf(stderr,
@@ -2065,10 +2088,12 @@ dict_load_table_low(
 	ulint		flags2;
 
 	if (rec_get_deleted_flag(rec, 0)) {
+		*table = NULL;
 		return("delete-marked record in SYS_TABLES");
 	}
 
 	if (rec_get_n_fields_old(rec) != DICT_NUM_FIELDS__SYS_TABLES) {
+		*table = NULL;
 		return("wrong number of columns in SYS_TABLES record");
 	}
 
@@ -2076,6 +2101,7 @@ dict_load_table_low(
 		rec, DICT_FLD__SYS_TABLES__NAME, &len);
 	if (len == 0 || len == UNIV_SQL_NULL) {
 err_len:
+		*table = NULL;
 		return("incorrect column length in SYS_TABLES");
 	}
 	rec_get_nth_field_offs_old(
@@ -2155,6 +2181,7 @@ err_len:
 			"InnoDB: in InnoDB data dictionary"
 			" has unknown type %lx.\n",
 			(ulong) flags);
+		*table = NULL;
 		return("incorrect flags in SYS_TABLES");
 	}
 
@@ -2190,7 +2217,7 @@ err_len:
 
 	(*table)->id = mach_read_from_8(field);
 
-	(*table)->ibd_file_missing = FALSE;
+	(*table)->file_unreadable = false;
 
 	return(NULL);
 }
@@ -2377,15 +2404,15 @@ err_exit:
 			"Table '%s' tablespace is set as discarded.",
 			table_name);
 
-		table->ibd_file_missing = TRUE;
+		table->file_unreadable = true;
 
 	} else if (!fil_space_for_table_exists_in_mem(
-			table->space, name, FALSE, FALSE, true, heap,
-			table->id)) {
+			table->space, name, false, IS_XTRABACKUP(), true, heap,
+			table->id, table->flags)) {
 
 		if (DICT_TF2_FLAG_IS_SET(table, DICT_TF2_TEMPORARY)) {
 			/* Do not bother to retry opening temporary tables. */
-			table->ibd_file_missing = TRUE;
+			table->file_unreadable = true;
 
 		} else {
 			if (!(ignore_err & DICT_ERR_IGNORE_RECOVER_LOCK)) {
@@ -2414,14 +2441,15 @@ err_exit:
 			err = fil_open_single_table_tablespace(
 				true, false, table->space,
 				dict_tf_to_fsp_flags(table->flags),
-				name, filepath, table);
+				name, filepath);
 
 			if (err != DB_SUCCESS) {
 				/* We failed to find a sensible
 				tablespace file */
 
-				table->ibd_file_missing = TRUE;
+				table->file_unreadable = true;
 			}
+
 			if (filepath) {
 				mem_free(filepath);
 			}
@@ -2445,9 +2473,10 @@ err_exit:
 	were not allowed while the table is being locked by a transaction. */
 	dict_err_ignore_t index_load_err =
 		!(ignore_err & DICT_ERR_IGNORE_RECOVER_LOCK)
-		&& table->ibd_file_missing
+		&& table->file_unreadable
 		? DICT_ERR_IGNORE_ALL
 		: ignore_err;
+
 	err = dict_load_indexes(table, heap, index_load_err);
 
 	if (err == DB_INDEX_CORRUPT) {
@@ -2482,7 +2511,7 @@ err_exit:
 	of the error condition, since the user may want to dump data from the
 	clustered index. However we load the foreign key information only if
 	all indexes were loaded. */
-	if (!cached || table->ibd_file_missing) {
+	if (!cached || table->file_unreadable) {
 		/* Don't attempt to load the indexes from disk. */
 	} else if (err == DB_SUCCESS) {
 		err = dict_load_foreigns(table->name, NULL, true, true,
@@ -2515,12 +2544,12 @@ err_exit:
 			table = NULL;
 
 		} else if (dict_index_is_corrupted(index)
-			   && !table->ibd_file_missing) {
+			   && !table->file_unreadable) {
 
 			/* It is possible we force to load a corrupted
 			clustered index if srv_load_corrupted is set.
 			Mark the table as corrupted in this case */
-			table->corrupted = TRUE;
+			table->corrupted = true;
 		}
 	}
 
@@ -2529,7 +2558,7 @@ func_exit:
 
 	ut_ad(!table
 	      || ignore_err != DICT_ERR_IGNORE_NONE
-	      || table->ibd_file_missing
+	      || table->file_unreadable
 	      || !table->corrupted);
 
 	if (table && table->fts) {
@@ -2539,6 +2568,7 @@ func_exit:
 			/* the table->fts could be created in dict_load_column
 			when a user defined FTS_DOC_ID is present, but no
 			FTS */
+			fts_optimize_remove_table(table);
 			fts_free(table);
 		} else {
 			fts_optimize_add_table(table);
@@ -2604,14 +2634,13 @@ dict_load_table_on_id(
 	btr_pcur_open_on_user_rec(sys_table_ids, tuple, PAGE_CUR_GE,
 				  BTR_SEARCH_LEAF, &pcur, &mtr);
 
-check_rec:
 	rec = btr_pcur_get_rec(&pcur);
 
 	if (page_rec_is_user_rec(rec)) {
 		/*---------------------------------------------------*/
 		/* Now we have the record in the secondary index
 		containing the table ID and NAME */
-
+check_rec:
 		field = rec_get_nth_field_old(
 			rec, DICT_FLD__SYS_TABLE_IDS__ID, &len);
 		ut_ad(len == 8);
@@ -2621,12 +2650,14 @@ check_rec:
 			if (rec_get_deleted_flag(rec, 0)) {
 				/* Until purge has completed, there
 				may be delete-marked duplicate records
-				for the same SYS_TABLES.ID.
-				Due to Bug #60049, some delete-marked
-				records may survive the purge forever. */
-				if (btr_pcur_move_to_next(&pcur, &mtr)) {
+				for the same SYS_TABLES.ID, but different
+				SYS_TABLES.NAME. */
+				while (btr_pcur_move_to_next(&pcur, &mtr)) {
+					rec = btr_pcur_get_rec(&pcur);
 
-					goto check_rec;
+					if (page_rec_is_user_rec(rec)) {
+						goto check_rec;
+					}
 				}
 			} else {
 				/* Now we get the table name from the record */
@@ -2888,7 +2919,7 @@ dict_load_foreign_cols(
 /***********************************************************************//**
 Loads a foreign key constraint to the dictionary cache.
 @return	DB_SUCCESS or error code */
-static __attribute__((nonnull(1), warn_unused_result))
+static MY_ATTRIBUTE((nonnull(1), warn_unused_result))
 dberr_t
 dict_load_foreign(
 /*==============*/

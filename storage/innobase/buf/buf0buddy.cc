@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2006, 2013, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2006, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -112,7 +113,7 @@ buf_buddy_mem_invalid(
 /**********************************************************************//**
 Check if a buddy is stamped free.
 @return	whether the buddy is free */
-UNIV_INLINE __attribute__((warn_unused_result))
+UNIV_INLINE MY_ATTRIBUTE((warn_unused_result))
 bool
 buf_buddy_stamp_is_free(
 /*====================*/
@@ -131,7 +132,7 @@ buf_buddy_stamp_free(
 	buf_buddy_free_t*	buf,	/*!< in/out: block to stamp */
 	ulint			i)	/*!< in: block size */
 {
-	ut_d(memset(buf, static_cast<int>(i), BUF_BUDDY_LOW << i));
+	ut_d(memset(&buf->stamp.bytes, int(i), BUF_BUDDY_LOW << i));
 	buf_buddy_mem_invalid(buf, i);
 	mach_write_to_4(buf->stamp.bytes + BUF_BUDDY_STAMP_OFFSET,
 			BUF_BUDDY_STAMP_FREE);
@@ -225,7 +226,7 @@ Checks if a buf is free i.e.: in the zip_free[].
 @retval BUF_BUDDY_STATE_FREE if fully free
 @retval BUF_BUDDY_STATE_USED if currently in use
 @retval BUF_BUDDY_STATE_PARTIALLY_USED if partially in use. */
-static  __attribute__((warn_unused_result))
+static  MY_ATTRIBUTE((warn_unused_result))
 buf_buddy_state_t
 buf_buddy_is_free(
 /*==============*/
@@ -649,7 +650,7 @@ buf_buddy_free_low(
 
 	buf_pool->buddy_stat[i].used--;
 recombine:
-	UNIV_MEM_ASSERT_AND_ALLOC(buf, BUF_BUDDY_LOW << i);
+	UNIV_MEM_ALLOC(buf, BUF_BUDDY_LOW << i);
 
 	if (i == BUF_BUDDY_SIZES) {
 		buf_buddy_block_free(buf_pool, buf);

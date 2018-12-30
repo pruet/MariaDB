@@ -1,11 +1,11 @@
 /************** MyConn C++ Program Source Code File (.CPP) **************/
 /* PROGRAM NAME: MYCONN                                                 */
 /* -------------                                                        */
-/*  Version 1.8                                                         */
+/*  Version 1.9                                                         */
 /*                                                                      */
 /* COPYRIGHT:                                                           */
 /* ----------                                                           */
-/*  (C) Copyright to the author Olivier BERTRAND          2007-2015     */
+/*  (C) Copyright to the author Olivier BERTRAND          2007-2017     */
 /*                                                                      */
 /* WHAT THIS PROGRAM DOES:                                              */
 /* -----------------------                                              */
@@ -135,10 +135,13 @@ PQRYRES MyColumns(PGLOBAL g, THD *thd, const char *host, const char *db,
                    FLD_KEY,  FLD_SCALE, FLD_RADIX,    FLD_NULL,
                    FLD_REM,  FLD_NO,    FLD_DEFAULT,  FLD_EXTRA,
                    FLD_CHARSET};
-  unsigned int length[] = {0, 4, 16, 4, 4, 4, 4, 4, 0, 0, 0, 0, 0};
-  char   *fld, *colname, *chset, *fmt, v, buf[128], uns[16], zero[16];
-  int     i, n, nf, ncol = sizeof(buftyp) / sizeof(int);
+  //unsigned int length[] = {0, 4, 16, 4, 4, 4, 4, 4, 0, 0, 0, 0, 0};
+	unsigned int length[] = {0, 4, 0, 4, 4, 4, 4, 4, 0, 0, 0, 0, 0};
+	PCSZ    fmt;
+	char   *fld, *colname, *chset, v, buf[128], uns[16], zero[16];
+  int     i, n, nf = 0, ncol = sizeof(buftyp) / sizeof(int);
   int     len, type, prec, rc, k = 0;
+	bool    b;
   PQRYRES qrp;
   PCOLRES crp;
   MYSQLC  myc;
@@ -157,7 +160,9 @@ PQRYRES MyColumns(PGLOBAL g, THD *thd, const char *host, const char *db,
     /*  Do an evaluation of the result size.                            */
     /********************************************************************/
     STRING cmd(g, 64, "SHOW FULL COLUMNS FROM ");
-    bool   b = cmd.Append((PSZ)table);
+		b = cmd.Append('`');
+    b |= cmd.Append((PSZ)table);
+		b |= cmd.Append('`');
 
     b |= cmd.Append(" FROM ");
     b |= cmd.Append((PSZ)(db ? db : PlgGetUser(g)->DBName));
@@ -172,7 +177,7 @@ PQRYRES MyColumns(PGLOBAL g, THD *thd, const char *host, const char *db,
       return NULL;
       } // endif b
 
-    if (trace)
+    if (trace(1))
       htrc("MyColumns: cmd='%s'\n", cmd.GetStr());
 
     if ((n = myc.GetResultSize(g, cmd.GetStr())) < 0) {
@@ -232,11 +237,31 @@ PQRYRES MyColumns(PGLOBAL g, THD *thd, const char *host, const char *db,
     fld = myc.GetCharField(1);
     prec = 0;
     len = 0;
-    v = (chset && !strcmp(chset, "binary")) ? 'B' : 0;
+//  v = (chset && !strcmp(chset, "binary")) ? 'B' : 0;
+		v = 0;
     *uns = 0;
     *zero = 0;
+		b = false;
 
-    switch ((nf = sscanf(fld, "%[^(](%d,%d", buf, &len, &prec))) {
+		if (!strnicmp(fld, "enum", 4)) {
+			char *p2, *p1 = fld + 6;            // to skip enum('
+
+			while (true) {
+				p2 = strchr(p1, '\'');
+				len = MY_MAX(len, (int)(p2 - p1));
+				if (*++p2 != ',') break;
+				p1 = p2 + 2;
+			} // endwhile
+
+			v = (len > 255) ? 'V' : 0;
+			strcpy(buf, "enum");
+			b = true;
+		} else if (!strnicmp(fld, "set", 3)) {
+			len = (int)strlen(fld) - 2;
+			v = 'V';
+			strcpy(buf, "set");
+			b = true;
+		} else switch ((nf = sscanf(fld, "%[^(](%d,%d", buf, &len, &prec))) {
       case 3:
         nf = sscanf(fld, "%[^(](%d,%d) %s %s", buf, &len, &prec, uns, zero);
         break;
@@ -271,7 +296,7 @@ PQRYRES MyColumns(PGLOBAL g, THD *thd, const char *host, const char *db,
                 colname, len);
         PushWarning(g, thd);
         v = 'V';
-      } else
+			} else
         len = MY_MIN(len, 4096);
 
     } // endif type
@@ -285,6 +310,9 @@ PQRYRES MyColumns(PGLOBAL g, THD *thd, const char *host, const char *db,
       case 4:  crp->Nulls[i] = 'U'; break;
       default: crp->Nulls[i] = v;   break;
       } // endswitch nf
+
+		if (b)																 // enum or set
+  		nf = sscanf(fld, "%s ", buf);				 // get values
 
     crp = crp->Next;                       // Type_Name
     crp->Kdata->SetValue(buf, i);
@@ -375,10 +403,18 @@ PQRYRES SrcColumns(PGLOBAL g, const char *host, const char *db,
   if (!port)
     port = mysqld_port;
 
-  if (!strnicmp(srcdef, "select ", 7)) {
-    query = (char *)PlugSubAlloc(g, NULL, strlen(srcdef) + 9);
-    strcat(strcpy(query, srcdef), " LIMIT 0");
-  } else
+	if (!strnicmp(srcdef, "select ", 7) || strstr(srcdef, "%s")) {
+    query = (char *)PlugSubAlloc(g, NULL, strlen(srcdef) + 10);
+
+		if (strstr(srcdef, "%s"))
+			sprintf(query, srcdef, "1=1");			 // dummy where clause
+		else 
+		  strcpy(query, srcdef);
+
+		if (!strnicmp(srcdef, "select ", 7))
+		  strcat(query, " LIMIT 0");
+
+	} else
     query = (char *)srcdef;
 
   // Open a MySQL connection for this table
@@ -401,8 +437,10 @@ PQRYRES SrcColumns(PGLOBAL g, const char *host, const char *db,
 MYSQLC::MYSQLC(void)
   {
   m_DB = NULL;
-  m_Stmt = NULL;
-  m_Res = NULL;
+#if defined (MYSQL_PREPARED_STATEMENTS)
+	m_Stmt = NULL;
+#endif    // MYSQL_PREPARED_STATEMENTS
+	m_Res = NULL;
   m_Rows = -1;
   m_Row = NULL;
   m_Fields = -1;
@@ -434,7 +472,7 @@ int MYSQLC::Open(PGLOBAL g, const char *host, const char *db,
                             int pt, const char *csname)
   {
   const char *pipe = NULL;
-  uint        cto = 6000, nrt = 12000;
+  uint        cto = 10, nrt = 20;
   my_bool     my_true= 1;
 
   m_DB = mysql_init(NULL);
@@ -444,7 +482,10 @@ int MYSQLC::Open(PGLOBAL g, const char *host, const char *db,
     return RC_FX;
     } // endif m_DB
 
-  // Removed to do like FEDERATED do
+	if (trace(1))
+		htrc("MYSQLC Open: m_DB=%.4X size=%d\n", m_DB, (int)sizeof(*m_DB));
+
+	// Removed to do like FEDERATED do
 //mysql_options(m_DB, MYSQL_READ_DEFAULT_GROUP, "client-mariadb");
   mysql_options(m_DB, MYSQL_OPT_USE_REMOTE_CONNECTION, NULL);
   mysql_options(m_DB, MYSQL_OPT_CONNECT_TIMEOUT, &cto);
@@ -484,7 +525,8 @@ int MYSQLC::Open(PGLOBAL g, const char *host, const char *db,
   mysql_options(m_DB, MYSQL_OPT_USE_THREAD_SPECIFIC_MEMORY,
                   (char*)&my_true);
 
-  if (!mysql_real_connect(m_DB, host, user, pwd, db, pt, pipe, CLIENT_MULTI_RESULTS)) {
+  if (!mysql_real_connect(m_DB, host, user, pwd, db, pt, pipe,
+		CLIENT_MULTI_RESULTS | CLIENT_REMEMBER_OPTIONS)) {
 #if defined(_DEBUG)
     sprintf(g->Message, "mysql_real_connect failed: (%d) %s",
                         mysql_errno(m_DB), mysql_error(m_DB));
@@ -701,6 +743,11 @@ int MYSQLC::ExecSQL(PGLOBAL g, const char *query, int *w)
     } else {
       m_Fields = mysql_num_fields(m_Res);
       m_Rows = (!m_Use) ? (int)mysql_num_rows(m_Res) : 0;
+
+			if (trace(1))
+				htrc("ExecSQL: m_Res=%.4X size=%d m_Fields=%d m_Rows=%d\n",
+				               m_Res, sizeof(*m_Res), m_Fields, m_Rows);
+
     } // endif m_Res
 
   } else {
@@ -831,7 +878,8 @@ MYSQL_FIELD *MYSQLC::GetNextField(void)
 /***********************************************************************/
 PQRYRES MYSQLC::GetResult(PGLOBAL g, bool pdb)
   {
-  char        *fmt, v;
+	PCSZ         fmt;
+  char        *name, v;
   int          n;
   bool         uns;
   PCOLRES     *pcrp, crp;
@@ -869,8 +917,9 @@ PQRYRES MYSQLC::GetResult(PGLOBAL g, bool pdb)
     memset(crp, 0, sizeof(COLRES));
     crp->Ncol = ++qrp->Nbcol;
 
-    crp->Name = (char*)PlugSubAlloc(g, NULL, fld->name_length + 1);
-    strcpy(crp->Name, fld->name);
+    name = (char*)PlugSubAlloc(g, NULL, fld->name_length + 1);
+    strcpy(name, fld->name);
+		crp->Name = name;
 
     if ((crp->Type = MYSQLtoPLG(fld->type, &v)) == TYPE_ERROR) {
       sprintf(g->Message, "Type %d not supported for column %s",
@@ -884,8 +933,9 @@ PQRYRES MYSQLC::GetResult(PGLOBAL g, bool pdb)
 
     crp->Prec = (crp->Type == TYPE_DOUBLE || crp->Type == TYPE_DECIM)
               ? fld->decimals : 0;
-    crp->Length = MY_MAX(fld->length, fld->max_length);
-    crp->Clen = GetTypeSize(crp->Type, crp->Length);
+    CHARSET_INFO *cs= get_charset(fld->charsetnr, MYF(0));
+    crp->Clen = GetTypeSize(crp->Type, fld->length);
+    crp->Length = fld->length / (cs ? cs->mbmaxlen : 1);
     uns = (fld->flags & (UNSIGNED_FLAG | ZEROFILL_FLAG)) ? true : false;
 
     if (!(crp->Kdata = AllocValBlock(g, NULL, crp->Type, m_Rows,
@@ -901,8 +951,12 @@ PQRYRES MYSQLC::GetResult(PGLOBAL g, bool pdb)
     if (fld->flags & NOT_NULL_FLAG)
       crp->Nulls = NULL;
     else {
-      crp->Nulls = (char*)PlugSubAlloc(g, NULL, m_Rows);
-      memset(crp->Nulls, ' ', m_Rows);
+			if (m_Rows) {
+				crp->Nulls = (char*)PlugSubAlloc(g, NULL, m_Rows);
+				memset(crp->Nulls, ' ', m_Rows);
+			} // endif m_Rows
+
+			crp->Kdata->SetNullable(true);
     } // endelse fld->flags
 
     } // endfor fld
@@ -1013,7 +1067,11 @@ int MYSQLC::ExecSQLcmd(PGLOBAL g, const char *query, int *w)
 void MYSQLC::Close(void)
   {
   FreeResult();
-  mysql_close(m_DB);
+
+	if (trace(1))
+		htrc("MYSQLC Close: m_DB=%.4X\n", m_DB);
+
+	mysql_close(m_DB);
   m_DB = NULL;
   } // end of Close
 

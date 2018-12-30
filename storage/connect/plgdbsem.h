@@ -1,9 +1,9 @@
 /************** PlgDBSem H Declares Source Code File (.H) **************/
-/*  Name: PLGDBSEM.H  Version 3.6                                      */
+/*  Name: PLGDBSEM.H  Version 3.7                                      */
 /*                                                                     */
-/*  (C) Copyright to the author Olivier BERTRAND          1998-2015    */
+/*  (C) Copyright to the author Olivier BERTRAND          1998-2017    */
 /*                                                                     */
-/*  This file contains the PlugDB++ application type definitions.      */
+/*  This file contains the CONNECT storage engine definitions.         */
 /***********************************************************************/
 
 /***********************************************************************/
@@ -36,8 +36,6 @@ enum BLKTYP {TYPE_TABLE      = 50,    /* Table Name/Srcdef/... Block   */
              TYPE_COLCRT     = 71,    /* Column creation block         */
              TYPE_CONST      = 72,    /* Constant                      */
 
-/*-------------------- type tokenized string --------------------------*/
-             TYPE_DATE       =  8,    /* Timestamp                     */
 /*-------------------- additional values used by LNA ------------------*/
              TYPE_COLIST     = 14,    /* Column list                   */
              TYPE_COL        = 41,    /* Column                        */
@@ -49,14 +47,18 @@ enum BLKTYP {TYPE_TABLE      = 50,    /* Table Name/Srcdef/... Block   */
              TYPE_FB_MAP     = 23,    /* Mapped file block (storage)   */
              TYPE_FB_HANDLE  = 24,    /* File block (handle)           */
              TYPE_FB_XML     = 21,    /* DOM XML file block            */
-             TYPE_FB_XML2    = 27};   /* libxml2 XML file block        */
+             TYPE_FB_XML2    = 27,    /* libxml2 XML file block        */
+	           TYPE_FB_ODBC    = 25,    /* ODBC file block               */
+						 TYPE_FB_ZIP     = 28,    /* ZIP file block                */
+	           TYPE_FB_JAVA    = 29,    /* JAVA file block               */
+						 TYPE_FB_MONGO   = 30};   /* MONGO file block              */
 
 enum TABTYPE {TAB_UNDEF =  0,   /* Table of undefined type             */
               TAB_DOS   =  1,   /* Fixed column offset, variable LRECL */
               TAB_FIX   =  2,   /* Fixed column offset, fixed LRECL    */
               TAB_BIN   =  3,   /* Like FIX but can have binary fields */
               TAB_CSV   =  4,   /* DOS files with CSV records          */
-              TAB_FMT   =  5,   /* DOS files with formatted recordss   */
+              TAB_FMT   =  5,   /* DOS files with formatted records    */
               TAB_DBF   =  6,   /* DBF Dbase or Foxpro files           */
               TAB_XML   =  7,   /* XML or HTML files                   */
               TAB_INI   =  8,   /* INI or CFG files                    */
@@ -78,7 +80,9 @@ enum TABTYPE {TAB_UNDEF =  0,   /* Table of undefined type             */
               TAB_JCT   = 24,   /* Junction tables NIY                 */
               TAB_DMY   = 25,   /* DMY Dummy tables NIY                */
 							TAB_JDBC  = 26,   /* Table accessed via JDBC             */
-							TAB_NIY   = 27};  /* Table not implemented yet           */
+							TAB_ZIP   = 27,   /* ZIP file info table                 */
+							TAB_MONGO = 28,   /* Table retrieved from MongoDB        */
+              TAB_NIY   = 30};  /* Table not implemented yet           */
 
 enum AMT {TYPE_AM_ERROR =   0,        /* Type not defined              */
           TYPE_AM_ROWID =   1,        /* ROWID type (special column)   */
@@ -123,7 +127,7 @@ enum AMT {TYPE_AM_ERROR =   0,        /* Type not defined              */
           TYPE_AM_PRX   = 129,        /* PROXY access method type no   */
           TYPE_AM_XTB   = 130,        /* SYS table access method type  */
           TYPE_AM_BLK   = 131,        /* BLK access method type no     */
-          TYPE_AM_ZIP   = 132,        /* ZIP access method type no     */
+          TYPE_AM_GZ    = 132,        /* GZ access method type no      */
           TYPE_AM_ZLIB  = 133,        /* ZLIB access method type no    */
           TYPE_AM_JSON  = 134,        /* JSON access method type no    */
           TYPE_AM_JSN   = 135,        /* JSN access method type no     */
@@ -137,10 +141,12 @@ enum AMT {TYPE_AM_ERROR =   0,        /* Type not defined              */
           TYPE_AM_VIR   = 171,        /* Virtual tables am type no     */
           TYPE_AM_DMY   = 172,        /* DMY Dummy tables am type no   */
           TYPE_AM_SET   = 180,        /* SET Set tables am type no     */
-          TYPE_AM_MYSQL = 192,        /* MYSQL access method type no   */
-          TYPE_AM_MYX   = 193,        /* MYSQL EXEC access method type */
-          TYPE_AM_CAT   = 195,        /* Catalog access method type no */
-          TYPE_AM_OUT   = 200};       /* Output relations (storage)    */
+          TYPE_AM_MYSQL = 190,        /* MYSQL access method type no   */
+          TYPE_AM_MYX   = 191,        /* MYSQL EXEC access method type */
+          TYPE_AM_CAT   = 192,        /* Catalog access method type no */
+					TYPE_AM_ZIP   = 193,				/* ZIP access method type no     */
+	        TYPE_AM_MGO   = 194,				/* MGO access method type no     */
+					TYPE_AM_OUT   = 200};       /* Output relations (storage)    */
 
 enum RECFM {RECFM_NAF   =    -2,      /* Not a file                    */
             RECFM_OEM   =    -1,      /* OEM file access method        */
@@ -209,11 +215,24 @@ enum OPVAL {OP_EQ      =   1,         /* Filtering operator =          */
             OP_SUB     =  17,         /* Expression Substract operator */
             OP_MULT    =  18,         /* Expression Multiply operator  */
             OP_DIV     =  19,         /* Expression Divide operator    */
-            OP_NOP     =  21,         /* Scalar function is nopped     */
             OP_NUM     =  22,         /* Scalar function Op Num        */
-            OP_ABS     =  23,         /* Scalar function Op Abs        */
             OP_MAX     =  24,         /* Scalar function Op Max        */
             OP_MIN     =  25,         /* Scalar function Op Min        */
+						OP_EXP     =  36,         /* Scalar function Op Exp        */
+						OP_FDISK   =  94,         /* Operator Disk of fileid       */
+						OP_FPATH   =  95,         /* Operator Path of fileid       */
+						OP_FNAME   =  96,         /* Operator Name of fileid       */
+						OP_FTYPE   =  97,         /* Operator Type of fileid       */
+						OP_LAST    =  82,         /* Index operator Find Last      */
+						OP_FIRST   = 106,         /* Index operator Find First     */
+            OP_NEXT    = 107,         /* Index operator Find Next      */
+            OP_SAME    = 108,         /* Index operator Find Next Same */
+						OP_FSTDIF  = 109,         /* Index operator Find First dif */
+						OP_NXTDIF  = 110,         /* Index operator Find Next dif  */
+						OP_PREV    = 116};        /* Index operator Find Previous  */
+#if 0
+            OP_NOP     =  21,         /* Scalar function is nopped     */
+            OP_ABS     =  23,         /* Scalar function Op Abs        */
             OP_CEIL    =  26,         /* Scalar function Op Ceil       */
             OP_FLOOR   =  27,         /* Scalar function Op Floor      */
             OP_MOD     =  28,         /* Scalar function Op Mod        */
@@ -309,6 +328,7 @@ enum OPVAL {OP_EQ      =   1,         /* Filtering operator =          */
             OP_REMOVE  = 201,         /* Scalar function Op Remove     */
             OP_RENAME  = 202,         /* Scalar function Op Rename     */
             OP_FCOMP   = 203};        /* Scalar function Op Compare    */
+#endif // 0
 
 enum TUSE {USE_NO      =   0,         /* Table is not yet linearized   */
            USE_LIN     =   1,         /* Table is linearized           */
@@ -342,7 +362,8 @@ enum COLUSE {U_P         = 0x01,      /* the projection list.          */
              U_IS_NULL   = 0x80,      /* The column has a null value   */
              U_SPECIAL   = 0x100,     /* The column is special         */
              U_UNSIGNED  = 0x200,     /* The column type is unsigned   */
-             U_ZEROFILL  = 0x400};    /* The column is zero filled     */
+             U_ZEROFILL  = 0x400,     /* The column is zero filled     */
+						 U_UUID      = 0x800};    /* The column is a UUID          */
 
 /***********************************************************************/
 /*  DB description class and block pointer definitions.                */
@@ -353,6 +374,7 @@ typedef class XOBJECT    *PXOB;
 typedef class COLBLK     *PCOL;
 typedef class TDB        *PTDB;
 typedef class TDBASE     *PTDBASE;
+typedef class TDBEXT     *PTDBEXT;
 typedef class TDBDOS     *PTDBDOS;
 typedef class TDBFIX     *PTDBFIX;
 typedef class TDBFMT     *PTDBFMT;
@@ -371,6 +393,7 @@ typedef class KXYCOL     *PXCOL;
 typedef class CATALOG    *PCATLG;
 typedef class RELDEF     *PRELDEF;
 typedef class TABDEF     *PTABDEF;
+typedef class EXTDEF     *PEXTBDEF;
 typedef class DOSDEF     *PDOSDEF;
 typedef class CSVDEF     *PCSVDEF;
 typedef class VCTDEF     *PVCTDEF;
@@ -534,7 +557,7 @@ typedef  struct _qryres {
 typedef  struct _colres {
   PCOLRES Next;                    /* To next result column            */
   PCOL    Colp;                    /* To matching column block         */
-  PSZ     Name;                    /* Column header                    */
+  PCSZ    Name;                    /* Column header                    */
   PVBLK   Kdata;                   /* Column block of values           */
   char   *Nulls;                   /* Column null value array          */
   int     Type;                    /* Internal type                    */
@@ -564,7 +587,7 @@ void     PlugLineDB(PGLOBAL, PSZ, short, void *, uint);
 char    *SetPath(PGLOBAL g, const char *path);
 char    *ExtractFromPath(PGLOBAL, char *, char *, OPVAL);
 void     AddPointer(PTABS, void *);
-PDTP     MakeDateFormat(PGLOBAL, PSZ, bool, bool, int);
+PDTP     MakeDateFormat(PGLOBAL, PCSZ, bool, bool, int);
 int      ExtractDate(char *, PDTP, int, int val[6]);
 
 /**************************************************************************/
@@ -596,11 +619,10 @@ DllExport void   *PlgDBrealloc(PGLOBAL, void *, MBLOCK&, size_t);
 DllExport void    NewPointer(PTABS, void *, void *);
 //lExport char   *GetIni(int n= 0);    // Not used anymore
 DllExport void    SetTrc(void);
-DllExport char   *GetListOption(PGLOBAL, const char *, const char *,
-                                         const char *def=NULL);
-DllExport char   *GetStringTableOption(PGLOBAL, PTOS, char *, char *);
-DllExport bool    GetBooleanTableOption(PGLOBAL, PTOS, char *, bool);
-DllExport int     GetIntegerTableOption(PGLOBAL, PTOS, char *, int);
+DllExport PCSZ    GetListOption(PGLOBAL, PCSZ, PCSZ, PCSZ def=NULL);
+DllExport PCSZ    GetStringTableOption(PGLOBAL, PTOS, PCSZ, PCSZ);
+DllExport bool    GetBooleanTableOption(PGLOBAL, PTOS, PCSZ, bool);
+DllExport int     GetIntegerTableOption(PGLOBAL, PTOS, PCSZ, int);
 
 #define MSGID_NONE                         0
 #define MSGID_CANNOT_OPEN                  1
@@ -616,4 +638,4 @@ int global_open(GLOBAL *g, int msgid, const char *filename, int flags, int mode)
 DllExport LPCSTR PlugSetPath(LPSTR to, LPCSTR name, LPCSTR dir);
 char *MakeEscape(PGLOBAL g, char* str, char q);
 
-DllExport bool PushWarning(PGLOBAL, PTDBASE, int level = 1);
+DllExport bool PushWarning(PGLOBAL, PTDB, int level = 1);

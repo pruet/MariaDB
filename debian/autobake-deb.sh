@@ -44,13 +44,25 @@ else
   sed -i -e "s/\\\${MAYBE_LIBCRACK}/${MAYBE_LIBCRACK}/g" debian/control
 fi
 
+# same for OpenSSL. Use the correct dependency
+if apt-cache madison libssl-dev|grep 'libssl-dev  *| *1\.1\.' >/dev/null 2>&1
+then
+  LIBSSL='libssl1.0-dev'
+else
+  LIBSSL='libssl-dev'
+fi
+sed -i -e "s/\\\${LIBSSL}/${LIBSSL}/g" debian/control
+
 # Adjust changelog, add new version.
 #
 echo "Incrementing changelog and starting build scripts"
 
-dch -b -D ${CODENAME} -v "${UPSTREAM}${PATCHLEVEL}-${RELEASE_NAME}${RELEASE_EXTRA:+-${RELEASE_EXTRA}}1~${CODENAME}" "Automatic build with ${LOGSTRING}."
+if [[ "$CODENAME" == bionic ]]; then
+  EPOCH="1:"
+fi
+dch -b -D ${CODENAME} -v "${EPOCH}${UPSTREAM}${PATCHLEVEL}-${RELEASE_NAME}${RELEASE_EXTRA:+-${RELEASE_EXTRA}}1~${CODENAME}" "Automatic build with ${LOGSTRING}."
 
-echo "Creating package version ${UPSTREAM}${PATCHLEVEL}-${RELEASE_NAME}${RELEASE_EXTRA:+-${RELEASE_EXTRA}}1~${CODENAME} ... "
+echo "Creating package version ${EPOCH}${UPSTREAM}${PATCHLEVEL}-${RELEASE_NAME}${RELEASE_EXTRA:+-${RELEASE_EXTRA}}1~${CODENAME} ... "
 
 # Build the package.
 # Pass -I so that .git and other unnecessary temporary and source control files

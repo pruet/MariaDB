@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2012, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -466,7 +467,7 @@ trx_undo_page_fetch_ext(
 {
 	/* Fetch the BLOB. */
 	ulint	ext_len = btr_copy_externally_stored_field_prefix(
-		ext_buf, prefix_len, zip_size, field, *len, NULL);
+		ext_buf, prefix_len, zip_size, field, *len);
 	/* BLOBs should always be nonempty. */
 	ut_a(ext_len);
 	/* Append the BLOB pointer to the prefix. */
@@ -771,7 +772,25 @@ trx_undo_page_report_modify(
 			const dict_col_t*	col
 				= dict_table_get_nth_col(table, col_no);
 
-			if (col->ord_part) {
+			if (!col->ord_part) {
+				continue;
+			}
+
+			if (update) {
+				for (i = 0; i < update->n_fields; i++) {
+					const dict_field_t* f
+						= dict_index_get_nth_field(
+							index,
+							upd_get_nth_field(
+								update, i)
+							->field_no);
+					if (f->col == col) {
+						goto already_logged;
+					}
+				}
+			}
+
+			if (TRUE) {
 				ulint	pos;
 
 				/* Write field number to undo log */
@@ -822,6 +841,9 @@ trx_undo_page_report_modify(
 					ptr += flen;
 				}
 			}
+
+already_logged:
+			continue;
 		}
 
 		mach_write_to_2(old_ptr, ptr - old_ptr);
@@ -1000,7 +1022,7 @@ trx_undo_update_rec_get_update(
 			fprintf(stderr, "\n"
 				"InnoDB: but index has only %lu fields\n"
 				"InnoDB: Submit a detailed bug report"
-				" to http://bugs.mysql.com\n"
+				" to https://jira.mariadb.org/\n"
 				"InnoDB: Run also CHECK TABLE ",
 				(ulong) dict_index_get_n_fields(index));
 			ut_print_name(stderr, trx, TRUE, index->table_name);
@@ -1054,6 +1076,7 @@ trx_undo_rec_get_partial_row(
 				used, as we do NOT copy the data in the
 				record! */
 	dict_index_t*	index,	/*!< in: clustered index */
+	const upd_t*	update,	/*!< in: updated columns */
 	dtuple_t**	row,	/*!< out, own: partial row */
 	ibool		ignore_prefix, /*!< in: flag to indicate if we
 				expect blob prefixes in undo. Used
@@ -1081,6 +1104,13 @@ trx_undo_rec_get_partial_row(
 			->mtype = DATA_MISSING;
 	}
 
+	for (const upd_field_t* uf = update->fields, * const ue
+		     = update->fields + update->n_fields;
+	     uf != ue; uf++) {
+		ulint c = dict_index_get_nth_col(index, uf->field_no)->ind;
+		*dtuple_get_nth_field(*row, c) = uf->new_val;
+	}
+
 	end_ptr = ptr + mach_read_from_2(ptr);
 	ptr += 2;
 
@@ -1101,6 +1131,10 @@ trx_undo_rec_get_partial_row(
 		ptr = trx_undo_rec_get_col_val(ptr, &field, &len, &orig_len);
 
 		dfield = dtuple_get_nth_field(*row, col_no);
+		ut_ad(dfield->type.mtype == DATA_MISSING
+		      || dict_col_type_assert_equal(col, &dfield->type));
+		ut_ad(dfield->type.mtype == DATA_MISSING
+		      || dfield->len == len);
 		dict_col_copy_type(
 			dict_table_get_nth_col(index->table, col_no),
 			dfield_get_type(dfield));
@@ -1133,7 +1167,7 @@ trx_undo_rec_get_partial_row(
 /***********************************************************************//**
 Erases the unused undo log page end.
 @return TRUE if the page contained something, FALSE if it was empty */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 ibool
 trx_undo_erase_page_end(
 /*====================*/
@@ -1159,7 +1193,7 @@ byte*
 trx_undo_parse_erase_page_end(
 /*==========================*/
 	byte*	ptr,	/*!< in: buffer */
-	byte*	end_ptr __attribute__((unused)), /*!< in: buffer end */
+	byte*	end_ptr MY_ATTRIBUTE((unused)), /*!< in: buffer end */
 	page_t*	page,	/*!< in: page or NULL */
 	mtr_t*	mtr)	/*!< in: mtr or NULL */
 {
@@ -1186,10 +1220,6 @@ UNIV_INTERN
 dberr_t
 trx_undo_report_row_operation(
 /*==========================*/
-	ulint		flags,		/*!< in: if BTR_NO_UNDO_LOG_FLAG bit is
-					set, does nothing */
-	ulint		op_type,	/*!< in: TRX_UNDO_INSERT_OP or
-					TRX_UNDO_MODIFY_OP */
 	que_thr_t*	thr,		/*!< in: query thread */
 	dict_index_t*	index,		/*!< in: clustered index */
 	const dtuple_t*	clust_entry,	/*!< in: in the case of an insert,
@@ -1203,10 +1233,8 @@ trx_undo_report_row_operation(
 					marking, the record in the clustered
 					index, otherwise NULL */
 	const ulint*	offsets,	/*!< in: rec_get_offsets(rec) */
-	roll_ptr_t*	roll_ptr)	/*!< out: rollback pointer to the
-					inserted undo log record,
-					0 if BTR_NO_UNDO_LOG
-					flag was specified */
+	roll_ptr_t*	roll_ptr)	/*!< out: DB_ROLL_PTR to the
+					undo log record */
 {
 	trx_t*		trx;
 	trx_undo_t*	undo;
@@ -1222,17 +1250,8 @@ trx_undo_report_row_operation(
 	ut_ad(!srv_read_only_mode);
 	ut_a(dict_index_is_clust(index));
 	ut_ad(!rec || rec_offs_validate(rec, index, offsets));
-
-	if (flags & BTR_NO_UNDO_LOG_FLAG) {
-
-		*roll_ptr = 0;
-
-		return(DB_SUCCESS);
-	}
-
 	ut_ad(thr);
-	ut_ad((op_type != TRX_UNDO_INSERT_OP)
-	      || (clust_entry && !update && !rec));
+	ut_ad(!clust_entry || (!update && !rec));
 
 	trx = thr_get_trx(thr);
 
@@ -1248,13 +1267,12 @@ trx_undo_report_row_operation(
 
 	rseg = trx->rseg;
 
-	mtr_start_trx(&mtr, trx);
+	mtr_start(&mtr);
 	mutex_enter(&trx->undo_mutex);
 
 	/* If the undo log is not assigned yet, assign one */
 
-	switch (op_type) {
-	case TRX_UNDO_INSERT_OP:
+	if (clust_entry) {
 		undo = trx->insert_undo;
 
 		if (undo == NULL) {
@@ -1270,10 +1288,7 @@ trx_undo_report_row_operation(
 
 			ut_ad(err == DB_SUCCESS);
 		}
-		break;
-	default:
-		ut_ad(op_type == TRX_UNDO_MODIFY_OP);
-
+	} else {
 		undo = trx->update_undo;
 
 		if (undo == NULL) {
@@ -1297,23 +1312,14 @@ trx_undo_report_row_operation(
 	buf_block_dbg_add_level(undo_block, SYNC_TRX_UNDO_PAGE);
 
 	do {
-		page_t*		undo_page;
-		ulint		offset;
-
-		undo_page = buf_block_get_frame(undo_block);
 		ut_ad(page_no == buf_block_get_page_no(undo_block));
-
-		switch (op_type) {
-		case TRX_UNDO_INSERT_OP:
-			offset = trx_undo_page_report_insert(
-				undo_page, trx, index, clust_entry, &mtr);
-			break;
-		default:
-			ut_ad(op_type == TRX_UNDO_MODIFY_OP);
-			offset = trx_undo_page_report_modify(
+		page_t*	undo_page = buf_block_get_frame(undo_block);
+		ulint	offset = clust_entry
+			? trx_undo_page_report_insert(
+				undo_page, trx, index, clust_entry, &mtr)
+			: trx_undo_page_report_modify(
 				undo_page, trx, index, rec, offsets, update,
 				cmpl_info, &mtr);
-		}
 
 		if (UNIV_UNLIKELY(offset == 0)) {
 			/* The record did not fit on the page. We erase the
@@ -1337,7 +1343,7 @@ trx_undo_report_row_operation(
 				latches, such as SYNC_FSP and SYNC_FSP_PAGE. */
 
 				mtr_commit(&mtr);
-				mtr_start_trx(&mtr, trx);
+				mtr_start(&mtr);
 
 				mutex_enter(&rseg->mutex);
 				trx_undo_free_last_page(trx, undo, &mtr);
@@ -1364,7 +1370,7 @@ trx_undo_report_row_operation(
 			mutex_exit(&trx->undo_mutex);
 
 			*roll_ptr = trx_undo_build_roll_ptr(
-				op_type == TRX_UNDO_INSERT_OP,
+				clust_entry != NULL,
 				rseg->id, page_no, offset);
 			return(DB_SUCCESS);
 		}
@@ -1374,7 +1380,7 @@ trx_undo_report_row_operation(
 		/* We have to extend the undo log by one page */
 
 		ut_ad(++loop_count < 2);
-		mtr_start_trx(&mtr, trx);
+		mtr_start(&mtr);
 
 		/* When we add a page to an undo log, this is analogous to
 		a pessimistic insert in a B-tree, and we must reserve the
@@ -1442,7 +1448,7 @@ NOTE: the caller must have latches on the clustered index page.
 @retval true if the undo log has been
 truncated and we cannot fetch the old version
 @retval false if the undo log record is available  */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
 trx_undo_get_undo_rec(
 /*==================*/
@@ -1470,7 +1476,7 @@ trx_undo_get_undo_rec(
 #ifdef UNIV_DEBUG
 #define ATTRIB_USED_ONLY_IN_DEBUG
 #else /* UNIV_DEBUG */
-#define ATTRIB_USED_ONLY_IN_DEBUG	__attribute__((unused))
+#define ATTRIB_USED_ONLY_IN_DEBUG	MY_ATTRIBUTE((unused))
 #endif /* UNIV_DEBUG */
 
 /*******************************************************************//**

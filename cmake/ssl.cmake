@@ -1,4 +1,5 @@
-# Copyright (c) 2009, 2012, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2009, 2012, Oracle and/or its affiliates.
+# Copyright (c) 2011, 2017, MariaDB Corporation
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -11,7 +12,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA 
+# Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 # We support different versions of SSL:
 # - "bundled" uses source code in <source dir>/extra/yassl
@@ -160,13 +161,30 @@ MACRO (MYSQL_CHECK_SSL)
       LIST(REVERSE CMAKE_FIND_LIBRARY_SUFFIXES)
     ENDIF()
 
+    IF (OPENSSL_INCLUDE_DIR)
+      # Verify version number. Version information looks like:
+      #   #define OPENSSL_VERSION_NUMBER 0x1000103fL
+      # Encoded as MNNFFPPS: major minor fix patch status
+      FILE(STRINGS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h"
+        OPENSSL_VERSION_NUMBER
+        REGEX "^#[\t ]*define[\t ]+OPENSSL_VERSION_NUMBER[\t ]+0x[0-9].*"
+      )
+      STRING(REGEX REPLACE
+        "^.*OPENSSL_VERSION_NUMBER[\t ]+0x([0-9][0-9][0-9]).*$" "\\1"
+        OPENSSL_MAJOR_VERSION "${OPENSSL_VERSION_NUMBER}"
+      )
+      MESSAGE(STATUS "OPENSSL_MAJOR_VERSION = ${OPENSSL_MAJOR_VERSION}")
+    ENDIF()
+
     INCLUDE(CheckSymbolExists)
     SET(CMAKE_REQUIRED_INCLUDES ${OPENSSL_INCLUDE_DIR})
     CHECK_SYMBOL_EXISTS(SHA512_DIGEST_LENGTH "openssl/sha.h" 
                         HAVE_SHA512_DIGEST_LENGTH)
     SET(CMAKE_REQUIRED_INCLUDES)
-    IF(OPENSSL_INCLUDE_DIR AND OPENSSL_LIBRARIES   AND
+    IF(OPENSSL_INCLUDE_DIR AND OPENSSL_LIBRARIES AND
+       OPENSSL_MAJOR_VERSION STRLESS "101" AND
        CRYPTO_LIBRARY AND HAVE_SHA512_DIGEST_LENGTH)
+
       SET(SSL_SOURCES "")
       SET(SSL_LIBRARIES ${OPENSSL_LIBRARIES} ${CRYPTO_LIBRARY})
       IF(CMAKE_SYSTEM_NAME MATCHES "SunOS")
@@ -176,22 +194,9 @@ MACRO (MYSQL_CHECK_SSL)
         SET(SSL_LIBRARIES ${SSL_LIBRARIES} ${LIBDL})
       ENDIF()
 
-      # Verify version number. Version information looks like:
-      #   #define OPENSSL_VERSION_NUMBER 0x1000103fL
-      # Encoded as MNNFFPPS: major minor fix patch status
-      FILE(STRINGS "${OPENSSL_INCLUDE_DIR}/openssl/opensslv.h"
-        OPENSSL_VERSION_NUMBER
-        REGEX "^#define[\t ]+OPENSSL_VERSION_NUMBER[\t ]+0x[0-9].*"
-      )
-      STRING(REGEX REPLACE
-        "^.*OPENSSL_VERSION_NUMBER[\t ]+0x([0-9]).*$" "\\1"
-        OPENSSL_MAJOR_VERSION "${OPENSSL_VERSION_NUMBER}"
-      )
-
       MESSAGE(STATUS "OPENSSL_INCLUDE_DIR = ${OPENSSL_INCLUDE_DIR}")
       MESSAGE(STATUS "OPENSSL_LIBRARIES = ${OPENSSL_LIBRARIES}")
       MESSAGE(STATUS "CRYPTO_LIBRARY = ${CRYPTO_LIBRARY}")
-      MESSAGE(STATUS "OPENSSL_MAJOR_VERSION = ${OPENSSL_MAJOR_VERSION}")
       MESSAGE(STATUS "SSL_LIBRARIES = ${SSL_LIBRARIES}")
       SET(SSL_INCLUDE_DIRS ${OPENSSL_INCLUDE_DIR})
       SET(SSL_INTERNAL_INCLUDE_DIRS "")
@@ -206,12 +211,12 @@ MACRO (MYSQL_CHECK_SSL)
                           HAVE_EncryptAes128Gcm)
     ELSE()
       IF(WITH_SSL STREQUAL "system")
-        MESSAGE(SEND_ERROR "Cannot find appropriate system libraries for SSL. Use  WITH_SSL=bundled to enable SSL support")
+        MESSAGE(FATAL_ERROR "Cannot find appropriate system libraries for SSL. Use WITH_SSL=bundled to enable SSL support")
       ENDIF()
       MYSQL_USE_BUNDLED_SSL()
     ENDIF()
   ELSE()
-    MESSAGE(SEND_ERROR
+    MESSAGE(FATAL_ERROR
       "Wrong option for WITH_SSL. Valid values are: ${WITH_SSL_DOC}")
   ENDIF()
 ENDMACRO()

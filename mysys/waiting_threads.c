@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /**
   @file
@@ -136,7 +136,7 @@
 
   Status
   ^^^^^^
-  We calculate the number of successfull waits (WT_OK returned from
+  We calculate the number of successful waits (WT_OK returned from
   wt_thd_cond_timedwait()), a number of timeouts, a deadlock cycle
   length distribution - number of deadlocks with every length from
   1 to WT_CYCLE_STATS, and a wait time distribution - number
@@ -556,7 +556,7 @@ my_bool wt_resource_id_memcmp(const void *a, const void *b)
 {
   /* we use the fact that there's no padding in the middle of WT_RESOURCE_ID */
   compile_time_assert(offsetof(WT_RESOURCE_ID, type) == sizeof(ulonglong));
-  return memcmp(a, b, sizeof_WT_RESOURCE_ID);
+  return MY_TEST(memcmp(a, b, sizeof_WT_RESOURCE_ID));
 }
 
 /**

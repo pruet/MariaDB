@@ -26,7 +26,7 @@
 #include "key.h"
 #include "rpl_gtid.h"
 #include "rpl_rli.h"
-
+#include "log_event.h"
 
 const LEX_STRING rpl_gtid_slave_state_table_name=
   { C_STRING_WITH_LEN("gtid_slave_pos") };
@@ -77,7 +77,7 @@ rpl_slave_state::record_and_update_gtid(THD *thd, rpl_group_info *rgi)
     rgi->gtid_pending= false;
     if (rgi->gtid_ignore_duplicate_state!=rpl_group_info::GTID_DUPLICATE_IGNORE)
     {
-      if (record_gtid(thd, &rgi->current_gtid, sub_id, false, false))
+      if (record_gtid(thd, &rgi->current_gtid, sub_id, NULL, false))
         DBUG_RETURN(1);
       update_state_hash(sub_id, &rgi->current_gtid, rgi);
     }
@@ -328,6 +328,10 @@ rpl_slave_state::update(uint32 domain_id, uint32 server_id, uint64 sub_id,
       }
     }
     rgi->gtid_ignore_duplicate_state= rpl_group_info::GTID_DUPLICATE_NULL;
+
+#ifdef HAVE_REPLICATION
+    rgi->pending_gtid_deletes_clear();
+#endif
   }
 
   if (!(list_elem= (list_element *)my_malloc(sizeof(*list_elem), MYF(MY_WME))))
@@ -377,15 +381,24 @@ int
 rpl_slave_state::put_back_list(uint32 domain_id, list_element *list)
 {
   element *e;
+  int err= 0;
+
+  mysql_mutex_lock(&LOCK_slave_state);
   if (!(e= (element *)my_hash_search(&hash, (const uchar *)&domain_id, 0)))
-    return 1;
+  {
+    err= 1;
+    goto end;
+  }
   while (list)
   {
     list_element *next= list->next;
     e->add(list);
     list= next;
   }
-  return 0;
+
+end:
+  mysql_mutex_unlock(&LOCK_slave_state);
+  return err;
 }
 
 
@@ -448,19 +461,7 @@ static const TABLE_FIELD_DEF mysql_gtid_slave_pos_tabledef= {
   mysql_rpl_slave_state_pk_parts
 };
 
-class Gtid_db_intact : public Table_check_intact
-{
-protected:
-  void report_error(uint, const char *fmt, ...)
-  {
-    va_list args;
-    va_start(args, fmt);
-    error_log_print(ERROR_LEVEL, fmt, args);
-    va_end(args);
-  }
-};
-
-static Gtid_db_intact gtid_table_intact;
+static Table_check_intact_log_error gtid_table_intact;
 
 /*
   Check that the mysql.gtid_slave_pos table has the correct definition.
@@ -480,12 +481,12 @@ gtid_check_rpl_slave_state_table(TABLE *table)
 /*
   Write a gtid to the replication slave state table.
 
-  Do it as part of the transaction, to get slave crash safety, or as a separate
-  transaction if !in_transaction (eg. MyISAM or DDL).
-
     gtid    The global transaction id for this event group.
     sub_id  Value allocated within the sub_id when the event group was
             read (sub_id must be consistent with commit order in master binlog).
+    rgi     rpl_group_info context, if we are recording the gtid transactionally
+            as part of replicating a transactional event. NULL if called from
+            outside of a replicated transaction.
 
   Note that caller must later ensure that the new gtid and sub_id is inserted
   into the appropriate HASH element with rpl_slave_state.add(), so that it can
@@ -493,13 +494,13 @@ gtid_check_rpl_slave_state_table(TABLE *table)
 */
 int
 rpl_slave_state::record_gtid(THD *thd, const rpl_gtid *gtid, uint64 sub_id,
-                             bool in_transaction, bool in_statement)
+                             rpl_group_info *rgi, bool in_statement)
 {
   TABLE_LIST tlist;
   int err= 0;
   bool table_opened= false;
   TABLE *table;
-  list_element *elist= 0, *next;
+  list_element *elist= 0, *cur, *next;
   element *elem;
   ulonglong thd_saved_option= thd->variables.option_bits;
   Query_tables_list lex_backup;
@@ -570,7 +571,7 @@ rpl_slave_state::record_gtid(THD *thd, const rpl_gtid *gtid, uint64 sub_id,
   thd->wsrep_ignore_table= true;
 #endif
 
-  if (!in_transaction)
+  if (!rgi)
   {
     DBUG_PRINT("info", ("resetting OPTION_BEGIN"));
     thd->variables.option_bits&=
@@ -613,9 +614,9 @@ rpl_slave_state::record_gtid(THD *thd, const rpl_gtid *gtid, uint64 sub_id,
   if ((elist= elem->grab_list()) != NULL)
   {
     /* Delete any old stuff, but keep around the most recent one. */
-    list_element *cur= elist;
-    uint64 best_sub_id= cur->sub_id;
+    uint64 best_sub_id= elist->sub_id;
     list_element **best_ptr_ptr= &elist;
+    cur= elist;
     while ((next= cur->next))
     {
       if (next->sub_id > best_sub_id)
@@ -648,7 +649,8 @@ rpl_slave_state::record_gtid(THD *thd, const rpl_gtid *gtid, uint64 sub_id,
     table->file->print_error(err, MYF(0));
     goto end;
   }
-  while (elist)
+  cur = elist;
+  while (cur)
   {
     uchar key_buffer[4+8];
 
@@ -658,9 +660,9 @@ rpl_slave_state::record_gtid(THD *thd, const rpl_gtid *gtid, uint64 sub_id,
                       /* `break' does not work inside DBUG_EXECUTE_IF */
                       goto dbug_break; });
 
-    next= elist->next;
+    next= cur->next;
 
-    table->field[1]->store(elist->sub_id, true);
+    table->field[1]->store(cur->sub_id, true);
     /* domain_id is already set in table->record[0] from write_row() above. */
     key_copy(key_buffer, table->record[0], &table->key_info[0], 0, false);
     if (table->file->ha_index_read_map(table->record[1], key_buffer,
@@ -674,8 +676,7 @@ rpl_slave_state::record_gtid(THD *thd, const rpl_gtid *gtid, uint64 sub_id,
       not want to endlessly error on the same element in case of table
       corruption or such.
     */
-    my_free(elist);
-    elist= next;
+    cur= next;
     if (err)
       break;
   }
@@ -698,18 +699,35 @@ end:
       */
       if (elist)
       {
-        mysql_mutex_lock(&LOCK_slave_state);
         put_back_list(gtid->domain_id, elist);
-        mysql_mutex_unlock(&LOCK_slave_state);
+        elist = 0;
       }
 
       ha_rollback_trans(thd, FALSE);
     }
     close_thread_tables(thd);
-    if (in_transaction)
+    if (rgi)
+    {
       thd->mdl_context.release_statement_locks();
+      /*
+        Save the list of old gtid entries we deleted. If this transaction
+        fails later for some reason and is rolled back, the deletion of those
+        entries will be rolled back as well, and we will need to put them back
+        on the to-be-deleted list so we can re-do the deletion. Otherwise
+        redundant rows in mysql.gtid_slave_pos may accumulate if transactions
+        are rolled back and retried after record_gtid().
+      */
+#ifdef HAVE_REPLICATION
+      rgi->pending_gtid_deletes_save(gtid->domain_id, elist);
+#endif
+    }
     else
+    {
       thd->mdl_context.release_transactional_locks();
+#ifdef HAVE_REPLICATION
+      rpl_group_info::pending_gtid_deletes_free(elist);
+#endif
+    }
   }
   thd->lex->restore_backup_query_tables_list(&lex_backup);
   thd->variables.option_bits= thd_saved_option;
@@ -1092,7 +1110,7 @@ rpl_slave_state::load(THD *thd, char *state_from_master, size_t len,
 
     if (gtid_parser_helper(&state_from_master, end, &gtid) ||
         !(sub_id= next_sub_id(gtid.domain_id)) ||
-        record_gtid(thd, &gtid, sub_id, false, in_statement) ||
+        record_gtid(thd, &gtid, sub_id, NULL, in_statement) ||
         update(gtid.domain_id, gtid.server_id, sub_id, gtid.seq_no, NULL))
       return 1;
     if (state_from_master == end)
@@ -1740,6 +1758,155 @@ end:
   return res;
 }
 
+/**
+  Remove domains supplied by the first argument from binlog state.
+  Removal is done for any domain whose last gtids (from all its servers) match
+  ones in Gtid list event of the 2nd argument.
+
+  @param  ids               gtid domain id sequence, may contain dups
+  @param  glev              pointer to Gtid list event describing
+                            the match condition
+  @param  errbuf [out]      pointer to possible error message array
+
+  @retval NULL              as success when at least one domain is removed
+  @retval ""                empty string to indicate ineffective call
+                            when no domains removed
+  @retval NOT EMPTY string  otherwise an error message
+*/
+const char*
+rpl_binlog_state::drop_domain(DYNAMIC_ARRAY *ids,
+                              Gtid_list_log_event *glev,
+                              char* errbuf)
+{
+  DYNAMIC_ARRAY domain_unique; // sequece (unsorted) of unique element*:s
+  rpl_binlog_state::element* domain_unique_buffer[16];
+  ulong k, l;
+  const char* errmsg= NULL;
+
+  DBUG_ENTER("rpl_binlog_state::drop_domain");
+
+  my_init_dynamic_array2(&domain_unique,
+                         sizeof(element*), domain_unique_buffer,
+                         sizeof(domain_unique_buffer) / sizeof(element*), 4, 0);
+
+  mysql_mutex_lock(&LOCK_binlog_state);
+
+  /*
+    Gtid list is supposed to come from a binlog's Gtid_list event and
+    therefore should be a subset of the current binlog state. That is
+    for every domain in the list the binlog state contains a gtid with
+    sequence number not less than that of the list.
+    Exceptions of this inclusion rule are:
+      A. the list may still refer to gtids from already deleted domains.
+         Files containing them must have been purged whereas the file
+         with the list is not yet.
+      B. out of order groups were injected
+      C. manually build list of binlog files violating the inclusion
+         constraint.
+    While A is a normal case (not necessarily distinguishable from C though),
+    B and C may require the user's attention so any (incl the A's suspected)
+    inconsistency is diagnosed and *warned*.
+  */
+  for (l= 0, errbuf[0]= 0; l < glev->count; l++, errbuf[0]= 0)
+  {
+    rpl_gtid* rb_state_gtid= find_nolock(glev->list[l].domain_id,
+                                         glev->list[l].server_id);
+    if (!rb_state_gtid)
+      sprintf(errbuf,
+              "missing gtids from the '%u-%u' domain-server pair which is "
+              "referred to in the gtid list describing an earlier state. Ignore "
+              "if the domain ('%u') was already explicitly deleted",
+              glev->list[l].domain_id, glev->list[l].server_id,
+              glev->list[l].domain_id);
+    else if (rb_state_gtid->seq_no < glev->list[l].seq_no)
+      sprintf(errbuf,
+              "having a gtid '%u-%u-%llu' which is less than "
+              "the '%u-%u-%llu' of the gtid list describing an earlier state. "
+              "The state may have been affected by manually injecting "
+              "a lower sequence number gtid or via replication",
+              rb_state_gtid->domain_id, rb_state_gtid->server_id,
+              rb_state_gtid->seq_no, glev->list[l].domain_id,
+              glev->list[l].server_id, glev->list[l].seq_no);
+    if (strlen(errbuf)) // use strlen() as cheap flag
+      push_warning_printf(current_thd, Sql_condition::WARN_LEVEL_WARN,
+                          ER_BINLOG_CANT_DELETE_GTID_DOMAIN,
+                          "The current gtid binlog state is incompatible with "
+                          "a former one %s.", errbuf);
+  }
+
+  /*
+    For each domain_id from ids
+      when no such domain in binlog state
+        warn && continue
+      For each domain.server's last gtid
+        when not locate the last gtid in glev.list
+          error out binlog state can't change
+        otherwise continue
+  */
+  for (ulong i= 0; i < ids->elements; i++)
+  {
+    rpl_binlog_state::element *elem= NULL;
+    uint32 *ptr_domain_id;
+    bool not_match;
+
+    ptr_domain_id= (uint32*) dynamic_array_ptr(ids, i);
+    elem= (rpl_binlog_state::element *)
+      my_hash_search(&hash, (const uchar *) ptr_domain_id, 0);
+    if (!elem)
+    {
+      push_warning_printf(current_thd, Sql_condition::WARN_LEVEL_WARN,
+                          ER_BINLOG_CANT_DELETE_GTID_DOMAIN,
+                          "The gtid domain being deleted ('%lu') is not in "
+                          "the current binlog state", *ptr_domain_id);
+      continue;
+    }
+
+    for (not_match= true, k= 0; k < elem->hash.records; k++)
+    {
+      rpl_gtid *d_gtid= (rpl_gtid *)my_hash_element(&elem->hash, k);
+      for (ulong l= 0; l < glev->count && not_match; l++)
+        not_match= !(*d_gtid == glev->list[l]);
+    }
+
+    if (not_match)
+    {
+      sprintf(errbuf, "binlog files may contain gtids from the domain ('%u') "
+              "being deleted. Make sure to first purge those files",
+              *ptr_domain_id);
+      errmsg= errbuf;
+      goto end;
+    }
+    // compose a sequence of unique pointers to domain object
+    for (k= 0; k < domain_unique.elements; k++)
+    {
+      if ((rpl_binlog_state::element*) dynamic_array_ptr(&domain_unique, k)
+          == elem)
+        break; // domain_id's elem has been already in
+    }
+    if (k == domain_unique.elements) // proven not to have duplicates
+      insert_dynamic(&domain_unique, (uchar*) &elem);
+  }
+
+  // Domain removal from binlog state
+  for (k= 0; k < domain_unique.elements; k++)
+  {
+    rpl_binlog_state::element *elem= *(rpl_binlog_state::element**)
+      dynamic_array_ptr(&domain_unique, k);
+    my_hash_free(&elem->hash);
+    my_hash_delete(&hash, (uchar*) elem);
+  }
+
+  DBUG_ASSERT(strlen(errbuf) == 0);
+
+  if (domain_unique.elements == 0)
+    errmsg= "";
+
+end:
+  mysql_mutex_unlock(&LOCK_binlog_state);
+  delete_dynamic(&domain_unique);
+
+  DBUG_RETURN(errmsg);
+}
 
 slave_connection_state::slave_connection_state()
 {
@@ -2058,7 +2225,7 @@ gtid_waiting::wait_for_pos(THD *thd, String *gtid_str, longlong timeout_us)
   {
     case -1:
       status_var_increment(thd->status_var.master_gtid_wait_timeouts);
-      /* Deliberate fall through. */
+      /* fall through */
     case 0:
       status_var_add(thd->status_var.master_gtid_wait_time,
                      microsecond_interval_timer() - before);

@@ -2,7 +2,7 @@
 # Copyright Abandoned 1996 TCX DataKonsult AB & Monty Program KB & Detron HB
 # This file is public domain and comes with NO WARRANTY of any kind
 
-# MySQL daemon start/stop script.
+# MariaDB daemon start/stop script.
 
 # Usually this is put in /etc/init.d (at least on machines SYSV R4 based
 # systems) and linked to /etc/rc3.d/S99mysql and /etc/rc0.d/K01mysql.
@@ -21,14 +21,13 @@
 # Required-Stop: $local_fs $network $remote_fs
 # Default-Start:  2 3 4 5
 # Default-Stop: 0 1 6
-# Short-Description: start and stop MySQL
-# Description: MySQL is a very fast and reliable SQL database engine.
+# Short-Description: start and stop MariaDB
+# Description: MariaDB is a very fast and reliable SQL database engine.
 ### END INIT INFO
 
-# If you install MySQL on some other places than @prefix@, then you
 # have to do one of the following things for this script to work:
 #
-# - Run this script from within the MySQL installation directory
+# - Run this script from within the MariaDB installation directory
 # - Create a /etc/my.cnf file with the following information:
 #   [mysqld]
 #   basedir=<path-to-mysql-installation-directory>
@@ -37,18 +36,18 @@
 # - Add the path to the mysql-installation-directory to the basedir variable
 #   below.
 #
-# If you want to affect other MySQL variables, you should make your changes
-# in the /etc/my.cnf, ~/.my.cnf or other MySQL configuration files.
+# If you want to affect other MariaDB variables, you should make your changes
+# in the /etc/my.cnf, ~/.my.cnf or other MariaDB configuration files.
 
 # If you change base dir, you must also change datadir. These may get
-# overwritten by settings in the MySQL configuration files.
+# overwritten by settings in the MariaDB configuration files.
 
 basedir=
 datadir=
 
 # Default value, in seconds, afterwhich the script should timeout waiting
 # for server start. 
-# Value here is overriden by value in my.cnf. 
+# Value here is overridden by value in my.cnf. 
 # 0 means don't wait at all
 # Negative numbers mean to wait indefinitely
 service_startup_timeout=900
@@ -127,8 +126,9 @@ esac
 
 parse_server_arguments() {
   for arg do
+    val=`echo "$arg" | sed -e 's/^[^=]*=//'`
     case "$arg" in
-      --basedir=*)  basedir=`echo "$arg" | sed -e 's/^[^=]*=//'`
+      --basedir=*)  basedir="$val"
                     bindir="$basedir/bin"
 		    if test -z "$datadir_set"; then
 		      datadir="$basedir/data"
@@ -142,29 +142,23 @@ parse_server_arguments() {
                     fi
 		    libexecdir="$basedir/libexec"
         ;;
-      --datadir=*)  datadir=`echo "$arg" | sed -e 's/^[^=]*=//'`
+      --datadir=*)  datadir="$val"
 		    datadir_set=1
 	;;
       --log-basename=*|--hostname=*|--loose-log-basename=*)
-        mysqld_pid_file_path=`echo "$arg.pid" | sed -e 's/^[^=]*=//'`
+        mysqld_pid_file_path="$val.pid"
 	;;
-      --pid-file=*) mysqld_pid_file_path=`echo "$arg" | sed -e 's/^[^=]*=//'` ;;
-      --service-startup-timeout=*) service_startup_timeout=`echo "$arg" | sed -e 's/^[^=]*=//'` ;;
+      --pid-file=*) mysqld_pid_file_path="$val" ;;
+      --service-startup-timeout=*) service_startup_timeout="$val" ;;
+      --user=*) user="$val"; ;;
     esac
   done
 }
 
 # Get arguments from the my.cnf file,
 # the only group, which is read from now on is [mysqld]
-if test -x ./bin/my_print_defaults
-then
-  print_defaults="./bin/my_print_defaults"
-elif test -x $bindir/my_print_defaults
-then
+if test -x "$bindir/my_print_defaults";  then
   print_defaults="$bindir/my_print_defaults"
-elif test -x $bindir/mysql_print_defaults
-then
-  print_defaults="$bindir/mysql_print_defaults"
 else
   # Try to find basedir in /etc/my.cnf
   conf=/etc/my.cnf
@@ -181,17 +175,18 @@ else
         print_defaults="$d/bin/my_print_defaults"
         break
       fi
-      if test -x "$d/bin/mysql_print_defaults"
-      then
-        print_defaults="$d/bin/mysql_print_defaults"
-        break
-      fi
     done
   fi
 
   # Hope it's in the PATH ... but I doubt it
   test -z "$print_defaults" && print_defaults="my_print_defaults"
 fi
+
+user='@MYSQLD_USER@'
+
+su_kill() {
+  su - $user -s /bin/sh -c "kill $*" >/dev/null 2>&1
+}
 
 #
 # Read defaults file from 'basedir'.   If there is no defaults file there
@@ -222,7 +217,7 @@ wait_for_gone () {
 
   while test $i -ne $service_startup_timeout ; do
 
-    if kill -0 "$pid" 2>/dev/null; then
+    if su_kill -0 "$pid" ; then
       :  # the server still runs
     else
       if test ! -s "$pid_file_path"; then
@@ -262,7 +257,7 @@ wait_for_ready () {
     if $bindir/mysqladmin ping >/dev/null 2>&1; then
       log_success_msg
       return 0
-    elif kill -0 $! 2>/dev/null ; then
+    elif kill -0 $! ; then
       :  # mysqld_safe is still running
     else
       # mysqld_safe is no longer running, abort the wait loop
@@ -303,12 +298,12 @@ case "$mode" in
     # Safeguard (relative paths, core dumps..)
     cd $basedir
 
-    echo $echo_n "Starting MySQL"
+    echo $echo_n "Starting MariaDB"
     if test -x $bindir/mysqld_safe
     then
       # Give extra arguments to mysqld with the my.cnf file. This script
       # may be overwritten at next upgrade.
-      $bindir/mysqld_safe --datadir="$datadir" --pid-file="$mysqld_pid_file_path" "$@" >/dev/null 2>&1 &
+      $bindir/mysqld_safe --datadir="$datadir" --pid-file="$mysqld_pid_file_path" "$@" &
       wait_for_ready; return_value=$?
 
       # Make lock for RedHat / SuSE
@@ -319,7 +314,7 @@ case "$mode" in
 
       exit $return_value
     else
-      log_failure_msg "Couldn't find MySQL server ($bindir/mysqld_safe)"
+      log_failure_msg "Couldn't find MariaDB server ($bindir/mysqld_safe)"
     fi
     ;;
 
@@ -331,14 +326,13 @@ case "$mode" in
     then
       mysqld_pid=`cat "$mysqld_pid_file_path"`
 
-      if (kill -0 $mysqld_pid 2>/dev/null)
-      then
-        echo $echo_n "Shutting down MySQL"
-        kill $mysqld_pid
+      if su_kill -0 $mysqld_pid ; then
+        echo $echo_n "Shutting down MariaDB"
+        su_kill $mysqld_pid
         # mysqld should remove the pid file when it exits, so wait for it.
         wait_for_gone $mysqld_pid "$mysqld_pid_file_path"; return_value=$?
       else
-        log_failure_msg "MySQL server process #$mysqld_pid is not running!"
+        log_failure_msg "MariaDB server process #$mysqld_pid is not running!"
         rm "$mysqld_pid_file_path"
       fi
 
@@ -349,7 +343,7 @@ case "$mode" in
       fi
       exit $return_value
     else
-      log_failure_msg "MySQL server PID file could not be found!"
+      log_failure_msg "MariaDB server PID file could not be found!"
     fi
     ;;
 
@@ -370,10 +364,10 @@ case "$mode" in
   'reload'|'force-reload')
     if test -s "$mysqld_pid_file_path" ; then
       read mysqld_pid <  "$mysqld_pid_file_path"
-      kill -HUP $mysqld_pid && log_success_msg "Reloading service MySQL"
+      su_kill -HUP $mysqld_pid && log_success_msg "Reloading service MariaDB"
       touch "$mysqld_pid_file_path"
     else
-      log_failure_msg "MySQL PID file could not be found!"
+      log_failure_msg "MariaDB PID file could not be found!"
       exit 1
     fi
     ;;
@@ -381,31 +375,31 @@ case "$mode" in
     # First, check to see if pid file exists
     if test -s "$mysqld_pid_file_path" ; then 
       read mysqld_pid < "$mysqld_pid_file_path"
-      if kill -0 $mysqld_pid 2>/dev/null ; then 
-        log_success_msg "MySQL running ($mysqld_pid)"
+      if su_kill -0 $mysqld_pid ; then
+        log_success_msg "MariaDB running ($mysqld_pid)"
         exit 0
       else
-        log_failure_msg "MySQL is not running, but PID file exists"
+        log_failure_msg "MariaDB is not running, but PID file exists"
         exit 1
       fi
     else
       # Try to find appropriate mysqld process
-      mysqld_pid=`pidof $libexecdir/mysqld`
+      mysqld_pid=`pgrep $libexecdir/mysqld`
 
       # test if multiple pids exist
       pid_count=`echo $mysqld_pid | wc -w`
       if test $pid_count -gt 1 ; then
-        log_failure_msg "Multiple MySQL running but PID file could not be found ($mysqld_pid)"
+        log_failure_msg "Multiple MariaDB running but PID file could not be found ($mysqld_pid)"
         exit 5
       elif test -z $mysqld_pid ; then 
         if test -f "$lock_file_path" ; then 
-          log_failure_msg "MySQL is not running, but lock file ($lock_file_path) exists"
+          log_failure_msg "MariaDB is not running, but lock file ($lock_file_path) exists"
           exit 2
         fi 
-        log_failure_msg "MySQL is not running"
+        log_failure_msg "MariaDB is not running"
         exit 3
       else
-        log_failure_msg "MySQL is running but PID file could not be found"
+        log_failure_msg "MariaDB is running but PID file could not be found"
         exit 4
       fi
     fi
@@ -413,7 +407,7 @@ case "$mode" in
   'configtest')
     # Safeguard (relative paths, core dumps..)
     cd $basedir
-    echo $echo_n "Testing MySQL configuration syntax"
+    echo $echo_n "Testing MariaDB configuration syntax"
     daemon=$bindir/mysqld
     if test -x $libexecdir/mysqld
     then
@@ -451,7 +445,7 @@ case "$mode" in
   *)
       # usage
       basename=`basename "$0"`
-      echo "Usage: $basename  {start|stop|restart|reload|force-reload|status|configtest|bootstrap}  [ MySQL server options ]"
+      echo "Usage: $basename  {start|stop|restart|reload|force-reload|status|configtest|bootstrap}  [ MariaDB server options ]"
       exit 1
     ;;
 esac

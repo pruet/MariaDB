@@ -1,7 +1,8 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
+Copyright (c) 2013, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -303,7 +304,7 @@ dict_mem_table_add_col(
 
 /**********************************************************************//**
 Renames a column of a table in the data dictionary cache. */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 void
 dict_mem_table_col_rename_low(
 /*==========================*/
@@ -318,8 +319,8 @@ dict_mem_table_col_rename_low(
 	ut_ad(from_len <= NAME_LEN);
 	ut_ad(to_len <= NAME_LEN);
 
-	char from[NAME_LEN];
-	strncpy(from, s, NAME_LEN);
+	char from[NAME_LEN + 1];
+	strncpy(from, s, NAME_LEN + 1);
 
 	if (from_len == to_len) {
 		/* The easy case: simply replace the column name in
@@ -497,9 +498,7 @@ dict_mem_table_col_rename(
 		s += len + 1;
 	}
 
-	/* This could fail if the data dictionaries are out of sync.
-	Proceed with the renaming anyway. */
-	ut_ad(!strcmp(from, s));
+	ut_ad(!my_strcasecmp(system_charset_info, from, s));
 
 	dict_mem_table_col_rename_low(table, nth_col, to, s);
 }
@@ -531,7 +530,8 @@ dict_mem_fill_column_struct(
 	column->len = (unsigned int) col_len;
 #ifndef UNIV_HOTBACKUP
         dtype_get_mblen(mtype, prtype, &mbminlen, &mbmaxlen);
-	dict_col_set_mbminmaxlen(column, mbminlen, mbmaxlen);
+	column->mbminlen = mbminlen;
+	column->mbmaxlen = mbmaxlen;
 #endif /* !UNIV_HOTBACKUP */
 }
 

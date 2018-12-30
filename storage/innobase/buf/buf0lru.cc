@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1995, 2013, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1995, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -89,6 +90,10 @@ during LRU eviction. */
 frames in the buffer pool, we set this to TRUE */
 static ibool	buf_lru_switched_on_innodb_mon	= FALSE;
 
+/** True if diagnostic message about difficult to find free blocks
+in the buffer bool has already printed. */
+static bool	buf_lru_free_blocks_error_printed;
+
 /******************************************************************//**
 These statistics are not 'of' LRU but 'for' LRU.  We keep count of I/O
 and page_zip_decompress() operations.  Based on the statistics,
@@ -146,7 +151,7 @@ If a compressed page is freed other compressed pages may be relocated.
 caller needs to free the page to the free list
 @retval false if BUF_BLOCK_ZIP_PAGE was removed from page_hash. In
 this case the block is already returned to the buddy allocator. */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
 buf_LRU_block_remove_hashed(
 /*========================*/
@@ -236,8 +241,6 @@ void
 buf_LRU_drop_page_hash_batch(
 /*=========================*/
 	ulint		space_id,	/*!< in: space id */
-	ulint		zip_size,	/*!< in: compressed page size in bytes
-					or 0 for uncompressed pages */
 	const ulint*	arr,		/*!< in: array of page_no */
 	ulint		count)		/*!< in: number of entries in array */
 {
@@ -247,8 +250,7 @@ buf_LRU_drop_page_hash_batch(
 	ut_ad(count <= BUF_LRU_DROP_SEARCH_SIZE);
 
 	for (i = 0; i < count; ++i) {
-		btr_search_drop_page_hash_when_freed(space_id, zip_size,
-						     arr[i]);
+		btr_search_drop_page_hash_when_freed(space_id, arr[i]);
 	}
 }
 
@@ -267,15 +269,6 @@ buf_LRU_drop_page_hash_for_tablespace(
 	buf_page_t*	bpage;
 	ulint*		page_arr;
 	ulint		num_entries;
-	ulint		zip_size;
-
-	zip_size = fil_space_get_zip_size(id);
-
-	if (UNIV_UNLIKELY(zip_size == ULINT_UNDEFINED)) {
-		/* Somehow, the tablespace does not exist.  Nothing to drop. */
-		ut_ad(0);
-		return;
-	}
 
 	page_arr = static_cast<ulint*>(ut_malloc(
 		sizeof(ulint) * BUF_LRU_DROP_SEARCH_SIZE));
@@ -328,8 +321,7 @@ next_page:
 		the latching order. */
 		buf_pool_mutex_exit(buf_pool);
 
-		buf_LRU_drop_page_hash_batch(
-			id, zip_size, page_arr, num_entries);
+		buf_LRU_drop_page_hash_batch(id, page_arr, num_entries);
 
 		num_entries = 0;
 
@@ -360,8 +352,33 @@ next_page:
 	buf_pool_mutex_exit(buf_pool);
 
 	/* Drop any remaining batch of search hashed pages. */
-	buf_LRU_drop_page_hash_batch(id, zip_size, page_arr, num_entries);
+	buf_LRU_drop_page_hash_batch(id, page_arr, num_entries);
 	ut_free(page_arr);
+}
+
+/** Try to drop the adaptive hash index for a tablespace.
+@param[in,out]	table	table
+@return	whether anything was dropped */
+UNIV_INTERN bool buf_LRU_drop_page_hash_for_tablespace(dict_table_t* table)
+{
+	for (dict_index_t* index = dict_table_get_first_index(table);
+	     index != NULL;
+	     index = dict_table_get_next_index(index)) {
+		if (btr_search_info_get_ref_count(
+			    btr_search_get_info(index))) {
+			goto drop_ahi;
+		}
+	}
+
+	return false;
+drop_ahi:
+	ulint id = table->space;
+	for (ulint i = 0; i < srv_buf_pool_instances; i++) {
+		buf_LRU_drop_page_hash_for_tablespace(buf_pool_from_array(i),
+						      id);
+	}
+
+	return true;
 }
 
 /******************************************************************//**
@@ -370,7 +387,7 @@ want to hog the CPU and resources. Release the buffer pool and block
 mutex and try to force a context switch. Then reacquire the same mutexes.
 The current page is "fixed" before the release of the mutexes and then
 "unfixed" again once we have reacquired the mutexes. */
-static	__attribute__((nonnull))
+static	MY_ATTRIBUTE((nonnull))
 void
 buf_flush_yield(
 /*============*/
@@ -411,7 +428,7 @@ If we have hogged the resources for too long then release the buffer
 pool and flush list mutex and do a thread yield. Set the current page
 to "sticky" so that it is not relocated during the yield.
 @return true if yielded */
-static	__attribute__((nonnull(1), warn_unused_result))
+static	MY_ATTRIBUTE((nonnull(1), warn_unused_result))
 bool
 buf_flush_try_yield(
 /*================*/
@@ -454,7 +471,7 @@ buf_flush_try_yield(
 Removes a single page from a given tablespace inside a specific
 buffer pool instance.
 @return true if page was removed. */
-static	__attribute__((nonnull, warn_unused_result))
+static	MY_ATTRIBUTE((nonnull, warn_unused_result))
 bool
 buf_flush_or_remove_page(
 /*=====================*/
@@ -527,26 +544,20 @@ buf_flush_or_remove_page(
 	return(processed);
 }
 
-/******************************************************************//**
-Remove all dirty pages belonging to a given tablespace inside a specific
+/** Remove all dirty pages belonging to a given tablespace inside a specific
 buffer pool instance when we are deleting the data file(s) of that
 tablespace. The pages still remain a part of LRU and are evicted from
 the list as they age towards the tail of the LRU.
+@param[in,out]	buf_pool	buffer pool
+@param[in]	id		tablespace identifier
+@param[in]	trx		transaction (to check for interrupt),
+				or NULL if the files should not be written to
 @retval DB_SUCCESS if all freed
 @retval DB_FAIL if not all freed
 @retval DB_INTERRUPTED if the transaction was interrupted */
-static	__attribute__((nonnull(1), warn_unused_result))
+static	MY_ATTRIBUTE((nonnull(1), warn_unused_result))
 dberr_t
-buf_flush_or_remove_pages(
-/*======================*/
-	buf_pool_t*	buf_pool,	/*!< buffer pool instance */
-	ulint		id,		/*!< in: target space id for which
-					to remove or flush pages */
-	bool		flush,		/*!< in: flush to disk if true but
-					don't remove else remove without
-					flushing to disk */
-	const trx_t*	trx)		/*!< to check if the operation must
-					be interrupted, can be 0 */
+buf_flush_or_remove_pages(buf_pool_t* buf_pool, ulint id, const trx_t* trx)
 {
 	buf_page_t*	prev;
 	buf_page_t*	bpage;
@@ -573,7 +584,7 @@ rescan:
 			/* Skip this block, as it does not belong to
 			the target space. */
 
-		} else if (!buf_flush_or_remove_page(buf_pool, bpage, flush)) {
+		} else if (!buf_flush_or_remove_page(buf_pool, bpage, trx)) {
 
 			/* Remove was unsuccessful, we have to try again
 			by scanning the entire list from the end.
@@ -596,7 +607,7 @@ rescan:
 			iteration. */
 
 			all_freed = false;
-		} else if (flush) {
+		} else if (trx) {
 
 			/* The processing was successful. And during the
 			processing we have released the buf_pool mutex
@@ -615,19 +626,17 @@ rescan:
 			processed = 0;
 		}
 
-#ifdef DBUG_OFF
-		if (flush) {
+		if (trx) {
 			DBUG_EXECUTE_IF("ib_export_flush_crash",
 					static ulint	n_pages;
 					if (++n_pages == 4) {DBUG_SUICIDE();});
-		}
-#endif /* DBUG_OFF */
 
-		/* The check for trx is interrupted is expensive, we want
-		to check every N iterations. */
-		if (!processed && trx && trx_is_interrupted(trx)) {
-			buf_flush_list_mutex_exit(buf_pool);
-			return(DB_INTERRUPTED);
+			/* The check for trx is interrupted is
+			expensive, we want to check every N iterations. */
+			if (!processed && trx_is_interrupted(trx)) {
+				buf_flush_list_mutex_exit(buf_pool);
+				return(DB_INTERRUPTED);
+			}
 		}
 	}
 
@@ -636,28 +645,25 @@ rescan:
 	return(all_freed ? DB_SUCCESS : DB_FAIL);
 }
 
-/******************************************************************//**
-Remove or flush all the dirty pages that belong to a given tablespace
+/** Remove or flush all the dirty pages that belong to a given tablespace
 inside a specific buffer pool instance. The pages will remain in the LRU
 list and will be evicted from the LRU list as they age and move towards
-the tail of the LRU list. */
-static __attribute__((nonnull(1)))
+the tail of the LRU list.
+@param[in,out]	buf_pool	buffer pool
+@param[in]	id		tablespace identifier
+@param[in]	trx		transaction (to check for interrupt),
+				or NULL if the files should not be written to
+*/
+static MY_ATTRIBUTE((nonnull(1)))
 void
-buf_flush_dirty_pages(
-/*==================*/
-	buf_pool_t*	buf_pool,	/*!< buffer pool instance */
-	ulint		id,		/*!< in: space id */
-	bool		flush,		/*!< in: flush to disk if true otherwise
-					remove the pages without flushing */
-	const trx_t*	trx)		/*!< to check if the operation must
-					be interrupted */
+buf_flush_dirty_pages(buf_pool_t* buf_pool, ulint id, const trx_t* trx)
 {
 	dberr_t		err;
 
 	do {
 		buf_pool_mutex_enter(buf_pool);
 
-		err = buf_flush_or_remove_pages(buf_pool, id, flush, trx);
+		err = buf_flush_or_remove_pages(buf_pool, id, trx);
 
 		buf_pool_mutex_exit(buf_pool);
 
@@ -678,231 +684,20 @@ buf_flush_dirty_pages(
 	      || buf_pool_get_dirty_pages_count(buf_pool, id) == 0);
 }
 
-/******************************************************************//**
-Remove all pages that belong to a given tablespace inside a specific
-buffer pool instance when we are DISCARDing the tablespace. */
-static __attribute__((nonnull))
-void
-buf_LRU_remove_all_pages(
-/*=====================*/
-	buf_pool_t*	buf_pool,	/*!< buffer pool instance */
-	ulint		id)		/*!< in: space id */
+/** Empty the flush list for all pages belonging to a tablespace.
+@param[in]	id		tablespace identifier
+@param[in]	trx		transaction, for checking for user interrupt;
+				or NULL if nothing is to be written */
+UNIV_INTERN void buf_LRU_flush_or_remove_pages(ulint id, const trx_t* trx)
 {
-	buf_page_t*	bpage;
-	ibool		all_freed;
-
-scan_again:
-	buf_pool_mutex_enter(buf_pool);
-
-	all_freed = TRUE;
-
-	for (bpage = UT_LIST_GET_LAST(buf_pool->LRU);
-	     bpage != NULL;
-	     /* No op */) {
-
-		rw_lock_t*	hash_lock;
-		buf_page_t*	prev_bpage;
-		ib_mutex_t*	block_mutex = NULL;
-
-		ut_a(buf_page_in_file(bpage));
-		ut_ad(bpage->in_LRU_list);
-
-		prev_bpage = UT_LIST_GET_PREV(LRU, bpage);
-
-		/* bpage->space and bpage->io_fix are protected by
-		buf_pool->mutex and the block_mutex. It is safe to check
-		them while holding buf_pool->mutex only. */
-
-		if (buf_page_get_space(bpage) != id) {
-			/* Skip this block, as it does not belong to
-			the space that is being invalidated. */
-			goto next_page;
-		} else if (buf_page_get_io_fix(bpage) != BUF_IO_NONE) {
-			/* We cannot remove this page during this scan
-			yet; maybe the system is currently reading it
-			in, or flushing the modifications to the file */
-
-			all_freed = FALSE;
-			goto next_page;
-		} else {
-			ulint	fold = buf_page_address_fold(
-				bpage->space, bpage->offset);
-
-			hash_lock = buf_page_hash_lock_get(buf_pool, fold);
-
-			rw_lock_x_lock(hash_lock);
-
-			block_mutex = buf_page_get_mutex(bpage);
-			mutex_enter(block_mutex);
-
-			if (bpage->buf_fix_count > 0) {
-
-				mutex_exit(block_mutex);
-
-				rw_lock_x_unlock(hash_lock);
-
-				/* We cannot remove this page during
-				this scan yet; maybe the system is
-				currently reading it in, or flushing
-				the modifications to the file */
-
-				all_freed = FALSE;
-
-				goto next_page;
-			}
-		}
-
-		ut_ad(mutex_own(block_mutex));
-
-#ifdef UNIV_DEBUG
-		if (buf_debug_prints) {
-			fprintf(stderr,
-				"Dropping space %lu page %lu\n",
-				(ulong) buf_page_get_space(bpage),
-				(ulong) buf_page_get_page_no(bpage));
-		}
-#endif
-		if (buf_page_get_state(bpage) != BUF_BLOCK_FILE_PAGE) {
-			/* Do nothing, because the adaptive hash index
-			covers uncompressed pages only. */
-		} else if (((buf_block_t*) bpage)->index) {
-			ulint	page_no;
-			ulint	zip_size;
-
-			buf_pool_mutex_exit(buf_pool);
-
-			zip_size = buf_page_get_zip_size(bpage);
-			page_no = buf_page_get_page_no(bpage);
-
-			rw_lock_x_unlock(hash_lock);
-
-			mutex_exit(block_mutex);
-
-			/* Note that the following call will acquire
-			and release block->lock X-latch. */
-
-			btr_search_drop_page_hash_when_freed(
-				id, zip_size, page_no);
-
-			goto scan_again;
-		}
-
-		if (bpage->oldest_modification != 0) {
-
-			buf_flush_remove(bpage);
-		}
-
-		ut_ad(!bpage->in_flush_list);
-
-		/* Remove from the LRU list. */
-
-		if (buf_LRU_block_remove_hashed(bpage, true)) {
-			buf_LRU_block_free_hashed_page((buf_block_t*) bpage);
-		} else {
-			ut_ad(block_mutex == &buf_pool->zip_mutex);
-		}
-
-		ut_ad(!mutex_own(block_mutex));
-
-#ifdef UNIV_SYNC_DEBUG
-		/* buf_LRU_block_remove_hashed() releases the hash_lock */
-		ut_ad(!rw_lock_own(hash_lock, RW_LOCK_EX));
-		ut_ad(!rw_lock_own(hash_lock, RW_LOCK_SHARED));
-#endif /* UNIV_SYNC_DEBUG */
-
-next_page:
-		bpage = prev_bpage;
+	for (ulint i = 0; i < srv_buf_pool_instances; i++) {
+		buf_flush_dirty_pages(buf_pool_from_array(i), id, trx);
 	}
 
-	buf_pool_mutex_exit(buf_pool);
-
-	if (!all_freed) {
-		os_thread_sleep(20000);
-
-		goto scan_again;
-	}
-}
-
-/******************************************************************//**
-Remove pages belonging to a given tablespace inside a specific
-buffer pool instance when we are deleting the data file(s) of that
-tablespace. The pages still remain a part of LRU and are evicted from
-the list as they age towards the tail of the LRU only if buf_remove
-is BUF_REMOVE_FLUSH_NO_WRITE. */
-static	__attribute__((nonnull(1)))
-void
-buf_LRU_remove_pages(
-/*=================*/
-	buf_pool_t*	buf_pool,	/*!< buffer pool instance */
-	ulint		id,		/*!< in: space id */
-	buf_remove_t	buf_remove,	/*!< in: remove or flush strategy */
-	const trx_t*	trx)		/*!< to check if the operation must
-					be interrupted */
-{
-	switch (buf_remove) {
-	case BUF_REMOVE_ALL_NO_WRITE:
-		buf_LRU_remove_all_pages(buf_pool, id);
-		break;
-
-	case BUF_REMOVE_FLUSH_NO_WRITE:
-		ut_a(trx == 0);
-		buf_flush_dirty_pages(buf_pool, id, false, NULL);
-		break;
-
-	case BUF_REMOVE_FLUSH_WRITE:
-		ut_a(trx != 0);
-		buf_flush_dirty_pages(buf_pool, id, true, trx);
+	if (trx && !trx_is_interrupted(trx)) {
 		/* Ensure that all asynchronous IO is completed. */
 		os_aio_wait_until_no_pending_writes();
 		fil_flush(id);
-		break;
-	}
-}
-
-/******************************************************************//**
-Flushes all dirty pages or removes all pages belonging
-to a given tablespace. A PROBLEM: if readahead is being started, what
-guarantees that it will not try to read in pages after this operation
-has completed? */
-UNIV_INTERN
-void
-buf_LRU_flush_or_remove_pages(
-/*==========================*/
-	ulint		id,		/*!< in: space id */
-	buf_remove_t	buf_remove,	/*!< in: remove or flush strategy */
-	const trx_t*	trx)		/*!< to check if the operation must
-					be interrupted */
-{
-	ulint		i;
-
-	/* Before we attempt to drop pages one by one we first
-	attempt to drop page hash index entries in batches to make
-	it more efficient. The batching attempt is a best effort
-	attempt and does not guarantee that all pages hash entries
-	will be dropped. We get rid of remaining page hash entries
-	one by one below. */
-	for (i = 0; i < srv_buf_pool_instances; i++) {
-		buf_pool_t*	buf_pool;
-
-		buf_pool = buf_pool_from_array(i);
-
-		switch (buf_remove) {
-		case BUF_REMOVE_ALL_NO_WRITE:
-			buf_LRU_drop_page_hash_for_tablespace(buf_pool, id);
-			break;
-
-		case BUF_REMOVE_FLUSH_NO_WRITE:
-			/* It is a DROP TABLE for a single table
-			tablespace. No AHI entries exist because
-			we already dealt with them when freeing up
-			extents. */
-		case BUF_REMOVE_FLUSH_WRITE:
-			/* We allow read-only queries against the
-			table, there is no need to drop the AHI entries. */
-			break;
-		}
-
-		buf_LRU_remove_pages(buf_pool, id, buf_remove, trx);
 	}
 }
 
@@ -1259,14 +1054,17 @@ buf_LRU_get_free_block(
 	ibool		freed		= FALSE;
 	ulint		n_iterations	= 0;
 	ulint		flush_failures	= 0;
-	ibool		mon_value_was	= FALSE;
-	ibool		started_monitor	= FALSE;
 
 	MONITOR_INC(MONITOR_LRU_GET_FREE_SEARCH);
 loop:
 	buf_pool_mutex_enter(buf_pool);
 
 	buf_LRU_check_size_of_non_data_objects(buf_pool);
+
+	DBUG_EXECUTE_IF("ib_lru_force_no_free_page",
+		if (!buf_lru_free_blocks_error_printed) {
+			n_iterations = 21;
+			goto not_found;});
 
 	/* If there is a block in the free list, take it */
 	block = buf_LRU_get_free_only(buf_pool);
@@ -1276,16 +1074,11 @@ loop:
 		buf_pool_mutex_exit(buf_pool);
 		ut_ad(buf_pool_from_block(block) == buf_pool);
 		memset(&block->page.zip, 0, sizeof block->page.zip);
-
-		if (started_monitor) {
-			srv_print_innodb_monitor =
-				static_cast<my_bool>(mon_value_was);
-		}
-
 		return(block);
 	}
 
 	freed = FALSE;
+
 	if (buf_pool->try_LRU_scan || n_iterations > 0) {
 		/* If no block was in the free list, search from the
 		end of the LRU list and try to free a block there.
@@ -1308,6 +1101,10 @@ loop:
 		}
 	}
 
+#ifndef DBUG_OFF
+not_found:
+#endif
+
 	buf_pool_mutex_exit(buf_pool);
 
 	if (freed) {
@@ -1315,40 +1112,26 @@ loop:
 
 	}
 
-	if (n_iterations > 20) {
-		ut_print_timestamp(stderr);
-		fprintf(stderr,
-			"  InnoDB: Warning: difficult to find free blocks in\n"
-			"InnoDB: the buffer pool (%lu search iterations)!\n"
-			"InnoDB: %lu failed attempts to flush a page!"
-			" Consider\n"
-			"InnoDB: increasing the buffer pool size.\n"
-			"InnoDB: It is also possible that"
-			" in your Unix version\n"
-			"InnoDB: fsync is very slow, or"
-			" completely frozen inside\n"
-			"InnoDB: the OS kernel. Then upgrading to"
-			" a newer version\n"
-			"InnoDB: of your operating system may help."
-			" Look at the\n"
-			"InnoDB: number of fsyncs in diagnostic info below.\n"
-			"InnoDB: Pending flushes (fsync) log: %lu;"
-			" buffer pool: %lu\n"
-			"InnoDB: %lu OS file reads, %lu OS file writes,"
-			" %lu OS fsyncs\n"
-			"InnoDB: Starting InnoDB Monitor to print further\n"
-			"InnoDB: diagnostics to the standard output.\n",
-			(ulong) n_iterations,
-			(ulong)	flush_failures,
-			(ulong) fil_n_pending_log_flushes,
-			(ulong) fil_n_pending_tablespace_flushes,
-			(ulong) os_n_file_reads, (ulong) os_n_file_writes,
-			(ulong) os_n_fsyncs);
+	if (n_iterations > 20 && !buf_lru_free_blocks_error_printed) {
+		ib_logf(IB_LOG_LEVEL_WARN,
+			"Difficult to find free blocks in"
+			" the buffer pool (" ULINTPF " search iterations)! "
+			ULINTPF " failed attempts to flush a page!",
+			n_iterations, flush_failures);
+		ib_logf(IB_LOG_LEVEL_INFO,
+			"Consider increasing the buffer pool size.");
+		ib_logf(IB_LOG_LEVEL_INFO,
+			"Pending flushes (fsync) log: " ULINTPF
+			" buffer pool: " ULINTPF
+			" OS file reads: " ULINTPF " OS file writes: "
+			ULINTPF " OS fsyncs: " ULINTPF "",
+			fil_n_pending_log_flushes,
+			fil_n_pending_tablespace_flushes,
+			os_n_file_reads,
+			os_n_file_writes,
+			os_n_fsyncs);
 
-		mon_value_was = srv_print_innodb_monitor;
-		started_monitor = TRUE;
-		srv_print_innodb_monitor = TRUE;
-		os_event_set(srv_monitor_event);
+		buf_lru_free_blocks_error_printed = true;
 	}
 
 	/* If we have scanned the whole LRU and still are unable to
@@ -1373,7 +1156,7 @@ loop:
 		++flush_failures;
 	}
 
-	srv_stats.buf_pool_wait_free.add(n_iterations, 1);
+	srv_stats.buf_pool_wait_free.inc();
 
 	n_iterations++;
 
@@ -1870,7 +1653,7 @@ func_exit:
 	} else if (buf_page_get_state(bpage) == BUF_BLOCK_FILE_PAGE) {
 		b = buf_page_alloc_descriptor();
 		ut_a(b);
-		memcpy(b, bpage, sizeof *b);
+		new (b) buf_page_t(*bpage);
 	}
 
 	ut_ad(buf_pool_mutex_own(buf_pool));
@@ -2130,8 +1913,7 @@ buf_LRU_block_free_non_file_page(
 
 	UT_LIST_ADD_FIRST(list, buf_pool->free, (&block->page));
 	ut_d(block->page.in_free_list = TRUE);
-
-	UNIV_MEM_ASSERT_AND_FREE(block->frame, UNIV_PAGE_SIZE);
+	UNIV_MEM_FREE(block->frame, UNIV_PAGE_SIZE);
 }
 
 /******************************************************************//**

@@ -1,4 +1,5 @@
-/* Copyright (c) 2005, 2012, Oracle and/or its affiliates.
+/* Copyright (c) 2005, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2017, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -176,7 +177,14 @@ public:
     a different log under our feet
   */
   uint32 cur_log_old_open_count;
-  
+
+  /*
+    If on init_info() call error_on_rli_init_info is true that means
+    that previous call to init_info() terminated with an error, RESET
+    SLAVE must be executed and the problem fixed manually.
+   */
+  bool error_on_rli_init_info;
+
   /*
     Let's call a group (of events) :
       - a transaction
@@ -416,7 +424,7 @@ public:
     relay log info and used to produce information for <code>SHOW
     SLAVE STATUS</code>.
   */
-  void stmt_done(my_off_t event_log_pos, THD *thd, rpl_group_info *rgi);
+  bool stmt_done(my_off_t event_log_pos, THD *thd, rpl_group_info *rgi);
   int alloc_inuse_relaylog(const char *name);
   void free_inuse_relaylog(inuse_relaylog *ir);
   void reset_inuse_relaylog();
@@ -668,6 +676,11 @@ struct rpl_group_info
   /* Needs room for "Gtid D-S-N\x00". */
   char gtid_info_buf[5+10+1+10+1+20+1];
 
+  /* List of not yet committed deletions in mysql.gtid_slave_pos. */
+  rpl_slave_state::list_element *pending_gtid_delete_list;
+  /* Domain associated with pending_gtid_delete_list. */
+  uint32 pending_gtid_delete_list_domain;
+
   /*
     The timestamp, from the master, of the commit event.
     Used to do delayed update of rli->last_master_timestamp, for getting
@@ -712,7 +725,12 @@ struct rpl_group_info
     */
     SPECULATE_WAIT
   } speculation;
-  bool killed_for_retry;
+  enum enum_retry_killed {
+    RETRY_KILL_NONE = 0,
+    RETRY_KILL_PENDING,
+    RETRY_KILL_KILLED
+  };
+  uchar killed_for_retry;
 
   rpl_group_info(Relay_log_info *rli_);
   ~rpl_group_info();
@@ -803,6 +821,12 @@ struct rpl_group_info
   void mark_start_commit();
   char *gtid_info();
   void unmark_start_commit();
+
+  static void pending_gtid_deletes_free(rpl_slave_state::list_element *list);
+  void pending_gtid_deletes_save(uint32 domain_id,
+                                 rpl_slave_state::list_element *list);
+  void pending_gtid_deletes_put_back();
+  void pending_gtid_deletes_clear();
 
   time_t get_row_stmt_start_timestamp()
   {

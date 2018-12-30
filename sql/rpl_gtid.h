@@ -34,6 +34,13 @@ struct rpl_gtid
   uint64 seq_no;
 };
 
+inline bool operator==(const rpl_gtid& lhs, const rpl_gtid& rhs)
+{
+  return
+    lhs.domain_id == rhs.domain_id &&
+    lhs.server_id == rhs.server_id &&
+    lhs.seq_no    == rhs.seq_no;
+};
 
 enum enum_gtid_skip_type {
   GTID_SKIP_NOT, GTID_SKIP_STANDALONE, GTID_SKIP_TRANSACTION
@@ -93,6 +100,7 @@ struct gtid_waiting {
 
 class Relay_log_info;
 struct rpl_group_info;
+class Gtid_list_log_event;
 
 /*
   Replication slave state.
@@ -174,7 +182,7 @@ struct rpl_slave_state
              uint64 seq_no, rpl_group_info *rgi);
   int truncate_state_table(THD *thd);
   int record_gtid(THD *thd, const rpl_gtid *gtid, uint64 sub_id,
-                  bool in_transaction, bool in_statement);
+                  rpl_group_info *rgi, bool in_statement);
   uint64 next_sub_id(uint32 domain_id);
   int iterate(int (*cb)(rpl_gtid *, void *), void *data,
               rpl_gtid *extra_gtids, uint32 num_extra,
@@ -256,6 +264,7 @@ struct rpl_binlog_state
   rpl_gtid *find_nolock(uint32 domain_id, uint32 server_id);
   rpl_gtid *find(uint32 domain_id, uint32 server_id);
   rpl_gtid *find_most_recent(uint32 domain_id);
+  const char* drop_domain(DYNAMIC_ARRAY *ids, Gtid_list_log_event *glev, char*);
 };
 
 

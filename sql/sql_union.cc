@@ -1,5 +1,5 @@
-/* Copyright (c) 2000, 2014, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2014, SkySQL Ab.
+/* Copyright (c) 2000, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2010, 2017, Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -484,6 +484,19 @@ bool st_select_lex_unit::prepare(THD *thd_arg, select_result *sel_result,
       Item *item_tmp;
       while ((item_tmp= it++))
       {
+        /*
+          If the outer query has a GROUP BY clause, an outer reference to this
+          query block may have been wrapped in a Item_outer_ref, which has not
+          been fixed yet. An Item_type_holder must be created based on a fixed
+          Item, so use the inner Item instead.
+        */
+        DBUG_ASSERT(item_tmp->fixed ||
+                    (item_tmp->type() == Item::REF_ITEM &&
+                     ((Item_ref *)(item_tmp))->ref_type() ==
+                     Item_ref::OUTER_REF));
+        if (!item_tmp->fixed)
+          item_tmp= item_tmp->real_item();
+
 	/* Error's in 'new' will be detected after loop */
 	types.push_back(new (thd_arg->mem_root)
                         Item_type_holder(thd_arg, item_tmp));
@@ -618,7 +631,9 @@ bool st_select_lex_unit::prepare(THD *thd_arg, select_result *sel_result,
       if (saved_error)
         goto err;
 
-      if (fake_select_lex != NULL && thd->stmt_arena->is_stmt_prepare())
+      if (fake_select_lex != NULL &&
+          (thd->stmt_arena->is_stmt_prepare() ||
+           (thd->lex->context_analysis_only & CONTEXT_ANALYSIS_ONLY_VIEW)))
       {
         /* Validate the global parameters of this union */
 
@@ -1043,6 +1058,12 @@ bool st_select_lex_unit::cleanup()
       join->tables_list= 0;
       join->table_count= 0;
       join->top_join_tab_count= 0;
+      if (join->tmp_join && join->tmp_join != join)
+      {
+        join->tmp_join->tables_list= 0;
+        join->tmp_join->table_count= 0;
+        join->tmp_join->top_join_tab_count= 0;
+      }
     }
     error|= fake_select_lex->cleanup();
     /*
@@ -1072,22 +1093,6 @@ bool st_select_lex_unit::cleanup()
 void st_select_lex_unit::reinit_exec_mechanism()
 {
   prepared= optimized= executed= 0;
-#ifndef DBUG_OFF
-  if (is_union())
-  {
-    List_iterator_fast<Item> it(item_list);
-    Item *field;
-    while ((field= it++))
-    {
-      /*
-	we can't cleanup here, because it broke link to temporary table field,
-	but have to drop fixed flag to allow next fix_field of this field
-	during re-executing
-      */
-      field->fixed= 0;
-    }
-  }
-#endif
 }
 
 
@@ -1232,4 +1237,3 @@ void st_select_lex_unit::set_unique_exclude()
     }
   }
 }
-

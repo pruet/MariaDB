@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #include "filesort_utils.h"
 #include "sql_const.h"
@@ -96,7 +96,7 @@ uchar **Filesort_buffer::alloc_sort_buffer(uint num_records, uint record_length)
 
   if (m_idx_array.is_null())
   {
-    sort_buff_sz= num_records * (record_length + sizeof(uchar*));
+    sort_buff_sz= ((size_t)num_records) * (record_length + sizeof(uchar*));
     set_if_bigger(sort_buff_sz, record_length * MERGEBUFF2); 
     uchar **sort_keys=
       (uchar**) my_malloc(sort_buff_sz, MYF(MY_THREAD_SPECIFIC));

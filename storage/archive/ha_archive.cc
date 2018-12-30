@@ -1688,7 +1688,6 @@ int ha_archive::info(uint flag)
       stats.update_time= (ulong) file_stat.st_mtime;
     if (flag & HA_STATUS_CONST)
     {
-      stats.max_data_file_length= share->rows_recorded * stats.mean_rec_length;
       stats.max_data_file_length= MAX_FILE_SIZE;
       stats.create_time= (ulong) file_stat.st_ctime;
     }
@@ -1889,7 +1888,7 @@ maria_declare_plugin(archive)
   &archive_storage_engine,
   "ARCHIVE",
   "Brian Aker, MySQL AB",
-  "Archive storage engine",
+  "gzip-compresses tables for a low storage footprint",
   PLUGIN_LICENSE_GPL,
   archive_db_init, /* Plugin Init */
   NULL, /* Plugin Deinit */

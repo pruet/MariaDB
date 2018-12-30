@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA
  */
 
 //! @file some utility functions and classes not directly related to replication
@@ -264,7 +264,6 @@ process::process (const char* cmd, const char* type, char** env)
 
     err_ = posix_spawnattr_setflags (&attr, POSIX_SPAWN_SETSIGDEF  |
                                             POSIX_SPAWN_SETSIGMASK |
-            /* start a new process group */ POSIX_SPAWN_SETPGROUP  |
                                             POSIX_SPAWN_USEVFORK);
     if (err_)
     {
@@ -574,3 +573,17 @@ done:
   return ret;
 }
 
+/* returns the length of the host part of the address string */
+size_t wsrep_host_len(const char* const addr, size_t const addr_len)
+{
+  // check for IPv6 notation first
+  const char* const bracket= ('[' == addr[0] ? strchr(addr, ']') : NULL);
+
+  if (bracket) { // IPv6
+    return (bracket - addr + 1);
+  }
+  else { // host part ends at ':' or end of string
+    const char* const colon= strchr(addr, ':');
+    return (colon ? colon - addr : addr_len);
+  }
+}

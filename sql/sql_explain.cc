@@ -12,7 +12,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #ifdef USE_PRAGMA_IMPLEMENTATION
 #pragma implementation				// gcc: Class implementation
@@ -349,10 +349,13 @@ int print_explain_row(select_result_sink *result,
   item_list.push_back(new (mem_root) Item_string_sys(thd, jtype_str),
                       mem_root);
   
-  /* 'possible_keys' */
+  /* 'possible_keys'
+     The buffer must not be deallocated before we call send_data, otherwise
+     we may end up reading freed memory.
+  */
+  StringBuffer<64> possible_keys_buf;
   if (possible_keys && !possible_keys->is_empty())
   {
-    StringBuffer<64> possible_keys_buf;
     push_string_list(thd, &item_list, *possible_keys, &possible_keys_buf);
   }
   else
@@ -892,7 +895,7 @@ void Explain_select::print_explain_json(Explain_query *query,
       {
         Sort_and_group_tracker::Iterator iter(&ops_tracker);
         enum_qep_action action;
-        Filesort_tracker *fs_tracker;
+        Filesort_tracker *fs_tracker= NULL;
 
         while ((action= iter.get_next(&fs_tracker)) != EXPL_ACTION_EOF)
         {
@@ -1639,7 +1642,7 @@ void Explain_table_access::print_explain_json(Explain_query *query,
     {
       /* Get r_filtered value from filesort */
       if (fs_tracker->get_r_loops())
-        writer->add_double(fs_tracker->get_r_filtered());
+        writer->add_double(fs_tracker->get_r_filtered()*100);
       else
         writer->add_null();
     }

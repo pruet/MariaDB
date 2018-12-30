@@ -1,6 +1,6 @@
 /*
-   Copyright (c) 2000, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2008, 2013, Monty Program Ab.
+   Copyright (c) 2000, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2008, 2017, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -355,7 +355,7 @@ static enum_field_types field_types_merge_rules [FIELDTYPE_NUM][FIELDTYPE_NUM]=
   //MYSQL_TYPE_NULL         MYSQL_TYPE_TIMESTAMP
     MYSQL_TYPE_LONGLONG,    MYSQL_TYPE_VARCHAR,
   //MYSQL_TYPE_LONGLONG     MYSQL_TYPE_INT24
-    MYSQL_TYPE_LONGLONG,    MYSQL_TYPE_LONG,
+    MYSQL_TYPE_LONGLONG,    MYSQL_TYPE_LONGLONG,
   //MYSQL_TYPE_DATE         MYSQL_TYPE_TIME
     MYSQL_TYPE_VARCHAR,     MYSQL_TYPE_VARCHAR,
   //MYSQL_TYPE_DATETIME     MYSQL_TYPE_YEAR
@@ -1345,12 +1345,15 @@ void Field_num::prepend_zeros(String *value) const
   int diff;
   if ((diff= (int) (field_length - value->length())) > 0)
   {
-    bmove_upp((uchar*) value->ptr()+field_length,
-              (uchar*) value->ptr()+value->length(),
-	      value->length());
-    bfill((uchar*) value->ptr(),diff,'0');
-    value->length(field_length);
-    (void) value->c_ptr_quick();		// Avoid warnings in purify
+    const bool error= value->realloc(field_length);
+    if (!error)
+    {
+      bmove_upp((uchar*) value->ptr()+field_length,
+                (uchar*) value->ptr()+value->length(),
+	        value->length());
+      bfill((uchar*) value->ptr(),diff,'0');
+      value->length(field_length);
+    }
   }
 }
 
@@ -1477,10 +1480,12 @@ Value_source::Converter_string_to_number::check_edom_and_truncation(THD *thd,
 */
 
 
-int Field_num::check_edom_and_truncation(const char *type, bool edom,
-                                         CHARSET_INFO *cs,
-                                         const char *str, uint length,
-                                         const char *end)
+int Field_num::check_edom_and_important_data_truncation(const char *type,
+                                                        bool edom,
+                                                        CHARSET_INFO *cs,
+                                                        const char *str,
+                                                        uint length,
+                                                        const char *end)
 {
   /* Test if we get an empty string or garbage */
   if (edom)
@@ -1495,9 +1500,20 @@ int Field_num::check_edom_and_truncation(const char *type, bool edom,
     set_warning(WARN_DATA_TRUNCATED, 1);
     return 2;
   }
-  if (end < str + length)
-    set_note(WARN_DATA_TRUNCATED, 1);
   return 0;
+}
+
+
+int Field_num::check_edom_and_truncation(const char *type, bool edom,
+                                         CHARSET_INFO *cs,
+                                         const char *str, uint length,
+                                         const char *end)
+{
+  int rc= check_edom_and_important_data_truncation(type, edom,
+                                                   cs, str, length, end);
+  if (!rc && end < str + length)
+    set_note(WARN_DATA_TRUNCATED, 1);
+  return rc;
 }
 
 
@@ -2025,6 +2041,7 @@ Field_str::Field_str(uchar *ptr_arg,uint32 len_arg, uchar *null_ptr_arg,
   if (charset_arg->state & MY_CS_BINSORT)
     flags|=BINARY_FLAG;
   field_derivation= DERIVATION_IMPLICIT;
+  field_repertoire= my_charset_repertoire(charset_arg);
 }
 
 
@@ -2121,7 +2138,7 @@ uint Field::fill_cache_field(CACHE_FIELD *copy)
 {
   uint store_length;
   copy->str= ptr;
-  copy->length= pack_length();
+  copy->length= pack_length_in_rec();
   copy->field= this;
   if (flags & BLOB_FLAG)
   {
@@ -3005,7 +3022,8 @@ void Field_new_decimal::set_value_on_overflow(my_decimal *decimal_value,
   If it does, stores the decimal in the buffer using binary format.
   Otherwise sets maximal number that can be stored in the field.
 
-  @param decimal_value   my_decimal
+  @param       decimal_value   my_decimal
+  @param [OUT] native_error    the error returned by my_decimal2binary().
 
   @retval
     0 ok
@@ -3013,7 +3031,8 @@ void Field_new_decimal::set_value_on_overflow(my_decimal *decimal_value,
     1 error
 */
 
-bool Field_new_decimal::store_value(const my_decimal *decimal_value)
+bool Field_new_decimal::store_value(const my_decimal *decimal_value,
+                                    int *native_error)
 {
   ASSERT_COLUMN_MARKED_FOR_WRITE_OR_COMPUTED;
   int error= 0;
@@ -3042,11 +3061,14 @@ bool Field_new_decimal::store_value(const my_decimal *decimal_value)
   }
 #endif
 
-  if (warn_if_overflow(my_decimal2binary(E_DEC_FATAL_ERROR & ~E_DEC_OVERFLOW,
-                                         decimal_value, ptr, precision, dec)))
+  *native_error= my_decimal2binary(E_DEC_FATAL_ERROR & ~E_DEC_OVERFLOW,
+                                   decimal_value, ptr, precision, dec);
+
+  if (*native_error == E_DEC_OVERFLOW)
   {
     my_decimal buff;
     DBUG_PRINT("info", ("overflow"));
+    set_warning(ER_WARN_DATA_OUT_OF_RANGE, 1);
     set_value_on_overflow(&buff, decimal_value->sign());
     my_decimal2binary(E_DEC_FATAL_ERROR, &buff, ptr, precision, dec);
     error= 1;
@@ -3054,6 +3076,16 @@ bool Field_new_decimal::store_value(const my_decimal *decimal_value)
   DBUG_EXECUTE("info", print_decimal_buff(decimal_value, (uchar *) ptr,
                                           bin_size););
   DBUG_RETURN(error);
+}
+
+
+bool Field_new_decimal::store_value(const my_decimal *decimal_value)
+{
+  int native_error;
+  bool rc= store_value(decimal_value, &native_error);
+  if (!rc && native_error == E_DEC_TRUNCATED)
+    set_note(WARN_DATA_TRUNCATED, 1);
+  return rc;
 }
 
 
@@ -3084,9 +3116,10 @@ int Field_new_decimal::store(const char *from, uint length,
 
   if (thd->count_cuted_fields)
   {
-    if (check_edom_and_truncation("decimal",
-                                  err && err != E_DEC_TRUNCATED,
-                                  charset_arg, from, length, end))
+    if (check_edom_and_important_data_truncation("decimal",
+                                                 err && err != E_DEC_TRUNCATED,
+                                                 charset_arg,
+                                                 from, length, end))
     {
       if (!thd->abort_on_warning)
       {
@@ -3109,12 +3142,6 @@ int Field_new_decimal::store(const char *from, uint length,
       }
       DBUG_RETURN(1);
     }
-    /*
-      E_DEC_TRUNCATED means minor truncation '1e-1000000000000' -> 0.0
-      A note should be enough.
-    */
-    if (err == E_DEC_TRUNCATED)
-      set_note(WARN_DATA_TRUNCATED, 1);
   }
 
 #ifndef DBUG_OFF
@@ -3122,7 +3149,21 @@ int Field_new_decimal::store(const char *from, uint length,
   DBUG_PRINT("enter", ("value: %s",
                        dbug_decimal_as_string(dbug_buff, &decimal_value)));
 #endif
-  store_value(&decimal_value);
+  int err2;
+  if (store_value(&decimal_value, &err2))
+    DBUG_RETURN(1);
+
+  /*
+    E_DEC_TRUNCATED means minor truncation, a note should be enough:
+    - in err: str2my_decimal() truncated '1e-1000000000000' to 0.0
+    - in err2: store_value() truncated 1.123 to 1.12, e.g. for DECIMAL(10,2)
+    Also, we send a note if a string had some trailing spaces: '1.12 '
+  */
+  if (thd->count_cuted_fields &&
+      (err == E_DEC_TRUNCATED ||
+       err2 == E_DEC_TRUNCATED ||
+       end < from + length))
+    set_note(WARN_DATA_TRUNCATED, 1);
   DBUG_RETURN(0);
 }
 
@@ -4389,7 +4430,8 @@ longlong Field_float::val_int(void)
 {
   float j;
   float4get(j,ptr);
-  return (longlong) rint(j);
+  bool error;
+  return double_to_longlong(j, false, &error);
 }
 
 
@@ -4688,7 +4730,7 @@ double Field_double::val_real(void)
   return j;
 }
 
-longlong Field_double::val_int(void)
+longlong Field_double::val_int_from_real(bool want_unsigned_result)
 {
   ASSERT_COLUMN_MARKED_FOR_READ;
   double j;
@@ -4696,8 +4738,15 @@ longlong Field_double::val_int(void)
   bool error;
   float8get(j,ptr);
 
-  res= double_to_longlong(j, 0, &error);
-  if (error)
+  res= double_to_longlong(j, want_unsigned_result, &error);
+  /*
+    Note, val_uint() is currently used for auto_increment purposes only,
+    and we want to suppress all warnings in such cases.
+    If we ever start using val_uint() for other purposes,
+    val_int_from_real() will need a new separate parameter to
+    suppress warnings.
+  */
+  if (error && !want_unsigned_result)
   {
     THD *thd= get_thd();
     ErrConvDouble err(j);
@@ -5020,6 +5069,23 @@ int Field_timestamp::store(longlong nr, bool unsigned_val)
                                                  MODE_NO_ZERO_DATE) |
                                    MODE_NO_ZERO_IN_DATE, &error);
   return store_TIME_with_warning(thd, &l_time, &str, error, tmp != -1);
+}
+
+
+int Field_timestamp::store_timestamp(Field_timestamp *from)
+{
+  ulong sec_part;
+  my_time_t ts= from->get_timestamp(&sec_part);
+  store_TIME(ts, sec_part);
+  if (!ts && !sec_part && get_thd()->variables.sql_mode & MODE_NO_ZERO_DATE)
+  {
+    ErrConvString s(
+      STRING_WITH_LEN("0000-00-00 00:00:00.000000") - (decimals() ? 6 - decimals() : 7),
+      system_charset_info);
+    set_datetime_warning(WARN_DATA_TRUNCATED, &s, MYSQL_TIMESTAMP_DATETIME, 1);
+    return 1;
+  }
+  return 0;
 }
 
 
@@ -5723,6 +5789,13 @@ static void calc_datetime_days_diff(MYSQL_TIME *ltime, long days)
                            ltime->second) * 1000000LL +
                            ltime->second_part);
     unpack_time(timediff, ltime);
+    /*
+      unpack_time() broke down hours into ltime members hour,day,month.
+      Mix them back to ltime->hour using the same factors
+      that pack_time()/unpack_time() use (i.e. 32 for month).
+    */
+    ltime->hour+= (ltime->month * 32 + ltime->day) * 24;
+    ltime->month= ltime->day= 0;
   }
   ltime->time_type= MYSQL_TIMESTAMP_TIME;
 }
@@ -7870,7 +7943,13 @@ int Field_blob::store(const char *from,uint length,CHARSET_INFO *cs)
     return 0;
   }
 
-  if (table->blob_storage)    // GROUP_CONCAT with ORDER BY | DISTINCT
+  /*
+    For min/max fields of statistical data 'table' is set to NULL.
+    It could not be otherwise as this data is shared by many instances
+    of the same base table.
+  */
+
+  if (table && table->blob_storage)    // GROUP_CONCAT with ORDER BY | DISTINCT
   {
     DBUG_ASSERT(!f_is_hex_escape(flags));
     DBUG_ASSERT(field_charset == cs);
@@ -8844,13 +8923,13 @@ String *Field_set::val_str(String *val_buffer,
   ulonglong tmp=(ulonglong) Field_enum::val_int();
   uint bitnr=0;
 
+  /*
+    Some callers expect *val_buffer to contain the result,
+    so we assign to it, rather than doing 'return &empty_set_string.
+  */
+  *val_buffer= empty_set_string;
   if (tmp == 0)
   {
-    /*
-      Some callers expect *val_buffer to contain the result,
-      so we assign to it, rather than doing 'return &empty_set_string.
-     */
-    *val_buffer= empty_set_string;
     return val_buffer;
   }
 
@@ -9357,7 +9436,7 @@ int Field_bit::key_cmp(const uchar *str, uint length)
     str++;
     length--;
   }
-  return memcmp(ptr, str, length);
+  return memcmp(ptr, str, bytes_in_rec);
 }
 
 
@@ -9704,13 +9783,18 @@ void Create_field::create_length_to_internal_length(void)
     }
     break;
   case MYSQL_TYPE_NEWDECIMAL:
-    key_length= pack_length=
-      my_decimal_get_binary_size(my_decimal_length_to_precision(length,
-								decimals,
-								flags &
-								UNSIGNED_FLAG),
-				 decimals);
+  {
+    /*
+      This code must be identical to code in
+      Field_new_decimal::Field_new_decimal as otherwise the record layout
+      gets out of sync.
+    */
+    uint precision= my_decimal_length_to_precision(length, decimals,
+                                                   flags & UNSIGNED_FLAG);
+    set_if_smaller(precision, DECIMAL_MAX_PRECISION);
+    key_length= pack_length= my_decimal_get_binary_size(precision, decimals);
     break;
+  }
   default:
     key_length= pack_length= calc_pack_length(sql_type, length);
     break;
@@ -10085,7 +10169,7 @@ bool Create_field::check(THD *thd)
   case MYSQL_TYPE_DATE:
     /* We don't support creation of MYSQL_TYPE_DATE anymore */
     sql_type= MYSQL_TYPE_NEWDATE;
-    /* fall trough */
+    /* fall through */
   case MYSQL_TYPE_NEWDATE:
     length= MAX_DATE_WIDTH;
     break;
@@ -10559,7 +10643,7 @@ Create_field::Create_field(THD *thd, Field *old_field, Field *orig_field)
     if (length != 4)
     {
       char buff[sizeof("YEAR()") + MY_INT64_NUM_DECIMAL_DIGITS + 1];
-      my_snprintf(buff, sizeof(buff), "YEAR(%lu)", length);
+      my_snprintf(buff, sizeof(buff), "YEAR(%llu)", length);
       push_warning_printf(thd, Sql_condition::WARN_LEVEL_NOTE,
                           ER_WARN_DEPRECATED_SYNTAX,
                           ER_THD(thd, ER_WARN_DEPRECATED_SYNTAX),

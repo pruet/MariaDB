@@ -1,7 +1,8 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
+Copyright (c) 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -93,17 +94,13 @@ page_dir_find_owner_slot(
 /*=====================*/
 	const rec_t*	rec)	/*!< in: the physical record */
 {
-	const page_t*			page;
-	register uint16			rec_offs_bytes;
-	register const page_dir_slot_t*	slot;
-	register const page_dir_slot_t*	first_slot;
-	register const rec_t*		r = rec;
-
 	ut_ad(page_rec_check(rec));
 
-	page = page_align(rec);
-	first_slot = page_dir_get_nth_slot(page, 0);
-	slot = page_dir_get_nth_slot(page, page_dir_get_n_slots(page) - 1);
+	const page_t* page = page_align(rec);
+	const page_dir_slot_t* first_slot = page_dir_get_nth_slot(page, 0);
+	const page_dir_slot_t* slot = page_dir_get_nth_slot(
+		page, page_dir_get_n_slots(page) - 1);
+	const rec_t*		r = rec;
 
 	if (page_is_comp(page)) {
 		while (rec_get_n_owned_new(r) == 0) {
@@ -119,7 +116,7 @@ page_dir_find_owner_slot(
 		}
 	}
 
-	rec_offs_bytes = mach_encode_2(r - page);
+	uint16 rec_offs_bytes = mach_encode_2(r - page);
 
 	while (UNIV_LIKELY(*(uint16*) slot != rec_offs_bytes)) {
 
@@ -149,7 +146,7 @@ page_dir_find_owner_slot(
 			fputs("\n"
 			      "InnoDB: on that page!\n", stderr);
 
-			buf_page_print(page, 0, 0);
+			buf_page_print(page, 0);
 
 			ut_error;
 		}
@@ -304,7 +301,7 @@ byte*
 page_parse_create(
 /*==============*/
 	byte*		ptr,	/*!< in: buffer */
-	byte*		end_ptr __attribute__((unused)), /*!< in: buffer end */
+	byte*		end_ptr MY_ATTRIBUTE((unused)), /*!< in: buffer end */
 	ulint		comp,	/*!< in: nonzero=compact page format */
 	buf_block_t*	block,	/*!< in: block or NULL */
 	mtr_t*		mtr)	/*!< in: mtr or NULL */
@@ -613,10 +610,8 @@ page_copy_rec_list_end_no_locks(
 			/* Track an assertion failure reported on the mailing
 			list on June 18th, 2003 */
 
-			buf_page_print(new_page, 0,
-				       BUF_PAGE_PRINT_NO_CRASH);
-			buf_page_print(page_align(rec), 0,
-				       BUF_PAGE_PRINT_NO_CRASH);
+			buf_page_print(new_page, 0);
+			buf_page_print(page_align(rec), 0);
 			ut_print_timestamp(stderr);
 
 			fprintf(stderr,
@@ -1450,7 +1445,6 @@ page_dir_split_slot(
 	ulint			i;
 	ulint			n_owned;
 
-	ut_ad(page);
 	ut_ad(!page_zip || page_is_comp(page));
 	ut_ad(slot_no > 0);
 
@@ -1512,7 +1506,6 @@ page_dir_balance_slot(
 	rec_t*			old_rec;
 	rec_t*			new_rec;
 
-	ut_ad(page);
 	ut_ad(!page_zip || page_is_comp(page));
 	ut_ad(slot_no > 0);
 
@@ -1950,7 +1943,8 @@ page_check_dir(
 		fprintf(stderr,
 			"InnoDB: Page directory corruption:"
 			" infimum not pointed to\n");
-		buf_page_print(page, 0, 0);
+		buf_page_print(page, 0);
+		ut_ad(0);
 	}
 
 	if (UNIV_UNLIKELY(!page_rec_is_supremum_low(supremum_offs))) {
@@ -1958,7 +1952,8 @@ page_check_dir(
 		fprintf(stderr,
 			"InnoDB: Page directory corruption:"
 			" supremum not pointed to\n");
-		buf_page_print(page, 0, 0);
+		buf_page_print(page, 0);
+		ut_ad(0);
 	}
 }
 #endif /* !UNIV_HOTBACKUP */
@@ -2676,7 +2671,8 @@ func_exit2:
 			(ulong) page_get_space_id(page),
 			(ulong) page_get_page_no(page),
 			index->name);
-		buf_page_print(page, 0, 0);
+		buf_page_print(page, 0);
+		ut_ad(0);
 	}
 
 	return(ret);
@@ -2818,46 +2814,4 @@ page_find_rec_max_not_deleted(
 		} while (rec != page + PAGE_OLD_SUPREMUM);
 	}
 	return(prev_rec);
-}
-
-/** Issue a warning when the checksum that is stored in the page is valid,
-but different than the global setting innodb_checksum_algorithm.
-@param[in]	current_algo	current checksum algorithm
-@param[in]	page_checksum	page valid checksum
-@param[in]	space_id	tablespace id
-@param[in]	page_no		page number */
-void
-page_warn_strict_checksum(
-	srv_checksum_algorithm_t	curr_algo,
-	srv_checksum_algorithm_t	page_checksum,
-	ulint				space_id,
-	ulint				page_no)
-{
-	srv_checksum_algorithm_t	curr_algo_nonstrict;
-	switch (curr_algo) {
-	case SRV_CHECKSUM_ALGORITHM_STRICT_CRC32:
-		curr_algo_nonstrict = SRV_CHECKSUM_ALGORITHM_CRC32;
-		break;
-	case SRV_CHECKSUM_ALGORITHM_STRICT_INNODB:
-		curr_algo_nonstrict = SRV_CHECKSUM_ALGORITHM_INNODB;
-		break;
-	case SRV_CHECKSUM_ALGORITHM_STRICT_NONE:
-		curr_algo_nonstrict = SRV_CHECKSUM_ALGORITHM_NONE;
-		break;
-	default:
-		ut_error;
-	}
-
-	ib_logf(IB_LOG_LEVEL_WARN,
-		"innodb_checksum_algorithm is set to \"%s\""
-		" but the page [page id: space=" ULINTPF ","
-		" page number=" ULINTPF "] contains a valid checksum \"%s\"."
-		" Accepting the page as valid. Change innodb_checksum_algorithm"
-		" to \"%s\" to silently accept such pages or rewrite all pages"
-		" so that they contain \"%s\" checksum.",
-		buf_checksum_algorithm_name(curr_algo),
-		space_id, page_no,
-		buf_checksum_algorithm_name(page_checksum),
-		buf_checksum_algorithm_name(curr_algo_nonstrict),
-		buf_checksum_algorithm_name(curr_algo_nonstrict));
 }

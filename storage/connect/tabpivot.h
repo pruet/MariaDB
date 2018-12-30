@@ -32,16 +32,16 @@ class PIVAID : public CSORT {
  protected:
   // Members
   MYSQLC  Myc;                      // MySQL connection class
-  char   *Host;                     // Host machine to use
-  char   *User;                     // User logon info
-  char   *Pwd;                      // Password logon info
-  char   *Database;                 // Database to be used by server
+  PCSZ    Host;                     // Host machine to use
+	PCSZ    User;                     // User logon info
+	PCSZ    Pwd;                      // Password logon info
+	PCSZ    Database;                 // Database to be used by server
   PQRYRES Qryp;                     // Points to Query result block
-  char   *Tabname;                  // Name of source table
-  char   *Tabsrc;                   // SQL of source table
-  char   *Picol;                    // Pivot column name
-  char   *Fncol;                    // Function column name
-  char   *Skcol;                    // Skipped columns
+	PCSZ    Tabname;                  // Name of source table
+	PCSZ    Tabsrc;                   // SQL of source table
+	PCSZ    Picol;                    // Pivot column name
+	PCSZ    Fncol;                    // Function column name
+	PCSZ    Skcol;                    // Skipped columns
   PVBLK   Rblkp;                    // The value block of the pivot column
   int     Port;                     // MySQL port number
   }; // end of class PIVAID
@@ -183,7 +183,7 @@ class SRCCOL : public PRXCOL {
   using PRXCOL::Init;
   virtual void Reset(void) {}
           void SetColumn(void);
-  virtual bool Init(PGLOBAL g, PTDBASE tp);
+  virtual bool Init(PGLOBAL g, PTDB tp);
           bool CompareLast(void);
 
  protected:

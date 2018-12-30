@@ -1,5 +1,7 @@
 --source include/have_ucs2.inc
 
+let $MYSQLD_DATADIR= `select @@datadir`;
+
 --disable_warnings
 drop table if exists t1,t2;
 --enable_warnings
@@ -291,9 +293,55 @@ create table t1 (v1 varchar(255) as (c1) persistent, c1 varchar(50)) collate=lat
 show create table t1;
 drop table t1;
 
+#
+# MDEV-11527 Virtual columns do not get along well with NO_ZERO_DATE
+#
+set sql_mode='no_zero_date';
+create table t1 (
+  ts timestamp not null default current_timestamp,
+  tsv timestamp as (adddate(ts, interval 1 day)) virtual
+);
+drop table t1;
+set sql_mode=default;
 
 --echo #
---echo # Start of 10.1 tests
+--echo # MDEV-11819 NO_ZERO_IN_DATE: Incorrect generated column value
+--echo #
+
+SET sql_mode='NO_ZERO_IN_DATE';
+CREATE TABLE t1
+(
+  a datetime DEFAULT NULL,
+  b datetime DEFAULT NULL,
+  c time GENERATED ALWAYS AS (timediff(`a`,`b`)) VIRTUAL
+);
+INSERT INTO t1 VALUES ('2008-12-31 23:59:59.000001','2008-12-30 01:01:01.000002',DEFAULT);
+SELECT * FROM t1;
+DROP TABLE t1;
+SET sql_mode=DEFAULT;
+
+
+--echo #
+--echo # MDEV-15834 The code in TABLE_SHARE::init_from_binary_frm_image() is not safe
+--echo #
+
+--copy_file std_data/frm/t1.frm $MYSQLD_DATADIR/test/t1.frm
+SHOW TABLES;
+--replace_result $MYSQLD_DATADIR ./
+--error ER_NOT_FORM_FILE
+SHOW CREATE TABLE t1;
+--replace_result $MYSQLD_DATADIR ./
+--error ER_NOT_FORM_FILE
+ALTER TABLE t1;
+--remove_file $MYSQLD_DATADIR/test/t1.frm
+
+
+--echo #
+--echo # End of 5.5 tests
+--echo #
+
+--echo #
+--echo # End of 10.0 tests
 --echo #
 
 --echo #
@@ -316,7 +364,6 @@ SET @aaa= COLUMN_CREATE('price', _binary 0xF0F1F2F3F4F5F6F7);
 SELECT COLUMN_GET(@aaa, 'price' AS DECIMAL) aaa;
 SELECT COLUMN_GET(@aaa, 'price' AS INT) aaa;
 SELECT COLUMN_GET(@aaa, 'price' AS DOUBLE) aaa;
-
 
 --echo #
 --echo # End of 10.1 tests

@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2011, 2015, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2011, 2018, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -196,8 +197,14 @@ struct row_log_t {
 	row_log_buf_t	tail;	/*!< writer context;
 				protected by mutex and index->lock S-latch,
 				or by index->lock X-latch only */
+	byte*		crypt_tail; /*!< writer context;
+				temporary buffer used in encryption,
+				decryption or NULL*/
 	row_log_buf_t	head;	/*!< reader context; protected by MDL only;
 				modifiable by row_log_apply_ops() */
+	byte*		crypt_head; /*!< reader context;
+				temporary buffer used in encryption,
+				decryption or NULL */
 	const char*	path;	/*!< where to create temporary file during
 				log operation */
 };
@@ -205,7 +212,7 @@ struct row_log_t {
 /** Create the file or online log if it does not exist.
 @param[in,out]	log	online rebuild log
 @return file descriptor. */
-static __attribute__((warn_unused_result))
+static MY_ATTRIBUTE((warn_unused_result))
 int
 row_log_tmpfile(
 	row_log_t*	log)
@@ -221,7 +228,7 @@ row_log_tmpfile(
 /** Allocate the memory for the log buffer.
 @param[in,out]	log_buf	Buffer used for log operation
 @return TRUE if success, false if not */
-static __attribute__((warn_unused_result))
+static MY_ATTRIBUTE((warn_unused_result))
 bool
 row_log_block_allocate(
 	row_log_buf_t&	log_buf)
@@ -348,6 +355,7 @@ row_log_online_op(
 			= (os_offset_t) log->tail.blocks
 			* srv_sort_buf_size;
 		ibool			ret;
+		byte * buf = log->tail.block;
 
 		if (byte_offset + srv_sort_buf_size >= srv_online_max_size) {
 			goto write_failed;
@@ -367,11 +375,29 @@ row_log_online_op(
 			goto err_exit;
 		}
 
-		ret = os_file_write(
+		/* If encryption is enabled encrypt buffer before writing it
+		to file system. */
+		if (log_tmp_is_encrypted()) {
+			if (!log_tmp_block_encrypt(log->tail.block,
+						   srv_sort_buf_size,
+						   log->crypt_tail,
+						   byte_offset,
+						   index->table->space)) {
+				log->error = DB_DECRYPTION_FAILED;
+				goto write_failed;
+			}
+
+			srv_stats.n_rowlog_blocks_encrypted.inc();
+			buf = log->crypt_tail;
+		}
+
+		ret = os_file_write_int_fd(
 			"(modification log)",
-			OS_FILE_FROM_FD(log->fd),
-			log->tail.block, byte_offset, srv_sort_buf_size);
+			log->fd,
+			buf, byte_offset, srv_sort_buf_size);
+
 		log->tail.blocks++;
+
 		if (!ret) {
 write_failed:
 			/* We set the flag directly instead of invoking
@@ -379,7 +405,9 @@ write_failed:
 			because the index is not "public" yet. */
 			index->type |= DICT_CORRUPT;
 		}
+
 		UNIV_MEM_INVALID(log->tail.block, srv_sort_buf_size);
+
 		memcpy(log->tail.block, log->tail.buf + avail_size,
 		       mrec_size - avail_size);
 		log->tail.bytes = mrec_size - avail_size;
@@ -411,7 +439,7 @@ row_log_table_get_error(
 /******************************************************//**
 Starts logging an operation to a table that is being rebuilt.
 @return pointer to log, or NULL if no logging is necessary */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 byte*
 row_log_table_open(
 /*===============*/
@@ -438,6 +466,8 @@ err_exit:
 	*avail = srv_sort_buf_size - log->tail.bytes;
 
 	if (size > *avail) {
+		/* Make sure log->tail.buf is large enough */
+		ut_ad(size <= sizeof log->tail.buf);
 		return(log->tail.buf);
 	} else {
 		return(log->tail.block + log->tail.bytes);
@@ -446,17 +476,19 @@ err_exit:
 
 /******************************************************//**
 Stops logging an operation to a table that is being rebuilt. */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 void
 row_log_table_close_func(
 /*=====================*/
-	row_log_t*	log,	/*!< in/out: online rebuild log */
+	dict_index_t*	index,	/*!< in/out: online rebuilt index */
 #ifdef UNIV_DEBUG
 	const byte*	b,	/*!< in: end of log record */
 #endif /* UNIV_DEBUG */
 	ulint		size,	/*!< in: size of log record */
 	ulint		avail)	/*!< in: available size for log record */
 {
+	row_log_t*	log = index->online_log;
+
 	ut_ad(mutex_own(&log->mutex));
 
 	if (size >= avail) {
@@ -464,6 +496,7 @@ row_log_table_close_func(
 			= (os_offset_t) log->tail.blocks
 			* srv_sort_buf_size;
 		ibool			ret;
+		byte * buf = log->tail.block;
 
 		if (byte_offset + srv_sort_buf_size >= srv_online_max_size) {
 			goto write_failed;
@@ -483,11 +516,29 @@ row_log_table_close_func(
 			goto err_exit;
 		}
 
-		ret = os_file_write(
+		/* If encryption is enabled encrypt buffer before writing it
+		to file system. */
+		if (log_tmp_is_encrypted()) {
+			if (!log_tmp_block_encrypt(log->tail.block,
+						   srv_sort_buf_size,
+						   log->crypt_tail,
+						   byte_offset,
+						   index->table->space)) {
+				log->error = DB_DECRYPTION_FAILED;
+				goto err_exit;
+			}
+
+			srv_stats.n_rowlog_blocks_encrypted.inc();
+			buf = log->crypt_tail;
+		}
+
+		ret = os_file_write_int_fd(
 			"(modification log)",
-			OS_FILE_FROM_FD(log->fd),
-			log->tail.block, byte_offset, srv_sort_buf_size);
+			log->fd,
+			buf, byte_offset, srv_sort_buf_size);
+
 		log->tail.blocks++;
+
 		if (!ret) {
 write_failed:
 			log->error = DB_ONLINE_LOG_TOO_BIG;
@@ -511,11 +562,11 @@ err_exit:
 }
 
 #ifdef UNIV_DEBUG
-# define row_log_table_close(log, b, size, avail)	\
-	row_log_table_close_func(log, b, size, avail)
+# define row_log_table_close(index, b, size, avail)	\
+	row_log_table_close_func(index, b, size, avail)
 #else /* UNIV_DEBUG */
 # define row_log_table_close(log, b, size, avail)	\
-	row_log_table_close_func(log, size, avail)
+	row_log_table_close_func(index, size, avail)
 #endif /* UNIV_DEBUG */
 
 /******************************************************//**
@@ -535,12 +586,10 @@ row_log_table_delete(
 {
 	ulint		old_pk_extra_size;
 	ulint		old_pk_size;
-	ulint		ext_size = 0;
 	ulint		mrec_size;
 	ulint		avail_size;
 	mem_heap_t*	heap		= NULL;
 	const dtuple_t*	old_pk;
-	row_ext_t*	ext;
 
 	ut_ad(dict_index_is_clust(index));
 	ut_ad(rec_offs_validate(rec, index, offsets));
@@ -621,38 +670,13 @@ row_log_table_delete(
 		&old_pk_extra_size);
 	ut_ad(old_pk_extra_size < 0x100);
 
-	mrec_size = 4 + old_pk_size;
-
-	/* Log enough prefix of the BLOB unless both the
-	old and new table are in COMPACT or REDUNDANT format,
-	which store the prefix in the clustered index record. */
-	if (rec_offs_any_extern(offsets)
-	    && (dict_table_get_format(index->table) >= UNIV_FORMAT_B
-		|| dict_table_get_format(new_table) >= UNIV_FORMAT_B)) {
-
-		/* Build a cache of those off-page column prefixes
-		that are referenced by secondary indexes. It can be
-		that none of the off-page columns are needed. */
-		row_build(ROW_COPY_DATA, index, rec,
-			  offsets, NULL, NULL, NULL, &ext, heap);
-		if (ext) {
-			/* Log the row_ext_t, ext->ext and ext->buf */
-			ext_size = ext->n_ext * ext->max_len
-				+ sizeof(*ext)
-				+ ext->n_ext * sizeof(ulint)
-				+ (ext->n_ext - 1) * sizeof ext->len;
-			mrec_size += ext_size;
-		}
-	}
+	/* 2 = 1 (extra_size) + at least 1 byte payload */
+	mrec_size = 2 + old_pk_size;
 
 	if (byte* b = row_log_table_open(index->online_log,
 					 mrec_size, &avail_size)) {
 		*b++ = ROW_T_DELETE;
 		*b++ = static_cast<byte>(old_pk_extra_size);
-
-		/* Log the size of external prefix we saved */
-		mach_write_to_2(b, ext_size);
-		b += 2;
 
 		rec_convert_dtuple_to_temp(
 			b + old_pk_extra_size, new_index,
@@ -660,35 +684,7 @@ row_log_table_delete(
 
 		b += old_pk_size;
 
-		if (ext_size) {
-			ulint	cur_ext_size = sizeof(*ext)
-				+ (ext->n_ext - 1) * sizeof ext->len;
-
-			memcpy(b, ext, cur_ext_size);
-			b += cur_ext_size;
-
-			/* Check if we need to col_map to adjust the column
-			number. If columns were added/removed/reordered,
-			adjust the column number. */
-			if (const ulint* col_map =
-				index->online_log->col_map) {
-				for (ulint i = 0; i < ext->n_ext; i++) {
-					const_cast<ulint&>(ext->ext[i]) =
-						col_map[ext->ext[i]];
-				}
-			}
-
-			memcpy(b, ext->ext, ext->n_ext * sizeof(*ext->ext));
-			b += ext->n_ext * sizeof(*ext->ext);
-
-			ext_size -= cur_ext_size
-				 + ext->n_ext * sizeof(*ext->ext);
-			memcpy(b, ext->buf, ext_size);
-			b += ext_size;
-		}
-
-		row_log_table_close(
-			index->online_log, b, mrec_size, avail_size);
+		row_log_table_close(index, b, mrec_size, avail_size);
 	}
 
 func_exit:
@@ -811,8 +807,7 @@ row_log_table_low_redundant(
 			b + extra_size, index, tuple->fields, tuple->n_fields);
 		b += size;
 
-		row_log_table_close(
-			index->online_log, b, mrec_size, avail_size);
+		row_log_table_close(index, b, mrec_size, avail_size);
 	}
 
 	mem_heap_free(heap);
@@ -820,7 +815,7 @@ row_log_table_low_redundant(
 
 /******************************************************//**
 Logs an insert or update to a table that is being rebuilt. */
-static __attribute__((nonnull(1,2,3)))
+static MY_ATTRIBUTE((nonnull(1,2,3)))
 void
 row_log_table_low(
 /*==============*/
@@ -921,8 +916,7 @@ row_log_table_low(
 		memcpy(b, rec, rec_offs_data_size(offsets));
 		b += rec_offs_data_size(offsets);
 
-		row_log_table_close(
-			index->online_log, b, mrec_size, avail_size);
+		row_log_table_close(index, b, mrec_size, avail_size);
 	}
 }
 
@@ -1018,7 +1012,7 @@ row_log_table_get_pk_col(
 			mem_heap_alloc(heap, field_len));
 
 		len = btr_copy_externally_stored_field_prefix(
-			blob_field, field_len, zip_size, field, len, NULL);
+			blob_field, field_len, zip_size, field, len);
 		if (len >= max_len + 1) {
 			return(DB_TOO_BIG_INDEX_COL);
 		}
@@ -1137,7 +1131,7 @@ row_log_table_get_pk(
 			dict_field_t*	ifield;
 			dfield_t*	dfield;
 			ulint		prtype;
-			ulint		mbminmaxlen;
+			ulint		mbminlen, mbmaxlen;
 
 			ifield = dict_index_get_nth_field(new_index, new_i);
 			dfield = dtuple_get_nth_field(tuple, new_i);
@@ -1166,7 +1160,8 @@ err_exit:
 					goto func_exit;
 				}
 
-				mbminmaxlen = col->mbminmaxlen;
+				mbminlen = col->mbminlen;
+				mbmaxlen = col->mbmaxlen;
 				prtype = col->prtype;
 			} else {
 				/* No matching column was found in the old
@@ -1176,7 +1171,8 @@ err_exit:
 
 				dfield_copy(dfield, dtuple_get_nth_field(
 						    log->add_cols, col_no));
-				mbminmaxlen = dfield->type.mbminmaxlen;
+				mbminlen = dfield->type.mbminlen;
+				mbmaxlen = dfield->type.mbmaxlen;
 				prtype = dfield->type.prtype;
 			}
 
@@ -1185,7 +1181,7 @@ err_exit:
 
 			if (ifield->prefix_len) {
 				ulint	len = dtype_get_at_most_n_mbchars(
-					prtype, mbminmaxlen,
+					prtype, mbminlen, mbmaxlen,
 					ifield->prefix_len,
 					dfield_get_len(dfield),
 					static_cast<const char*>(
@@ -1320,7 +1316,7 @@ row_log_table_blob_alloc(
 /******************************************************//**
 Converts a log record to a table row.
 @return converted row, or NULL if the conversion fails */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 const dtuple_t*
 row_log_table_apply_convert_mrec(
 /*=============================*/
@@ -1409,7 +1405,7 @@ row_log_table_apply_convert_mrec(
 			data = btr_rec_copy_externally_stored_field(
 				mrec, offsets,
 				dict_table_zip_size(index->table),
-				i, &len, heap, NULL);
+				i, &len, heap);
 			ut_a(data);
 			dfield_set_data(dfield, data, len);
 blob_done:
@@ -1474,7 +1470,7 @@ blob_done:
 /******************************************************//**
 Replays an insert operation on a table that was rebuilt.
 @return DB_SUCCESS or error code */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_log_table_apply_insert_low(
 /*===========================*/
@@ -1527,13 +1523,10 @@ row_log_table_apply_insert_low(
 		return(error);
 	}
 
-	do {
-		n_index++;
+	ut_ad(dict_index_is_clust(index));
 
-		if (!(index = dict_table_get_next_index(index))) {
-			break;
-		}
-
+	for (n_index += index->type != DICT_CLUSTERED;
+	     (index = dict_table_get_next_index(index)); n_index++) {
 		if (index->type & DICT_FTS) {
 			continue;
 		}
@@ -1543,12 +1536,13 @@ row_log_table_apply_insert_low(
 			flags, BTR_MODIFY_TREE,
 			index, offsets_heap, heap, entry, trx_id, thr);
 
-		/* Report correct index name for duplicate key error. */
-		if (error == DB_DUPLICATE_KEY) {
-			thr_get_trx(thr)->error_key_num = n_index;
+		if (error != DB_SUCCESS) {
+			if (error == DB_DUPLICATE_KEY) {
+				thr_get_trx(thr)->error_key_num = n_index;
+			}
+			break;
 		}
-
-	} while (error == DB_SUCCESS);
+	}
 
 	return(error);
 }
@@ -1556,7 +1550,7 @@ row_log_table_apply_insert_low(
 /******************************************************//**
 Replays an insert operation on a table that was rebuilt.
 @return DB_SUCCESS or error code */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_log_table_apply_insert(
 /*=======================*/
@@ -1608,15 +1602,13 @@ row_log_table_apply_insert(
 /******************************************************//**
 Deletes a record from a table that is being rebuilt.
 @return DB_SUCCESS or error code */
-static __attribute__((nonnull(1, 2, 4, 5), warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_log_table_apply_delete_low(
 /*===========================*/
 	btr_pcur_t*		pcur,		/*!< in/out: B-tree cursor,
 						will be trashed */
 	const ulint*		offsets,	/*!< in: offsets on pcur */
-	const row_ext_t*	save_ext,	/*!< in: saved external field
-						info, or NULL */
 	mem_heap_t*		heap,		/*!< in/out: memory heap */
 	mtr_t*			mtr)		/*!< in/out: mini-transaction,
 						will be committed */
@@ -1640,11 +1632,7 @@ row_log_table_apply_delete_low(
 		/* Build a row template for purging secondary index entries. */
 		row = row_build(
 			ROW_COPY_DATA, index, btr_pcur_get_rec(pcur),
-			offsets, NULL, NULL, NULL,
-			save_ext ? NULL : &ext, heap);
-		if (!save_ext) {
-			save_ext = ext;
-		}
+			offsets, NULL, NULL, NULL, &ext, heap);
 	} else {
 		row = NULL;
 	}
@@ -1663,7 +1651,7 @@ row_log_table_apply_delete_low(
 		}
 
 		const dtuple_t*	entry = row_build_index_entry(
-			row, save_ext, index, heap);
+			row, ext, index, heap);
 		mtr_start(mtr);
 		btr_pcur_open(index, entry, PAGE_CUR_LE,
 			      BTR_MODIFY_TREE, pcur, mtr);
@@ -1706,11 +1694,10 @@ flag_ok:
 /******************************************************//**
 Replays a delete operation on a table that was rebuilt.
 @return DB_SUCCESS or error code */
-static __attribute__((nonnull(1, 3, 4, 5, 6, 7), warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_log_table_apply_delete(
 /*=======================*/
-	que_thr_t*		thr,		/*!< in: query graph */
 	ulint			trx_id_col,	/*!< in: position of
 						DB_TRX_ID in the new
 						clustered index */
@@ -1719,9 +1706,7 @@ row_log_table_apply_delete(
 	mem_heap_t*		offsets_heap,	/*!< in/out: memory heap
 						that can be emptied */
 	mem_heap_t*		heap,		/*!< in/out: memory heap */
-	const row_log_t*	log,		/*!< in: online log */
-	const row_ext_t*	save_ext)	/*!< in: saved external field
-						info, or NULL */
+	const row_log_t*	log)		/*!< in: online log */
 {
 	dict_table_t*	new_table = log->table;
 	dict_index_t*	index = dict_table_get_first_index(new_table);
@@ -1821,14 +1806,13 @@ all_done:
 		}
 	}
 
-	return(row_log_table_apply_delete_low(&pcur, offsets, save_ext,
-					      heap, &mtr));
+	return row_log_table_apply_delete_low(&pcur, offsets, heap, &mtr);
 }
 
 /******************************************************//**
 Replays an update operation on a table that was rebuilt.
 @return DB_SUCCESS or error code */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_log_table_apply_update(
 /*=======================*/
@@ -1880,6 +1864,7 @@ row_log_table_apply_update(
 
 		When applying the subsequent ROW_T_DELETE, no matching
 		record will be found. */
+		/* fall through */
 	case DB_SUCCESS:
 		ut_ad(row != NULL);
 		break;
@@ -2032,7 +2017,7 @@ func_exit_committed:
 		/* Some BLOBs are missing, so we are interpreting
 		this ROW_T_UPDATE as ROW_T_DELETE (see *1). */
 		error = row_log_table_apply_delete_low(
-			&pcur, cur_offsets, NULL, heap, &mtr);
+			&pcur, cur_offsets, heap, &mtr);
 		goto func_exit_committed;
 	}
 
@@ -2070,7 +2055,7 @@ func_exit_committed:
 		}
 
 		error = row_log_table_apply_delete_low(
-			&pcur, cur_offsets, NULL, heap, &mtr);
+			&pcur, cur_offsets, heap, &mtr);
 		ut_ad(mtr.state == MTR_COMMITTED);
 
 		if (error == DB_SUCCESS) {
@@ -2126,15 +2111,14 @@ func_exit_committed:
 		dtuple_big_rec_free(big_rec);
 	}
 
-	while ((index = dict_table_get_next_index(index)) != NULL) {
-		if (error != DB_SUCCESS) {
-			break;
-		}
-
-		n_index++;
-
+	for (n_index += index->type != DICT_CLUSTERED;
+	     (index = dict_table_get_next_index(index)); n_index++) {
 		if (index->type & DICT_FTS) {
 			continue;
+		}
+
+		if (error != DB_SUCCESS) {
+			break;
 		}
 
 		if (!row_upd_changes_ord_field_binary(
@@ -2191,7 +2175,7 @@ func_exit_committed:
 Applies an operation to a table that was rebuilt.
 @return NULL on failure (mrec corruption) or when out of data;
 pointer to next record on success */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 const mrec_t*
 row_log_table_apply_op(
 /*===================*/
@@ -2217,8 +2201,6 @@ row_log_table_apply_op(
 	ulint		extra_size;
 	const mrec_t*	next_mrec;
 	dtuple_t*	old_pk;
-	row_ext_t*	ext;
-	ulint		ext_size;
 
 	ut_ad(dict_index_is_clust(dup->index));
 	ut_ad(dup->index->table != log->table);
@@ -2226,7 +2208,7 @@ row_log_table_apply_op(
 
 	*error = DB_SUCCESS;
 
-	/* 3 = 1 (op type) + 1 (ext_size) + at least 1 byte payload */
+	/* 3 = 1 (op type) + 1 (extra_size) + at least 1 byte payload */
 	if (mrec + 3 >= mrec_end) {
 		return(NULL);
 	}
@@ -2276,14 +2258,12 @@ row_log_table_apply_op(
 		break;
 
 	case ROW_T_DELETE:
-		/* 1 (extra_size) + 2 (ext_size) + at least 1 (payload) */
-		if (mrec + 4 >= mrec_end) {
+		/* 1 (extra_size) + at least 1 (payload) */
+		if (mrec + 2 >= mrec_end) {
 			return(NULL);
 		}
 
 		extra_size = *mrec++;
-		ext_size = mach_read_from_2(mrec);
-		mrec += 2;
 		ut_ad(mrec < mrec_end);
 
 		/* We assume extra_size < 0x100 for the PRIMARY KEY prefix.
@@ -2292,40 +2272,16 @@ row_log_table_apply_op(
 
 		rec_offs_set_n_fields(offsets, new_index->n_uniq + 2);
 		rec_init_offsets_temp(mrec, new_index, offsets);
-		next_mrec = mrec + rec_offs_data_size(offsets) + ext_size;
+		next_mrec = mrec + rec_offs_data_size(offsets);
 		if (next_mrec > mrec_end) {
 			return(NULL);
 		}
 
 		log->head.total += next_mrec - mrec_start;
 
-		/* If there are external fields, retrieve those logged
-		prefix info and reconstruct the row_ext_t */
-		if (ext_size) {
-			/* We use memcpy to avoid unaligned
-			access on some non-x86 platforms.*/
-			ext = static_cast<row_ext_t*>(
-				mem_heap_dup(heap,
-					     mrec + rec_offs_data_size(offsets),
-					     ext_size));
-
-			byte*	ext_start = reinterpret_cast<byte*>(ext);
-
-			ulint	ext_len = sizeof(*ext)
-				+ (ext->n_ext - 1) * sizeof ext->len;
-
-			ext->ext = reinterpret_cast<ulint*>(ext_start + ext_len);
-			ext_len += ext->n_ext * sizeof(*ext->ext);
-
-			ext->buf = static_cast<byte*>(ext_start + ext_len);
-		} else {
-			ext = NULL;
-		}
-
 		*error = row_log_table_apply_delete(
-			thr, new_trx_id_col,
-			mrec, offsets, offsets_heap, heap,
-			log, ext);
+			new_trx_id_col,
+			mrec, offsets, offsets_heap, heap, log);
 		break;
 
 	case ROW_T_UPDATE:
@@ -2482,7 +2438,7 @@ row_log_table_apply_op(
 /******************************************************//**
 Applies operations to a table was rebuilt.
 @return DB_SUCCESS, or error code on failure */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 row_log_table_apply_ops(
 /*====================*/
@@ -2620,10 +2576,28 @@ all_done:
 			goto func_exit;
 		}
 
-		success = os_file_read_no_error_handling(
-			OS_FILE_FROM_FD(index->online_log->fd),
-			index->online_log->head.block, ofs,
+		byte * buf = index->online_log->head.block;
+
+		success = os_file_read_no_error_handling_int_fd(
+			index->online_log->fd,
+			buf, ofs,
 			srv_sort_buf_size);
+
+		/* If encryption is enabled decrypt buffer after reading it
+		from file system. */
+		if (success && log_tmp_is_encrypted()) {
+			if (!log_tmp_block_decrypt(buf,
+						   srv_sort_buf_size,
+						   index->online_log->crypt_head,
+						   ofs,
+						   index->table->space)) {
+				error = DB_DECRYPTION_FAILED;
+				goto func_exit;
+			}
+
+			srv_stats.n_rowlog_blocks_decrypted.inc();
+			memcpy(buf, index->online_log->crypt_head, srv_sort_buf_size);
+		}
 
 		if (!success) {
 			fprintf(stderr, "InnoDB: unable to read temporary file"
@@ -2732,7 +2706,15 @@ all_done:
 
 	while (!trx_is_interrupted(trx)) {
 		mrec = next_mrec;
-		ut_ad(mrec < mrec_end);
+		ut_ad(mrec <= mrec_end);
+
+		if (mrec == mrec_end) {
+			/* We are at the end of the log.
+			   Mark the replay all_done. */
+			if (has_index_lock) {
+				goto all_done;
+			}
+		}
 
 		if (!has_index_lock) {
 			/* We are applying operations from a different
@@ -2931,8 +2913,20 @@ row_log_allocate(
 	log->head.blocks = log->head.bytes = 0;
 	log->head.total = 0;
 	log->path = path;
+	log->crypt_tail = log->crypt_head = NULL;
 	dict_index_set_online_status(index, ONLINE_INDEX_CREATION);
 	index->online_log = log;
+
+	if (log_tmp_is_encrypted()) {
+		ulint size = srv_sort_buf_size;
+		log->crypt_head = static_cast<byte *>(os_mem_alloc_large(&size));
+		log->crypt_tail = static_cast<byte *>(os_mem_alloc_large(&size));
+
+		if (!log->crypt_head || !log->crypt_tail) {
+			row_log_free(log);
+			DBUG_RETURN(false);
+		}
+	}
 
 	/* While we might be holding an exclusive data dictionary lock
 	here, in row_log_abort_sec() we will not always be holding it. Use
@@ -2956,6 +2950,15 @@ row_log_free(
 	row_log_block_free(log->tail);
 	row_log_block_free(log->head);
 	row_merge_file_destroy_low(log->fd);
+
+	if (log->crypt_head) {
+		os_mem_free_large(log->crypt_head, srv_sort_buf_size);
+	}
+
+	if (log->crypt_tail) {
+		os_mem_free_large(log->crypt_tail, srv_sort_buf_size);
+	}
+
 	mutex_free(&log->mutex);
 	ut_free(log);
 	log = 0;
@@ -2982,7 +2985,7 @@ row_log_get_max_trx(
 
 /******************************************************//**
 Applies an operation to a secondary index that was being created. */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 void
 row_log_apply_op_low(
 /*=================*/
@@ -3209,7 +3212,7 @@ func_exit:
 Applies an operation to a secondary index that was being created.
 @return NULL on failure (mrec corruption) or when out of data;
 pointer to next record on success */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 const mrec_t*
 row_log_apply_op(
 /*=============*/
@@ -3334,7 +3337,7 @@ corrupted:
 /******************************************************//**
 Applies operations to a secondary index that was being created.
 @return DB_SUCCESS, or error code on failure */
-static __attribute__((nonnull))
+static MY_ATTRIBUTE((nonnull))
 dberr_t
 row_log_apply_ops(
 /*==============*/
@@ -3450,10 +3453,28 @@ all_done:
 			goto func_exit;
 		}
 
-		success = os_file_read_no_error_handling(
-			OS_FILE_FROM_FD(index->online_log->fd),
-			index->online_log->head.block, ofs,
+		byte* buf = index->online_log->head.block;
+
+		success = os_file_read_no_error_handling_int_fd(
+			index->online_log->fd,
+			buf, ofs,
 			srv_sort_buf_size);
+
+		/* If encryption is enabled decrypt buffer after reading it
+		from file system. */
+		if (success && log_tmp_is_encrypted()) {
+			if (!log_tmp_block_decrypt(buf,
+						   srv_sort_buf_size,
+						   index->online_log->crypt_head,
+						   ofs,
+						   index->table->space)) {
+				error = DB_DECRYPTION_FAILED;
+				goto func_exit;
+			}
+
+			srv_stats.n_rowlog_blocks_decrypted.inc();
+			memcpy(buf, index->online_log->crypt_head, srv_sort_buf_size);
+		}
 
 		if (!success) {
 			fprintf(stderr, "InnoDB: unable to read temporary file"

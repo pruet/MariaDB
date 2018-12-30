@@ -45,7 +45,7 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 // #5978 is fixed. Here is what we do. We have four pairs with
 // blocknums and fullhashes of 1,2,3,4. The cachetable has only
 // two bucket mutexes, so 1 and 3 share a pair mutex, as do 2 and 4.
-// We pin all four with expensive write locks. Then, on backgroud threads,
+// We pin all four with expensive write locks. Then, on background threads,
 // we call get_and_pin_nonblocking on 3, where the unlockers unpins 2, and
 // we call get_and_pin_nonblocking on 4, where the unlockers unpins 1. Run this
 // enough times, and we should see a deadlock before the fix, and no deadlock
@@ -125,13 +125,11 @@ static void *repin_one(void *UU(arg)) {
     CACHETABLE_WRITE_CALLBACK wc = def_write_callback(NULL);
     struct unlockers unlockers = {true, unpin_four, NULL, NULL};
     void* v1;
-    long s1;
     int r = toku_cachetable_get_and_pin_nonblocking(
         f1,
         make_blocknum(1),
         1,
         &v1,
-        &s1,
         wc,
         def_fetch,
         def_pf_req_callback,
@@ -149,13 +147,11 @@ static void *repin_two(void *UU(arg)) {
     CACHETABLE_WRITE_CALLBACK wc = def_write_callback(NULL);
     struct unlockers unlockers = {true, unpin_three, NULL, NULL};
     void* v1;
-    long s1;
     int r = toku_cachetable_get_and_pin_nonblocking(
         f1,
         make_blocknum(2),
         2,
         &v1,
-        &s1,
         wc,
         def_fetch,
         def_pf_req_callback,
@@ -181,27 +177,28 @@ cachetable_test (void) {
     r = toku_cachetable_openf(&f1, ct, fname1, O_RDWR|O_CREAT, S_IRWXU|S_IRWXG|S_IRWXO); assert(r == 0);
 
     void* v1;
-    long s1;
     CACHETABLE_WRITE_CALLBACK wc = def_write_callback(NULL);
 
     // bring pairs 1 and 2 into memory, then unpin
-    r = toku_cachetable_get_and_pin(f1, make_blocknum(1), 1, &v1, &s1, wc, def_fetch, def_pf_req_callback, def_pf_callback, true, NULL);
+    r = toku_cachetable_get_and_pin(f1, make_blocknum(1), 1, &v1, wc, def_fetch, def_pf_req_callback, def_pf_callback, true, NULL);
     assert_zero(r);
-    r = toku_cachetable_get_and_pin(f1, make_blocknum(2), 2, &v1, &s1, wc, def_fetch, def_pf_req_callback, def_pf_callback, true, NULL);
+    r = toku_cachetable_get_and_pin(f1, make_blocknum(2), 2, &v1, wc, def_fetch, def_pf_req_callback, def_pf_callback, true, NULL);
     assert_zero(r);
 
 
     // now pin pairs 3 and 4
-    r = toku_cachetable_get_and_pin(f1, make_blocknum(3), 3, &v1, &s1, wc, fetch_three, def_pf_req_callback, def_pf_callback, true, NULL);
+    r = toku_cachetable_get_and_pin(f1, make_blocknum(3), 3, &v1, wc, fetch_three, def_pf_req_callback, def_pf_callback, true, NULL);
     assert_zero(r);
-    r = toku_cachetable_get_and_pin(f1, make_blocknum(4), 4, &v1, &s1, wc, fetch_four, def_pf_req_callback, def_pf_callback, true, NULL);
+    r = toku_cachetable_get_and_pin(f1, make_blocknum(4), 4, &v1, wc, fetch_four, def_pf_req_callback, def_pf_callback, true, NULL);
     assert_zero(r);
 
     toku_pthread_t tid1;
     toku_pthread_t tid2;
-    r = toku_pthread_create(&tid1, NULL, repin_one, NULL); 
+    r = toku_pthread_create(
+        toku_uninstrumented, &tid1, nullptr, repin_one, nullptr);
     assert_zero(r);
-    r = toku_pthread_create(&tid2, NULL, repin_two, NULL); 
+    r = toku_pthread_create(
+        toku_uninstrumented, &tid2, nullptr, repin_two, nullptr);
     assert_zero(r);
 
     // unpin 1 and 2 so tid1 and tid2 can make progress

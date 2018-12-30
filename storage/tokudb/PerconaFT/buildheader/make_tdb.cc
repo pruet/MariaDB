@@ -231,6 +231,8 @@ static void print_defines (void) {
     printf("#define DB_SET_RANGE_REVERSE 252\n"); // private tokudb
     //printf("#define DB_GET_BOTH_RANGE_REVERSE 251\n"); // private tokudb.  No longer supported #2862.
     dodefine(DB_RMW);
+    
+    printf("#define DB_LOCKING_READ 0x80000000\n");
     printf("#define DB_IS_RESETTING_OP 0x01000000\n"); // private tokudb
     printf("#define DB_PRELOCKED 0x00800000\n"); // private tokudb
     printf("#define DB_PRELOCKED_WRITE 0x00400000\n"); // private tokudb
@@ -367,8 +369,8 @@ static void print_db_env_struct (void) {
                              "int (*checkpointing_get_period)             (DB_ENV*, uint32_t*) /* Retrieve the delay between automatic checkpoints.  0 means disabled. */",
                              "int (*cleaner_set_period)                   (DB_ENV*, uint32_t) /* Change the delay between automatic cleaner attempts.  0 means disabled. */",
                              "int (*cleaner_get_period)                   (DB_ENV*, uint32_t*) /* Retrieve the delay between automatic cleaner attempts.  0 means disabled. */",
-                             "int (*cleaner_set_iterations)               (DB_ENV*, uint32_t) /* Change the number of attempts on each cleaner invokation.  0 means disabled. */",
-                             "int (*cleaner_get_iterations)               (DB_ENV*, uint32_t*) /* Retrieve the number of attempts on each cleaner invokation.  0 means disabled. */",
+                             "int (*cleaner_set_iterations)               (DB_ENV*, uint32_t) /* Change the number of attempts on each cleaner invocation.  0 means disabled. */",
+                             "int (*cleaner_get_iterations)               (DB_ENV*, uint32_t*) /* Retrieve the number of attempts on each cleaner invocation.  0 means disabled. */",
                              "int (*evictor_set_enable_partial_eviction)  (DB_ENV*, bool) /* Enables or disabled partial eviction of nodes from cachetable. */",
                              "int (*evictor_get_enable_partial_eviction)  (DB_ENV*, bool*) /* Retrieve the status of partial eviction of nodes from cachetable. */",
                              "int (*checkpointing_postpone)               (DB_ENV*) /* Use for 'rename table' or any other operation that must be disjoint from a checkpoint */",
@@ -405,6 +407,7 @@ static void print_db_env_struct (void) {
                              "int (*set_lock_timeout)                     (DB_ENV *env, uint64_t default_lock_wait_time_msec, uint64_t (*get_lock_wait_time_cb)(uint64_t default_lock_wait_time))",
                              "int (*get_lock_timeout)                     (DB_ENV *env, uint64_t *lock_wait_time_msec)",
                              "int (*set_lock_timeout_callback)            (DB_ENV *env, lock_timeout_callback callback)",
+                             "int (*set_lock_wait_callback)               (DB_ENV *env, lock_wait_callback callback)",
                              "int (*txn_xa_recover)                       (DB_ENV*, TOKU_XA_XID list[/*count*/], long count, /*out*/ long *retp, uint32_t flags)",
                              "int (*get_txn_from_xid)                     (DB_ENV*, /*in*/ TOKU_XA_XID *, /*out*/ DB_TXN **)",
                              "DB* (*get_db_for_directory)                 (DB_ENV*)",
@@ -420,6 +423,15 @@ static void print_db_env_struct (void) {
                              "int (*set_client_pool_threads)(DB_ENV *, uint32_t)",
                              "int (*set_cachetable_pool_threads)(DB_ENV *, uint32_t)",
                              "int (*set_checkpoint_pool_threads)(DB_ENV *, uint32_t)",
+                             "void (*set_check_thp)(DB_ENV *, bool new_val)",
+                             "bool (*get_check_thp)(DB_ENV *)",
+                             "bool (*set_dir_per_db)(DB_ENV *, bool new_val)",
+                             "bool (*get_dir_per_db)(DB_ENV *)",
+                             "const char *(*get_data_dir)(DB_ENV *env)",
+                             "int (*dirtool_attach)(DB_ENV *, DB_TXN *, const char *, const char *)",
+                             "int (*dirtool_detach)(DB_ENV *, DB_TXN *, const char *)",
+                             "int (*dirtool_move)(DB_ENV *, DB_TXN *, const char *, const char *)",
+                             "void (*kill_waiter)(DB_ENV *, void *extra)",
                              NULL};
 
         sort_and_dump_fields("db_env", true, extra);
@@ -433,14 +445,15 @@ static void print_db_key_range_struct (void) {
     sort_and_dump_fields("db_key_range", false, NULL);
 }
 
-static void print_db_lsn_struct (void) {
-    field_counter=0;
-    /* A dummy field to make sizeof(DB_LSN) equal in C and C++ */
-    const char *extra[] = { "char dummy", NULL };
-    sort_and_dump_fields("db_lsn", false, extra);
+static void print_db_lsn_struct(void) {
+    field_counter = 0;
+    // FT-692
+    STRUCT_SETUP(DB_LSN, file, "uint32_t %s");
+    STRUCT_SETUP(DB_LSN, offset, "uint32_t %s");
+    sort_and_dump_fields("db_lsn", false, NULL);
 }
 
-static void print_dbt_struct (void) {
+static void print_dbt_struct(void) {
     field_counter=0;
 #if 0 && DB_VERSION_MAJOR==4 && DB_VERSION_MINOR==1
     STRUCT_SETUP(DBT, app_private, "void*%s");
@@ -510,8 +523,9 @@ static void print_db_struct (void) {
 			 "int (*update_broadcast)(DB *, DB_TXN*, const DBT *extra, uint32_t flags)",
 			 "int (*get_fractal_tree_info64)(DB*,uint64_t*,uint64_t*,uint64_t*,uint64_t*)",
 			 "int (*iterate_fractal_tree_block_map)(DB*,int(*)(uint64_t,int64_t,int64_t,int64_t,int64_t,void*),void*)",
-                         "const char *(*get_dname)(DB *db)",
-                         "int (*get_last_key)(DB *db, YDB_CALLBACK_FUNCTION func, void* extra)",
+			 "const char *(*get_dname)(DB *db)",
+			 "int (*get_last_key)(DB *db, YDB_CALLBACK_FUNCTION func, void* extra)",
+			 "int (*recount_rows)(DB* db, int (*progress_callback)(uint64_t count, uint64_t deleted, void* progress_extra), void* progress_extra)",
 			 NULL};
     sort_and_dump_fields("db", true, extra);
 }
@@ -539,8 +553,8 @@ static void print_db_txn_struct (void) {
 	"int (*abort_with_progress)(DB_TXN*, TXN_PROGRESS_POLL_FUNCTION, void*)",
 	"int (*xa_prepare) (DB_TXN*, TOKU_XA_XID *, uint32_t flags)",
         "uint64_t (*id64) (DB_TXN*)",
-        "void (*set_client_id)(DB_TXN *, uint64_t client_id)",
-        "uint64_t (*get_client_id)(DB_TXN *)",
+        "void (*set_client_id)(DB_TXN *, uint64_t client_id, void *client_extra)",
+        "void (*get_client_id)(DB_TXN *, uint64_t *client_id, void **client_extra)",
         "bool (*is_prepared)(DB_TXN *)",
         "DB_TXN *(*get_child)(DB_TXN *)",
         "uint64_t (*get_start_time)(DB_TXN *)",
@@ -744,6 +758,7 @@ int main (int argc, char *const argv[] __attribute__((__unused__))) {
     printf("void toku_dbt_array_resize(DBT_ARRAY *dbts, uint32_t size) %s;\n", VISIBLE);
 
     printf("typedef void (*lock_timeout_callback)(DB *db, uint64_t requesting_txnid, const DBT *left_key, const DBT *right_key, uint64_t blocking_txnid);\n");
+    printf("typedef void (*lock_wait_callback)(void *arg, uint64_t requesting_txnid, uint64_t blocking_txnid);\n");
     printf("typedef int (*iterate_row_locks_callback)(DB **db, DBT *left_key, DBT *right_key, void *extra);\n");
     printf("typedef int (*iterate_transactions_callback)(DB_TXN *dbtxn, iterate_row_locks_callback cb, void *locks_extra, void *extra);\n");
     printf("typedef int (*iterate_requests_callback)(DB *db, uint64_t requesting_txnid, const DBT *left_key, const DBT *right_key, uint64_t blocking_txnid, uint64_t start_time, void *extra);\n");

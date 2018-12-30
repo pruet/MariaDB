@@ -149,22 +149,23 @@ basement nodes, bulk fetch,  and partial fetch:
 
 #include "ft/cachetable/checkpoint.h"
 #include "ft/cursor.h"
-#include "ft/ft.h"
 #include "ft/ft-cachetable-wrappers.h"
 #include "ft/ft-flusher.h"
 #include "ft/ft-internal.h"
-#include "ft/msg.h"
+#include "ft/ft.h"
 #include "ft/leafentry.h"
 #include "ft/logger/log-internal.h"
+#include "ft/msg.h"
 #include "ft/node.h"
 #include "ft/serialize/block_table.h"
-#include "ft/serialize/sub_block.h"
 #include "ft/serialize/ft-serialize.h"
 #include "ft/serialize/ft_layout_version.h"
 #include "ft/serialize/ft_node-serialize.h"
+#include "ft/serialize/sub_block.h"
 #include "ft/txn/txn_manager.h"
-#include "ft/ule.h"
 #include "ft/txn/xids.h"
+#include "ft/ule.h"
+#include "src/ydb-internal.h"
 
 #include <toku_race_tools.h>
 
@@ -179,14 +180,41 @@ basement nodes, bulk fetch,  and partial fetch:
 
 #include <stdint.h>
 
+#include <memory>
 /* Status is intended for display to humans to help understand system behavior.
  * It does not need to be perfectly thread-safe.
  */
 
 static toku_mutex_t ft_open_close_lock;
+static toku_instr_key *ft_open_close_lock_mutex_key;
+// FIXME: the instrumentation keys below are defined here even though they
+// belong to other modules, because they are registered here. If desired, they
+// can be moved to their proper modules and registration done there in a
+// one-time init function
+// locktree
+toku_instr_key *treenode_mutex_key;
+toku_instr_key *manager_mutex_key;
+toku_instr_key *manager_escalation_mutex_key;
+toku_instr_key *manager_escalator_mutex_key;
+// src
+toku_instr_key *db_txn_struct_i_txn_mutex_key;
+toku_instr_key *indexer_i_indexer_lock_mutex_key;
+toku_instr_key *indexer_i_indexer_estimate_lock_mutex_key;
+toku_instr_key *result_i_open_dbs_rwlock_key;
+// locktree
+toku_instr_key *lock_request_m_wait_cond_key;
+toku_instr_key *manager_m_escalator_done_key;
+toku_instr_key *locktree_request_info_mutex_key;
+toku_instr_key *locktree_request_info_retry_mutex_key;
+toku_instr_key *locktree_request_info_retry_cv_key;
 
-void
-toku_ft_get_status(FT_STATUS s) {
+// this is a sample probe for custom instrumentation
+static toku_instr_key *fti_probe_1_key;
+
+// This is a sample probe for custom instrumentation
+toku_instr_probe *toku_instr_probe_1;
+
+void toku_ft_get_status(FT_STATUS s) {
     ft_status.init();
     *s = ft_status;
 
@@ -598,15 +626,12 @@ void toku_ftnode_checkpoint_complete_callback(void *value_data) {
     }
 }
 
-void toku_ftnode_clone_callback(
-    void* value_data,
-    void** cloned_value_data,
-    long* clone_size,
-    PAIR_ATTR* new_attr,
-    bool for_checkpoint,
-    void* write_extraargs
-    )
-{
+void toku_ftnode_clone_callback(void *value_data,
+                                void **cloned_value_data,
+                                long *clone_size,
+                                PAIR_ATTR *new_attr,
+                                bool for_checkpoint,
+                                void *write_extraargs) {
     FTNODE node = static_cast<FTNODE>(value_data);
     toku_ftnode_assert_fully_in_memory(node);
     FT ft = static_cast<FT>(write_extraargs);
@@ -618,13 +643,16 @@ void toku_ftnode_clone_callback(
         toku_ftnode_leaf_rebalance(node, ft->h->basementnodesize);
     }
 
-    cloned_node->oldest_referenced_xid_known = node->oldest_referenced_xid_known;
-    cloned_node->max_msn_applied_to_node_on_disk = node->max_msn_applied_to_node_on_disk;
+    cloned_node->oldest_referenced_xid_known =
+        node->oldest_referenced_xid_known;
+    cloned_node->max_msn_applied_to_node_on_disk =
+        node->max_msn_applied_to_node_on_disk;
     cloned_node->flags = node->flags;
     cloned_node->blocknum = node->blocknum;
     cloned_node->layout_version = node->layout_version;
     cloned_node->layout_version_original = node->layout_version_original;
-    cloned_node->layout_version_read_from_disk = node->layout_version_read_from_disk;
+    cloned_node->layout_version_read_from_disk =
+        node->layout_version_read_from_disk;
     cloned_node->build_id = node->build_id;
     cloned_node->height = node->height;
     cloned_node->dirty = node->dirty;
@@ -649,38 +677,41 @@ void toku_ftnode_clone_callback(
     // set new pair attr if necessary
     if (node->height == 0) {
         *new_attr = make_ftnode_pair_attr(node);
-    }
-    else {
+        for (int i = 0; i < node->n_children; i++) {
+            if (BP_STATE(node, i) == PT_AVAIL) {
+                BLB_LRD(node, i) = 0;
+                BLB_LRD(cloned_node, i) = 0;
+            }
+        }
+    } else {
         new_attr->is_valid = false;
     }
     *clone_size = ftnode_memory_size(cloned_node);
     *cloned_value_data = cloned_node;
 }
 
-void toku_ftnode_flush_callback(
-    CACHEFILE UU(cachefile),
-    int fd,
-    BLOCKNUM blocknum,
-    void *ftnode_v,
-    void** disk_data,
-    void *extraargs,
-    PAIR_ATTR size __attribute__((unused)),
-    PAIR_ATTR* new_size,
-    bool write_me,
-    bool keep_me,
-    bool for_checkpoint,
-    bool is_clone
-    )
-{
-    FT ft = (FT) extraargs;
-    FTNODE ftnode = (FTNODE) ftnode_v;
-    FTNODE_DISK_DATA* ndd = (FTNODE_DISK_DATA*)disk_data;
+void toku_ftnode_flush_callback(CACHEFILE UU(cachefile),
+                                int fd,
+                                BLOCKNUM blocknum,
+                                void *ftnode_v,
+                                void **disk_data,
+                                void *extraargs,
+                                PAIR_ATTR size __attribute__((unused)),
+                                PAIR_ATTR *new_size,
+                                bool write_me,
+                                bool keep_me,
+                                bool for_checkpoint,
+                                bool is_clone) {
+    FT ft = (FT)extraargs;
+    FTNODE ftnode = (FTNODE)ftnode_v;
+    FTNODE_DISK_DATA *ndd = (FTNODE_DISK_DATA *)disk_data;
     assert(ftnode->blocknum.b == blocknum.b);
     int height = ftnode->height;
     if (write_me) {
         toku_ftnode_assert_fully_in_memory(ftnode);
         if (height > 0 && !is_clone) {
-            // cloned nodes already had their stale messages moved, see toku_ftnode_clone_callback()
+            // cloned nodes already had their stale messages moved, see
+            // toku_ftnode_clone_callback()
             toku_move_ftnode_messages_to_stale(ft, ftnode);
         } else if (height == 0) {
             toku_ftnode_leaf_run_gc(ft, ftnode);
@@ -688,7 +719,8 @@ void toku_ftnode_flush_callback(
                 toku_ftnode_update_disk_stats(ftnode, ft, for_checkpoint);
             }
         }
-        int r = toku_serialize_ftnode_to(fd, ftnode->blocknum, ftnode, ndd, !is_clone, ft, for_checkpoint);
+        int r = toku_serialize_ftnode_to(
+            fd, ftnode->blocknum, ftnode, ndd, !is_clone, ft, for_checkpoint);
         assert_zero(r);
         ftnode->layout_version_read_from_disk = FT_LAYOUT_VERSION;
     }
@@ -698,25 +730,50 @@ void toku_ftnode_flush_callback(
             if (ftnode->height == 0) {
                 FT_STATUS_INC(FT_FULL_EVICTIONS_LEAF, 1);
                 FT_STATUS_INC(FT_FULL_EVICTIONS_LEAF_BYTES, node_size);
+
+                // A leaf node (height == 0) is being evicted (!keep_me) and is
+                // not a checkpoint clone (!is_clone). This leaf node may have
+                // had messages applied to satisfy a query, but was never
+                // actually dirtied (!ftnode->dirty && !write_me). **Note that
+                // if (write_me) would persist the node and clear the dirty
+                // flag **. This message application may have updated the trees
+                // logical row count. Since these message applications are not
+                // persisted, we need undo the logical row count adjustments as
+                // they may occur again in the future if/when the node is
+                // re-read from disk for another query or change.
+                if (!ftnode->dirty && !write_me) {
+                    int64_t lrc_delta = 0;
+                    for (int i = 0; i < ftnode->n_children; i++) {
+                        if (BP_STATE(ftnode, i) == PT_AVAIL) {
+                            lrc_delta -= BLB_LRD(ftnode, i);
+                            BLB_LRD(ftnode, i) = 0;
+                        }
+                    }
+                    toku_ft_adjust_logical_row_count(ft, lrc_delta);
+                }
             } else {
                 FT_STATUS_INC(FT_FULL_EVICTIONS_NONLEAF, 1);
                 FT_STATUS_INC(FT_FULL_EVICTIONS_NONLEAF_BYTES, node_size);
             }
             toku_free(*disk_data);
-        }
-        else {
+        } else {
             if (ftnode->height == 0) {
+                // No need to adjust logical row counts when flushing a clone
+                // as they should have been zeroed out anyway when cloned.
+                // Clones are 'copies' of work already done so doing it again
+                // (adjusting row counts) would be redundant and leads to
+                // inaccurate counts.
                 for (int i = 0; i < ftnode->n_children; i++) {
-                    if (BP_STATE(ftnode,i) == PT_AVAIL) {
+                    if (BP_STATE(ftnode, i) == PT_AVAIL) {
                         BASEMENTNODE bn = BLB(ftnode, i);
-                        toku_ft_decrease_stats(&ft->in_memory_stats, bn->stat64_delta);
+                        toku_ft_decrease_stats(&ft->in_memory_stats,
+                                               bn->stat64_delta);
                     }
                 }
             }
         }
         toku_ftnode_free(&ftnode);
-    }
-    else {
+    } else {
         *new_size = make_ftnode_pair_attr(ftnode);
     }
 }
@@ -739,24 +796,48 @@ toku_ft_status_update_pivot_fetch_reason(ftnode_fetch_extra *bfe)
     }
 }
 
-int toku_ftnode_fetch_callback (CACHEFILE UU(cachefile), PAIR p, int fd, BLOCKNUM blocknum, uint32_t fullhash,
-                                 void **ftnode_pv,  void** disk_data, PAIR_ATTR *sizep, int *dirtyp, void *extraargs) {
+int toku_ftnode_fetch_callback(CACHEFILE UU(cachefile),
+                               PAIR p,
+                               int fd,
+                               BLOCKNUM blocknum,
+                               uint32_t fullhash,
+                               void **ftnode_pv,
+                               void **disk_data,
+                               PAIR_ATTR *sizep,
+                               int *dirtyp,
+                               void *extraargs) {
     assert(extraargs);
-    assert(*ftnode_pv == NULL);
-    FTNODE_DISK_DATA* ndd = (FTNODE_DISK_DATA*)disk_data;
+    assert(*ftnode_pv == nullptr);
+    FTNODE_DISK_DATA *ndd = (FTNODE_DISK_DATA *)disk_data;
     ftnode_fetch_extra *bfe = (ftnode_fetch_extra *)extraargs;
-    FTNODE *node=(FTNODE*)ftnode_pv;
+    FTNODE *node = (FTNODE *)ftnode_pv;
     // deserialize the node, must pass the bfe in because we cannot
     // evaluate what piece of the the node is necessary until we get it at
     // least partially into memory
-    int r = toku_deserialize_ftnode_from(fd, blocknum, fullhash, node, ndd, bfe);
+    int r =
+        toku_deserialize_ftnode_from(fd, blocknum, fullhash, node, ndd, bfe);
     if (r != 0) {
         if (r == TOKUDB_BAD_CHECKSUM) {
-            fprintf(stderr,
-                    "Checksum failure while reading node in file %s.\n",
-                    toku_cachefile_fname_in_env(cachefile));
+            fprintf(
+                stderr,
+                "%s:%d:toku_ftnode_fetch_callback - "
+                "file[%s], blocknum[%lld], toku_deserialize_ftnode_from "
+                "failed with a checksum error.\n",
+                __FILE__,
+                __LINE__,
+                toku_cachefile_fname_in_env(cachefile),
+                (longlong)blocknum.b);
         } else {
-            fprintf(stderr, "Error deserializing node, errno = %d", r);
+            fprintf(
+                stderr,
+                "%s:%d:toku_ftnode_fetch_callback - "
+                "file[%s], blocknum[%lld], toku_deserialize_ftnode_from "
+                "failed with %d.\n",
+                __FILE__,
+                __LINE__,
+                toku_cachefile_fname_in_env(cachefile),
+                (longlong)blocknum.b,
+                r);
         }
         // make absolutely sure we crash before doing anything else.
         abort();
@@ -765,7 +846,8 @@ int toku_ftnode_fetch_callback (CACHEFILE UU(cachefile), PAIR p, int fd, BLOCKNU
     if (r == 0) {
         *sizep = make_ftnode_pair_attr(*node);
         (*node)->ct_pair = p;
-        *dirtyp = (*node)->dirty;  // deserialize could mark the node as dirty (presumably for upgrade)
+        *dirtyp = (*node)->dirty;  // deserialize could mark the node as dirty
+                                   // (presumably for upgrade)
     }
     return r;
 }
@@ -845,10 +927,13 @@ static void compress_internal_node_partition(FTNODE node, int i, enum toku_compr
 }
 
 // callback for partially evicting a node
-int toku_ftnode_pe_callback(void *ftnode_pv, PAIR_ATTR old_attr, void *write_extraargs,
-                            void (*finalize)(PAIR_ATTR new_attr, void *extra), void *finalize_extra) {
-    FTNODE node = (FTNODE) ftnode_pv;
-    FT ft = (FT) write_extraargs;
+int toku_ftnode_pe_callback(void *ftnode_pv,
+                            PAIR_ATTR old_attr,
+                            void *write_extraargs,
+                            void (*finalize)(PAIR_ATTR new_attr, void *extra),
+                            void *finalize_extra) {
+    FTNODE node = (FTNODE)ftnode_pv;
+    FT ft = (FT)write_extraargs;
     int num_partial_evictions = 0;
 
     // Hold things we intend to destroy here.
@@ -866,7 +951,8 @@ int toku_ftnode_pe_callback(void *ftnode_pv, PAIR_ATTR old_attr, void *write_ext
     }
     // Don't partially evict nodes whose partitions can't be read back
     // from disk individually
-    if (node->layout_version_read_from_disk < FT_FIRST_LAYOUT_VERSION_WITH_BASEMENT_NODES) {
+    if (node->layout_version_read_from_disk <
+        FT_FIRST_LAYOUT_VERSION_WITH_BASEMENT_NODES) {
         goto exit;
     }
     //
@@ -874,77 +960,85 @@ int toku_ftnode_pe_callback(void *ftnode_pv, PAIR_ATTR old_attr, void *write_ext
     //
     if (node->height > 0) {
         for (int i = 0; i < node->n_children; i++) {
-            if (BP_STATE(node,i) == PT_AVAIL) {
-                if (BP_SHOULD_EVICT(node,i)) {
+            if (BP_STATE(node, i) == PT_AVAIL) {
+                if (BP_SHOULD_EVICT(node, i)) {
                     NONLEAF_CHILDINFO bnc = BNC(node, i);
                     if (ft_compress_buffers_before_eviction &&
-                        // We may not serialize and compress a partition in memory if its
-                        // in memory layout version is different than what's on disk (and
-                        // therefore requires upgrade).
+                        // We may not serialize and compress a partition in
+                        // memory if its in memory layout version is different
+                        // than what's on disk (and therefore requires upgrade).
                         //
-                        // Auto-upgrade code assumes that if a node's layout version read
-                        // from disk is not current, it MUST require upgrade. Breaking
-                        // this rule would cause upgrade code to upgrade this partition
-                        // again after we serialize it as the current version, which is bad.
-                        node->layout_version == node->layout_version_read_from_disk) {
+                        // Auto-upgrade code assumes that if a node's layout
+                        // version read from disk is not current, it MUST
+                        // require upgrade.
+                        // Breaking this rule would cause upgrade code to
+                        // upgrade this partition again after we serialize it as
+                        // the current version, which is bad.
+                        node->layout_version ==
+                            node->layout_version_read_from_disk) {
                         toku_ft_bnc_move_messages_to_stale(ft, bnc);
                         compress_internal_node_partition(
                             node,
                             i,
                             // Always compress with quicklz
-                            TOKU_QUICKLZ_METHOD
-                            );
+                            TOKU_QUICKLZ_METHOD);
                     } else {
                         // We're not compressing buffers before eviction. Simply
-                        // detach the buffer and set the child's state to on-disk.
+                        // detach the buffer and set the child's state to
+                        // on-disk.
                         set_BNULL(node, i);
                         BP_STATE(node, i) = PT_ON_DISK;
                     }
                     buffers_to_destroy[num_buffers_to_destroy++] = bnc;
                     num_partial_evictions++;
+                } else {
+                    BP_SWEEP_CLOCK(node, i);
                 }
-                else {
-                    BP_SWEEP_CLOCK(node,i);
-                }
-            }
-            else {
+            } else {
                 continue;
             }
         }
-    }
-    //
-    // partial eviction strategy for basement nodes:
-    //  if the bn is compressed, evict it
-    //  else: check if it requires eviction, if it does, evict it, if not, sweep the clock count
-    //
-    else {
+    } else {
+        //
+        // partial eviction strategy for basement nodes:
+        //  if the bn is compressed, evict it
+        //  else: check if it requires eviction, if it does, evict it, if not,
+        //  sweep the clock count
+        //
         for (int i = 0; i < node->n_children; i++) {
             // Get rid of compressed stuff no matter what.
-            if (BP_STATE(node,i) == PT_COMPRESSED) {
+            if (BP_STATE(node, i) == PT_COMPRESSED) {
                 SUB_BLOCK sb = BSB(node, i);
                 pointers_to_free[num_pointers_to_free++] = sb->compressed_ptr;
                 pointers_to_free[num_pointers_to_free++] = sb;
                 set_BNULL(node, i);
-                BP_STATE(node,i) = PT_ON_DISK;
+                BP_STATE(node, i) = PT_ON_DISK;
                 num_partial_evictions++;
-            }
-            else if (BP_STATE(node,i) == PT_AVAIL) {
-                if (BP_SHOULD_EVICT(node,i)) {
+            } else if (BP_STATE(node, i) == PT_AVAIL) {
+                if (BP_SHOULD_EVICT(node, i)) {
                     BASEMENTNODE bn = BLB(node, i);
                     basements_to_destroy[num_basements_to_destroy++] = bn;
-                    toku_ft_decrease_stats(&ft->in_memory_stats, bn->stat64_delta);
+                    toku_ft_decrease_stats(&ft->in_memory_stats,
+                                           bn->stat64_delta);
+                    // A basement node is being partially evicted.
+                    // This masement node may have had messages applied to it to
+                    // satisfy a query, but was never actually dirtied.
+                    // This message application may have updated the trees
+                    // logical row count. Since these message applications are
+                    // not being persisted, we need undo the logical row count
+                    // adjustments as they may occur again in the future if/when
+                    // the node is re-read from disk for another query or change.
+                    toku_ft_adjust_logical_row_count(ft,
+                                                     -bn->logical_rows_delta);
                     set_BNULL(node, i);
                     BP_STATE(node, i) = PT_ON_DISK;
                     num_partial_evictions++;
+                } else {
+                    BP_SWEEP_CLOCK(node, i);
                 }
-                else {
-                    BP_SWEEP_CLOCK(node,i);
-                }
-            }
-            else if (BP_STATE(node,i) == PT_ON_DISK) {
+            } else if (BP_STATE(node, i) == PT_ON_DISK) {
                 continue;
-            }
-            else {
+            } else {
                 abort();
             }
         }
@@ -1371,7 +1465,8 @@ static void inject_message_in_locked_node(
     ft_msg msg_with_msn(msg.kdbt(), msg.vdbt(), msg.type(), msg_msn, msg.xids());
     paranoid_invariant(msg_with_msn.msn().msn > node->max_msn_applied_to_node_on_disk.msn);
 
-    STAT64INFO_S stats_delta = {0,0};
+    STAT64INFO_S stats_delta = { 0,0 };
+    int64_t logical_rows_delta = 0;
     toku_ftnode_put_msg(
         ft->cmp,
         ft->update_fun,
@@ -1381,11 +1476,12 @@ static void inject_message_in_locked_node(
         true,
         gc_info,
         flow_deltas,
-        &stats_delta
-        );
+        &stats_delta,
+        &logical_rows_delta);
     if (stats_delta.numbytes || stats_delta.numrows) {
         toku_ft_update_stats(&ft->in_memory_stats, stats_delta);
     }
+    toku_ft_adjust_logical_row_count(ft, logical_rows_delta);
     //
     // assumption is that toku_ftnode_put_msg will
     // mark the node as dirty.
@@ -2169,6 +2265,7 @@ int toku_ft_insert_unique(FT_HANDLE ft_h, DBT *key, DBT *val, TOKUTXN txn, bool 
 
     if (r == 0) {
         ft_txn_log_insert(ft_h->ft, key, val, txn, do_logging, FT_INSERT);
+        toku_ft_adjust_logical_row_count(ft_h->ft, 1);
     }
     return r;
 }
@@ -2344,6 +2441,7 @@ void toku_ft_maybe_insert (FT_HANDLE ft_h, DBT *key, DBT *val, TOKUTXN txn, bool
         if (r != 0) {
             toku_ft_send_insert(ft_h, key, val, message_xids, type, &gc_info);
         }
+        toku_ft_adjust_logical_row_count(ft_h->ft, 1);
     }
 }
 
@@ -2374,12 +2472,16 @@ ft_send_update_msg(FT_HANDLE ft_h, const ft_msg &msg, TOKUTXN txn) {
     toku_ft_root_put_msg(ft_h->ft, msg, &gc_info);
 }
 
-void toku_ft_maybe_update(FT_HANDLE ft_h, const DBT *key, const DBT *update_function_extra,
-                      TOKUTXN txn, bool oplsn_valid, LSN oplsn,
-                      bool do_logging) {
+void toku_ft_maybe_update(FT_HANDLE ft_h,
+                          const DBT *key,
+                          const DBT *update_function_extra,
+                          TOKUTXN txn,
+                          bool oplsn_valid,
+                          LSN oplsn,
+                          bool do_logging) {
     TXNID_PAIR xid = toku_txn_get_txnid(txn);
     if (txn) {
-        BYTESTRING keybs = { key->size, (char *) key->data };
+        BYTESTRING keybs = {key->size, (char *)key->data};
         toku_logger_save_rollback_cmdupdate(
             txn, toku_cachefile_filenum(ft_h->ft->cf), &keybs);
         toku_txn_maybe_note_ft(txn, ft_h->ft);
@@ -2388,22 +2490,33 @@ void toku_ft_maybe_update(FT_HANDLE ft_h, const DBT *key, const DBT *update_func
     TOKULOGGER logger;
     logger = toku_txn_logger(txn);
     if (do_logging && logger) {
-        BYTESTRING keybs = {.len=key->size, .data=(char *) key->data};
-        BYTESTRING extrabs = {.len=update_function_extra->size,
-                              .data = (char *) update_function_extra->data};
-        toku_log_enq_update(logger, NULL, 0, txn,
-                                toku_cachefile_filenum(ft_h->ft->cf),
-                                xid, keybs, extrabs);
+        BYTESTRING keybs = {.len = key->size, .data = (char *)key->data};
+        BYTESTRING extrabs = {.len = update_function_extra->size,
+                              .data = (char *)update_function_extra->data};
+        toku_log_enq_update(logger,
+                            NULL,
+                            0,
+                            txn,
+                            toku_cachefile_filenum(ft_h->ft->cf),
+                            xid,
+                            keybs,
+                            extrabs);
     }
 
     LSN treelsn;
-    if (oplsn_valid && oplsn.lsn <= (treelsn = toku_ft_checkpoint_lsn(ft_h->ft)).lsn) {
+    if (oplsn_valid &&
+        oplsn.lsn <= (treelsn = toku_ft_checkpoint_lsn(ft_h->ft)).lsn) {
         // do nothing
     } else {
-        XIDS message_xids = txn ? toku_txn_get_xids(txn) : toku_xids_get_root_xids();
-        ft_msg msg(key, update_function_extra, FT_UPDATE, ZERO_MSN, message_xids);
+        XIDS message_xids =
+            txn ? toku_txn_get_xids(txn) : toku_xids_get_root_xids();
+        ft_msg msg(
+            key, update_function_extra, FT_UPDATE, ZERO_MSN, message_xids);
         ft_send_update_msg(ft_h, msg, txn);
     }
+    // updates get converted to insert messages, which should do a -1 on the
+    // logical row count when the messages are permanently applied
+    toku_ft_adjust_logical_row_count(ft_h->ft, 1);
 }
 
 void toku_ft_maybe_update_broadcast(FT_HANDLE ft_h, const DBT *update_function_extra,
@@ -2513,6 +2626,7 @@ void toku_ft_maybe_delete(FT_HANDLE ft_h, DBT *key, TOKUTXN txn, bool oplsn_vali
                             oldest_referenced_xid_estimate,
                             txn != nullptr ? !txn->for_recovery : false);
         toku_ft_send_delete(ft_h, key, message_xids, &gc_info);
+        toku_ft_adjust_logical_row_count(ft_h->ft, -1);
     }
 }
 
@@ -2555,15 +2669,108 @@ void toku_ft_set_direct_io (bool direct_io_on) {
     use_direct_io = direct_io_on;
 }
 
-static inline int ft_open_maybe_direct(const char *filename, int oflag, int mode) {
+static inline int ft_open_maybe_direct(const char *filename,
+                                       int oflag,
+                                       int mode) {
     if (use_direct_io) {
-        return toku_os_open_direct(filename, oflag, mode);
+        return toku_os_open_direct(
+            filename, oflag, mode, *tokudb_file_data_key);
     } else {
-        return toku_os_open(filename, oflag, mode);
+        return toku_os_open(filename, oflag, mode, *tokudb_file_data_key);
     }
 }
 
 static const mode_t file_mode = S_IRUSR+S_IWUSR+S_IRGRP+S_IWGRP+S_IROTH+S_IWOTH;
+
+inline bool toku_file_is_root(const char *path, const char *last_slash) {
+    return last_slash == path;
+}
+
+static std::unique_ptr<char[], decltype(&toku_free)> toku_file_get_parent_dir(
+    const char *path) {
+    std::unique_ptr<char[], decltype(&toku_free)> result(nullptr, &toku_free);
+
+    bool has_trailing_slash = false;
+
+    /* Find the offset of the last slash */
+    const char *last_slash = strrchr(path, OS_PATH_SEPARATOR);
+
+    if (!last_slash) {
+        /* No slash in the path, return NULL */
+        return result;
+    }
+
+    /* Ok, there is a slash. Is there anything after it? */
+    if (static_cast<size_t>(last_slash - path + 1) == strlen(path)) {
+        has_trailing_slash = true;
+    }
+
+    /* Reduce repetative slashes. */
+    while (last_slash > path && last_slash[-1] == OS_PATH_SEPARATOR) {
+        last_slash--;
+    }
+
+    /* Check for the root of a drive. */
+    if (toku_file_is_root(path, last_slash)) {
+        return result;
+    }
+
+    /* If a trailing slash prevented the first strrchr() from trimming
+    the last component of the path, trim that component now. */
+    if (has_trailing_slash) {
+        /* Back up to the previous slash. */
+        last_slash--;
+        while (last_slash > path && last_slash[0] != OS_PATH_SEPARATOR) {
+            last_slash--;
+        }
+
+        /* Reduce repetative slashes. */
+        while (last_slash > path && last_slash[-1] == OS_PATH_SEPARATOR) {
+            last_slash--;
+        }
+    }
+
+    /* Check for the root of a drive. */
+    if (toku_file_is_root(path, last_slash)) {
+        return result;
+    }
+
+    result.reset(toku_strndup(path, last_slash - path));
+    return result;
+}
+
+bool toku_create_subdirs_if_needed(const char *path) {
+    static const mode_t dir_mode = S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP |
+                                   S_IWGRP | S_IXGRP | S_IROTH | S_IXOTH;
+
+    toku_struct_stat stat;
+    bool subdir_exists = true;
+    auto subdir = toku_file_get_parent_dir(path);
+
+    if (!subdir.get())
+        return true;
+
+    if (toku_stat(subdir.get(), &stat, toku_uninstrumented) == -1) {
+        if (ENOENT == get_error_errno())
+            subdir_exists = false;
+        else
+            return false;
+    }
+
+    if (subdir_exists) {
+        if (!S_ISDIR(stat.st_mode))
+            return false;
+        return true;
+    }
+
+    if (!toku_create_subdirs_if_needed(subdir.get()))
+        return false;
+
+    if (toku_os_mkdir(subdir.get(), dir_mode))
+        return false;
+
+    return true;
+}
 
 // open a file for use by the ft
 // Requires:  File does not exist.
@@ -2571,6 +2778,8 @@ static int ft_create_file(FT_HANDLE UU(ft_handle), const char *fname, int *fdp) 
     int r;
     int fd;
     int er;
+    if (!toku_create_subdirs_if_needed(fname))
+        return get_error_errno();
     fd = ft_open_maybe_direct(fname, O_RDWR | O_BINARY, file_mode);
     assert(fd==-1);
     if ((er = get_maybe_error_errno()) != ENOENT) {
@@ -2753,6 +2962,8 @@ ft_handle_open(FT_HANDLE ft_h, const char *fname_in_env, int is_create, int only
     CACHEFILE cf = NULL;
     FT ft = NULL;
     bool did_create = false;
+    bool was_already_open = false;
+
     toku_ft_open_close_lock();
 
     if (ft_h->did_set_flags) {
@@ -2764,7 +2975,6 @@ ft_handle_open(FT_HANDLE ft_h, const char *fname_in_env, int is_create, int only
     FILENUM reserved_filenum;
     reserved_filenum = use_filenum;
     fname_in_cwd = toku_cachetable_get_fname_in_cwd(cachetable, fname_in_env);
-    bool was_already_open;
     {
         int fd = -1;
         r = ft_open_file(fname_in_cwd, &fd);
@@ -3777,25 +3987,34 @@ struct keyrange_compare_s {
 };
 
 // TODO: Remove me, I'm boring
-static int keyrange_compare(DBT const &kdbt, const struct keyrange_compare_s &s) {
+static int keyrange_compare(DBT const &kdbt,
+                            const struct keyrange_compare_s &s) {
     return s.ft->cmp(&kdbt, s.key);
 }
 
-static void
-keysrange_in_leaf_partition (FT_HANDLE ft_handle, FTNODE node,
-                             DBT* key_left, DBT* key_right,
-                             int left_child_number, int right_child_number, uint64_t estimated_num_rows,
-                             uint64_t *less, uint64_t* equal_left, uint64_t* middle,
-                             uint64_t* equal_right, uint64_t* greater, bool* single_basement_node)
+static void keysrange_in_leaf_partition(FT_HANDLE ft_handle,
+                                        FTNODE node,
+                                        DBT *key_left,
+                                        DBT *key_right,
+                                        int left_child_number,
+                                        int right_child_number,
+                                        uint64_t estimated_num_rows,
+                                        uint64_t *less,
+                                        uint64_t *equal_left,
+                                        uint64_t *middle,
+                                        uint64_t *equal_right,
+                                        uint64_t *greater,
+                                        bool *single_basement_node)
 // If the partition is in main memory then estimate the number
 // Treat key_left == NULL as negative infinity
 // Treat key_right == NULL as positive infinity
 {
-    paranoid_invariant(node->height == 0); // we are in a leaf
+    paranoid_invariant(node->height == 0);  // we are in a leaf
     paranoid_invariant(!(key_left == NULL && key_right != NULL));
     paranoid_invariant(left_child_number <= right_child_number);
     bool single_basement = left_child_number == right_child_number;
-    paranoid_invariant(!single_basement || (BP_STATE(node, left_child_number) == PT_AVAIL));
+    paranoid_invariant(!single_basement ||
+                       (BP_STATE(node, left_child_number) == PT_AVAIL));
     if (BP_STATE(node, left_child_number) == PT_AVAIL) {
         int r;
         // The partition is in main memory then get an exact count.
@@ -3803,29 +4022,35 @@ keysrange_in_leaf_partition (FT_HANDLE ft_handle, FTNODE node,
         BASEMENTNODE bn = BLB(node, left_child_number);
         uint32_t idx_left = 0;
         // if key_left is NULL then set r==-1 and idx==0.
-        r = key_left ? bn->data_buffer.find_zero<decltype(s_left), keyrange_compare>(s_left, nullptr, nullptr, nullptr, &idx_left) : -1;
+        r = key_left
+                ? bn->data_buffer.find_zero<decltype(s_left), keyrange_compare>(
+                      s_left, nullptr, nullptr, nullptr, &idx_left)
+                : -1;
         *less = idx_left;
-        *equal_left = (r==0) ? 1 : 0;
+        *equal_left = (r == 0) ? 1 : 0;
 
         uint32_t size = bn->data_buffer.num_klpairs();
         uint32_t idx_right = size;
         r = -1;
         if (single_basement && key_right) {
             struct keyrange_compare_s s_right = {ft_handle->ft, key_right};
-            r = bn->data_buffer.find_zero<decltype(s_right), keyrange_compare>(s_right, nullptr, nullptr, nullptr, &idx_right);
+            r = bn->data_buffer.find_zero<decltype(s_right), keyrange_compare>(
+                s_right, nullptr, nullptr, nullptr, &idx_right);
         }
         *middle = idx_right - idx_left - *equal_left;
-        *equal_right = (r==0) ? 1 : 0;
+        *equal_right = (r == 0) ? 1 : 0;
         *greater = size - idx_right - *equal_right;
     } else {
         paranoid_invariant(!single_basement);
         uint32_t idx_left = estimated_num_rows / 2;
         if (!key_left) {
-            //Both nullptr, assume key_left belongs before leftmost entry, key_right belongs after rightmost entry
+            // Both nullptr, assume key_left belongs before leftmost entry,
+            // key_right belongs after rightmost entry
             idx_left = 0;
             paranoid_invariant(!key_right);
         }
-        // Assume idx_left and idx_right point to where key_left and key_right belong, (but are not there).
+        // Assume idx_left and idx_right point to where key_left and key_right
+        // belong, (but are not there).
         *less = idx_left;
         *equal_left = 0;
         *middle = estimated_num_rows - idx_left;
@@ -3835,44 +4060,76 @@ keysrange_in_leaf_partition (FT_HANDLE ft_handle, FTNODE node,
     *single_basement_node = single_basement;
 }
 
-static int
-toku_ft_keysrange_internal (FT_HANDLE ft_handle, FTNODE node,
-                            DBT* key_left, DBT* key_right, bool may_find_right,
-                            uint64_t* less, uint64_t* equal_left, uint64_t* middle,
-                            uint64_t* equal_right, uint64_t* greater, bool* single_basement_node,
-                            uint64_t estimated_num_rows,
-                            ftnode_fetch_extra *min_bfe, // set up to read a minimal read.
-                            ftnode_fetch_extra *match_bfe, // set up to read a basement node iff both keys in it
-                            struct unlockers *unlockers, ANCESTORS ancestors, const pivot_bounds &bounds)
-// Implementation note: Assign values to less, equal, and greater, and then on the way out (returning up the stack) we add more values in.
+static int toku_ft_keysrange_internal(
+    FT_HANDLE ft_handle,
+    FTNODE node,
+    DBT *key_left,
+    DBT *key_right,
+    bool may_find_right,
+    uint64_t *less,
+    uint64_t *equal_left,
+    uint64_t *middle,
+    uint64_t *equal_right,
+    uint64_t *greater,
+    bool *single_basement_node,
+    uint64_t estimated_num_rows,
+    ftnode_fetch_extra *min_bfe,  // set up to read a minimal read.
+    ftnode_fetch_extra
+        *match_bfe,  // set up to read a basement node iff both keys in it
+    struct unlockers *unlockers,
+    ANCESTORS ancestors,
+    const pivot_bounds &bounds)
+// Implementation note: Assign values to less, equal, and greater, and then on
+// the way out (returning up the stack) we add more values in.
 {
     int r = 0;
     // if KEY is NULL then use the leftmost key.
-    int left_child_number = key_left ? toku_ftnode_which_child (node, key_left, ft_handle->ft->cmp) : 0;
-    int right_child_number = node->n_children;  // Sentinel that does not equal left_child_number.
+    int left_child_number =
+        key_left ? toku_ftnode_which_child(node, key_left, ft_handle->ft->cmp)
+                 : 0;
+    int right_child_number =
+        node->n_children;  // Sentinel that does not equal left_child_number.
     if (may_find_right) {
-        right_child_number = key_right ? toku_ftnode_which_child (node, key_right, ft_handle->ft->cmp) : node->n_children - 1;
+        right_child_number =
+            key_right
+                ? toku_ftnode_which_child(node, key_right, ft_handle->ft->cmp)
+                : node->n_children - 1;
     }
 
     uint64_t rows_per_child = estimated_num_rows / node->n_children;
     if (node->height == 0) {
-        keysrange_in_leaf_partition(ft_handle, node, key_left, key_right, left_child_number, right_child_number,
-                                    rows_per_child, less, equal_left, middle, equal_right, greater, single_basement_node);
+        keysrange_in_leaf_partition(ft_handle,
+                                    node,
+                                    key_left,
+                                    key_right,
+                                    left_child_number,
+                                    right_child_number,
+                                    rows_per_child,
+                                    less,
+                                    equal_left,
+                                    middle,
+                                    equal_right,
+                                    greater,
+                                    single_basement_node);
 
-        *less    += rows_per_child * left_child_number;
+        *less += rows_per_child * left_child_number;
         if (*single_basement_node) {
-            *greater += rows_per_child * (node->n_children - left_child_number - 1);
+            *greater +=
+                rows_per_child * (node->n_children - left_child_number - 1);
         } else {
-            *middle += rows_per_child * (node->n_children - left_child_number - 1);
+            *middle +=
+                rows_per_child * (node->n_children - left_child_number - 1);
         }
     } else {
         // do the child.
         struct ancestors next_ancestors = {node, left_child_number, ancestors};
         BLOCKNUM childblocknum = BP_BLOCKNUM(node, left_child_number);
-        uint32_t fullhash = compute_child_fullhash(ft_handle->ft->cf, node, left_child_number);
+        uint32_t fullhash =
+            compute_child_fullhash(ft_handle->ft->cf, node, left_child_number);
         FTNODE childnode;
         bool msgs_applied = false;
-        bool child_may_find_right = may_find_right && left_child_number == right_child_number;
+        bool child_may_find_right =
+            may_find_right && left_child_number == right_child_number;
         r = toku_pin_ftnode_for_query(
             ft_handle,
             childblocknum,
@@ -3883,27 +4140,45 @@ toku_ft_keysrange_internal (FT_HANDLE ft_handle, FTNODE node,
             child_may_find_right ? match_bfe : min_bfe,
             false,
             &childnode,
-            &msgs_applied
-            );
+            &msgs_applied);
         paranoid_invariant(!msgs_applied);
         if (r != TOKUDB_TRY_AGAIN) {
             assert_zero(r);
 
-            struct unlock_ftnode_extra unlock_extra   = {ft_handle,childnode,false};
-            struct unlockers next_unlockers = {true, unlock_ftnode_fun, (void*)&unlock_extra, unlockers};
-            const pivot_bounds next_bounds = bounds.next_bounds(node, left_child_number);
+            struct unlock_ftnode_extra unlock_extra = {
+                ft_handle, childnode, false};
+            struct unlockers next_unlockers = {
+                true, unlock_ftnode_fun, (void *)&unlock_extra, unlockers};
+            const pivot_bounds next_bounds =
+                bounds.next_bounds(node, left_child_number);
 
-            r = toku_ft_keysrange_internal(ft_handle, childnode, key_left, key_right, child_may_find_right,
-                                           less, equal_left, middle, equal_right, greater, single_basement_node,
-                                           rows_per_child, min_bfe, match_bfe, &next_unlockers, &next_ancestors, next_bounds);
+            r = toku_ft_keysrange_internal(ft_handle,
+                                           childnode,
+                                           key_left,
+                                           key_right,
+                                           child_may_find_right,
+                                           less,
+                                           equal_left,
+                                           middle,
+                                           equal_right,
+                                           greater,
+                                           single_basement_node,
+                                           rows_per_child,
+                                           min_bfe,
+                                           match_bfe,
+                                           &next_unlockers,
+                                           &next_ancestors,
+                                           next_bounds);
             if (r != TOKUDB_TRY_AGAIN) {
                 assert_zero(r);
 
-                *less    += rows_per_child * left_child_number;
+                *less += rows_per_child * left_child_number;
                 if (*single_basement_node) {
-                    *greater += rows_per_child * (node->n_children - left_child_number - 1);
+                    *greater += rows_per_child *
+                                (node->n_children - left_child_number - 1);
                 } else {
-                    *middle += rows_per_child * (node->n_children - left_child_number - 1);
+                    *middle += rows_per_child *
+                               (node->n_children - left_child_number - 1);
                 }
 
                 assert(unlockers->locked);
@@ -3914,10 +4189,21 @@ toku_ft_keysrange_internal (FT_HANDLE ft_handle, FTNODE node,
     return r;
 }
 
-void toku_ft_keysrange(FT_HANDLE ft_handle, DBT* key_left, DBT* key_right, uint64_t *less_p, uint64_t* equal_left_p, uint64_t* middle_p, uint64_t* equal_right_p, uint64_t* greater_p, bool* middle_3_exact_p)
-// Effect: Return an estimate  of the number of keys to the left, the number equal (to left key), number between keys, number equal to right key, and the number to the right of both keys.
+void toku_ft_keysrange(FT_HANDLE ft_handle,
+                       DBT *key_left,
+                       DBT *key_right,
+                       uint64_t *less_p,
+                       uint64_t *equal_left_p,
+                       uint64_t *middle_p,
+                       uint64_t *equal_right_p,
+                       uint64_t *greater_p,
+                       bool *middle_3_exact_p)
+// Effect: Return an estimate  of the number of keys to the left, the number
+// equal (to left key), number between keys, number equal to right key, and the
+// number to the right of both keys.
 //   The values are an estimate.
-//   If you perform a keyrange on two keys that are in the same basement, equal_less, middle, and equal_right will be exact.
+//   If you perform a keyrange on two keys that are in the same basement,
+//   equal_less, middle, and equal_right will be exact.
 //   4184: What to do with a NULL key?
 //   key_left==NULL is treated as -infinity
 //   key_right==NULL is treated as +infinity
@@ -3925,10 +4211,21 @@ void toku_ft_keysrange(FT_HANDLE ft_handle, DBT* key_left, DBT* key_right, uint6
 //   key_right can be non-null only if key_left is non-null;
 {
     if (!key_left && key_right) {
-        // Simplify internals by only supporting key_right != null when key_left != null
-        // If key_right != null and key_left == null, then swap them and fix up numbers.
-        uint64_t less = 0, equal_left = 0, middle = 0, equal_right = 0, greater = 0;
-        toku_ft_keysrange(ft_handle, key_right, nullptr, &less, &equal_left, &middle, &equal_right, &greater, middle_3_exact_p);
+        // Simplify internals by only supporting key_right != null when key_left
+        // != null
+        // If key_right != null and key_left == null, then swap them and fix up
+        // numbers.
+        uint64_t less = 0, equal_left = 0, middle = 0, equal_right = 0,
+                 greater = 0;
+        toku_ft_keysrange(ft_handle,
+                          key_right,
+                          nullptr,
+                          &less,
+                          &equal_left,
+                          &middle,
+                          &equal_right,
+                          &greater,
+                          middle_3_exact_p);
         *less_p = 0;
         *equal_left_p = 0;
         *middle_p = less;
@@ -3941,98 +4238,132 @@ void toku_ft_keysrange(FT_HANDLE ft_handle, DBT* key_left, DBT* key_right, uint6
     paranoid_invariant(!(!key_left && key_right));
     ftnode_fetch_extra min_bfe;
     ftnode_fetch_extra match_bfe;
-    min_bfe.create_for_min_read(ft_handle->ft); // read pivot keys but not message buffers
-    match_bfe.create_for_keymatch(ft_handle->ft, key_left, key_right, false, false); // read basement node only if both keys in it.
-try_again:
+    min_bfe.create_for_min_read(
+        ft_handle->ft);  // read pivot keys but not message buffers
+    match_bfe.create_for_keymatch(
+        ft_handle->ft,
+        key_left,
+        key_right,
+        false,
+        false);  // read basement node only if both keys in it.
+try_again : {
+    uint64_t less = 0, equal_left = 0, middle = 0, equal_right = 0, greater = 0;
+    bool single_basement_node = false;
+    FTNODE node = NULL;
     {
-        uint64_t less = 0, equal_left = 0, middle = 0, equal_right = 0, greater = 0;
-        bool single_basement_node = false;
-        FTNODE node = NULL;
-        {
-            uint32_t fullhash;
-            CACHEKEY root_key;
-            toku_calculate_root_offset_pointer(ft_handle->ft, &root_key, &fullhash);
-            toku_pin_ftnode(
-                ft_handle->ft,
-                root_key,
-                fullhash,
-                &match_bfe,
-                PL_READ, // may_modify_node, cannot change root during keyrange
-                &node,
-                true
-                );
+        uint32_t fullhash;
+        CACHEKEY root_key;
+        toku_calculate_root_offset_pointer(ft_handle->ft, &root_key, &fullhash);
+        toku_pin_ftnode(
+            ft_handle->ft,
+            root_key,
+            fullhash,
+            &match_bfe,
+            PL_READ,  // may_modify_node, cannot change root during keyrange
+            &node,
+            true);
+    }
+
+    struct unlock_ftnode_extra unlock_extra = {ft_handle, node, false};
+    struct unlockers unlockers = {
+        true, unlock_ftnode_fun, (void *)&unlock_extra, (UNLOCKERS)NULL};
+
+    {
+        int r;
+        int64_t numrows = ft_handle->ft->in_memory_logical_rows;
+        if (numrows < 0)
+            numrows = 0;  // prevent appearance of a negative number
+        r = toku_ft_keysrange_internal(ft_handle,
+                                       node,
+                                       key_left,
+                                       key_right,
+                                       true,
+                                       &less,
+                                       &equal_left,
+                                       &middle,
+                                       &equal_right,
+                                       &greater,
+                                       &single_basement_node,
+                                       numrows,
+                                       &min_bfe,
+                                       &match_bfe,
+                                       &unlockers,
+                                       (ANCESTORS)NULL,
+                                       pivot_bounds::infinite_bounds());
+        assert(r == 0 || r == TOKUDB_TRY_AGAIN);
+        if (r == TOKUDB_TRY_AGAIN) {
+            assert(!unlockers.locked);
+            goto try_again;
         }
-
-        struct unlock_ftnode_extra unlock_extra = {ft_handle,node,false};
-        struct unlockers unlockers = {true, unlock_ftnode_fun, (void*)&unlock_extra, (UNLOCKERS)NULL};
-
-        {
-            int r;
-            int64_t numrows = ft_handle->ft->in_memory_stats.numrows;
-            if (numrows < 0)
-                numrows = 0;  // prevent appearance of a negative number
-            r = toku_ft_keysrange_internal (ft_handle, node, key_left, key_right, true,
-                                            &less, &equal_left, &middle, &equal_right, &greater,
-                                            &single_basement_node, numrows,
-                                            &min_bfe, &match_bfe, &unlockers, (ANCESTORS)NULL, pivot_bounds::infinite_bounds());
+        // May need to do a second query.
+        if (!single_basement_node && key_right != nullptr) {
+            // "greater" is stored in "middle"
+            invariant_zero(equal_right);
+            invariant_zero(greater);
+            uint64_t less2 = 0, equal_left2 = 0, middle2 = 0, equal_right2 = 0,
+                     greater2 = 0;
+            bool ignore;
+            r = toku_ft_keysrange_internal(ft_handle,
+                                           node,
+                                           key_right,
+                                           nullptr,
+                                           false,
+                                           &less2,
+                                           &equal_left2,
+                                           &middle2,
+                                           &equal_right2,
+                                           &greater2,
+                                           &ignore,
+                                           numrows,
+                                           &min_bfe,
+                                           &match_bfe,
+                                           &unlockers,
+                                           (ANCESTORS) nullptr,
+                                           pivot_bounds::infinite_bounds());
             assert(r == 0 || r == TOKUDB_TRY_AGAIN);
             if (r == TOKUDB_TRY_AGAIN) {
                 assert(!unlockers.locked);
                 goto try_again;
             }
-            // May need to do a second query.
-            if (!single_basement_node && key_right != nullptr) {
-                // "greater" is stored in "middle"
-                invariant_zero(equal_right);
-                invariant_zero(greater);
-                uint64_t less2 = 0, equal_left2 = 0, middle2 = 0, equal_right2 = 0, greater2 = 0;
-                bool ignore;
-                r = toku_ft_keysrange_internal (ft_handle, node, key_right, nullptr, false,
-                                                &less2, &equal_left2, &middle2, &equal_right2, &greater2,
-                                                &ignore, numrows,
-                                                &min_bfe, &match_bfe, &unlockers, (ANCESTORS)nullptr, pivot_bounds::infinite_bounds());
-                assert(r == 0 || r == TOKUDB_TRY_AGAIN);
-                if (r == TOKUDB_TRY_AGAIN) {
-                    assert(!unlockers.locked);
-                    goto try_again;
-                }
-                invariant_zero(equal_right2);
-                invariant_zero(greater2);
-                // Update numbers.
-                // less is already correct.
-                // equal_left is already correct.
+            invariant_zero(equal_right2);
+            invariant_zero(greater2);
+            // Update numbers.
+            // less is already correct.
+            // equal_left is already correct.
 
-                // "middle" currently holds everything greater than left_key in first query
-                // 'middle2' currently holds everything greater than right_key in second query
-                // 'equal_left2' is how many match right_key
+            // "middle" currently holds everything greater than left_key in
+            // first query
+            // 'middle2' currently holds everything greater than right_key in
+            // second query
+            // 'equal_left2' is how many match right_key
 
-                // Prevent underflow.
-                if (middle >= equal_left2 + middle2) {
-                    middle -= equal_left2 + middle2;
-                } else {
-                    middle = 0;
-                }
-                equal_right = equal_left2;
-                greater = middle2;
+            // Prevent underflow.
+            if (middle >= equal_left2 + middle2) {
+                middle -= equal_left2 + middle2;
+            } else {
+                middle = 0;
             }
+            equal_right = equal_left2;
+            greater = middle2;
         }
-        assert(unlockers.locked);
-        toku_unpin_ftnode_read_only(ft_handle->ft, node);
-        if (!key_right) {
-            paranoid_invariant_zero(equal_right);
-            paranoid_invariant_zero(greater);
-        }
-        if (!key_left) {
-            paranoid_invariant_zero(less);
-            paranoid_invariant_zero(equal_left);
-        }
-        *less_p        = less;
-        *equal_left_p  = equal_left;
-        *middle_p      = middle;
-        *equal_right_p = equal_right;
-        *greater_p     = greater;
-        *middle_3_exact_p = single_basement_node;
     }
+    assert(unlockers.locked);
+    toku_unpin_ftnode_read_only(ft_handle->ft, node);
+    if (!key_right) {
+        paranoid_invariant_zero(equal_right);
+        paranoid_invariant_zero(greater);
+    }
+    if (!key_left) {
+        paranoid_invariant_zero(less);
+        paranoid_invariant_zero(equal_left);
+    }
+    *less_p = less;
+    *equal_left_p = equal_left;
+    *middle_p = middle;
+    *equal_right_p = equal_right;
+    *greater_p = greater;
+    *middle_3_exact_p = single_basement_node;
+}
 }
 
 struct get_key_after_bytes_iterate_extra {
@@ -4313,20 +4644,353 @@ int toku_dump_ft(FILE *f, FT_HANDLE ft_handle) {
     return toku_dump_ftnode(f, ft_handle, root_key, 0, 0, 0);
 }
 
+
+static void toku_pfs_keys_init(const char *toku_instr_group_name) {
+    kibbutz_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name, "kibbutz_mutex");
+    minicron_p_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "minicron_p_mutex");
+    queue_result_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "queue_result_mutex");
+    tpool_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "tpool_lock_mutex");
+    workset_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "workset_lock_mutex");
+    bjm_jobs_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "bjm_jobs_lock_mutex");
+    log_internal_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "log_internal_lock_mutex");
+    cachetable_ev_thread_lock_mutex_key =
+        new toku_instr_key(toku_instr_object_type::mutex,
+                           toku_instr_group_name,
+                           "cachetable_ev_thread_lock_mutex");
+    cachetable_disk_nb_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "cachetable_disk_nb_mutex");
+    safe_file_size_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "safe_file_size_lock_mutex");
+    cachetable_m_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "cachetable_m_mutex_key");
+    checkpoint_safe_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "checkpoint_safe_mutex");
+    ft_ref_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "ft_ref_lock_mutex");
+    ft_open_close_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "ft_open_close_lock_mutex");
+    loader_error_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "loader_error_mutex");
+    bfs_mutex_key =
+        new toku_instr_key(toku_instr_object_type::mutex, toku_instr_group_name,
+        "bfs_mutex");
+    loader_bl_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "loader_bl_mutex");
+    loader_fi_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "loader_fi_lock_mutex");
+    loader_out_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "loader_out_mutex");
+    result_output_condition_lock_mutex_key =
+        new toku_instr_key(toku_instr_object_type::mutex,
+                           toku_instr_group_name,
+                           "result_output_condition_lock_mutex");
+    block_table_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "block_table_mutex");
+    rollback_log_node_cache_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "rollback_log_node_cache_mutex");
+    txn_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name, "txn_lock_mutex");
+    txn_state_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "txn_state_lock_mutex");
+    txn_child_manager_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "txn_child_manager_mutex");
+    txn_manager_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "txn_manager_lock_mutex");
+    treenode_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name, "treenode_mutex");
+    locktree_request_info_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "locktree_request_info_mutex");
+    locktree_request_info_retry_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "locktree_request_info_retry_mutex_key");
+    manager_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name, "manager_mutex");
+    manager_escalation_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "manager_escalation_mutex");
+    db_txn_struct_i_txn_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "db_txn_struct_i_txn_mutex");
+    manager_escalator_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "manager_escalator_mutex");
+    indexer_i_indexer_lock_mutex_key = new toku_instr_key(
+        toku_instr_object_type::mutex, toku_instr_group_name,
+        "indexer_i_indexer_lock_mutex");
+    indexer_i_indexer_estimate_lock_mutex_key =
+        new toku_instr_key(toku_instr_object_type::mutex,
+                           toku_instr_group_name,
+                           "indexer_i_indexer_estimate_lock_mutex");
+
+    tokudb_file_data_key = new toku_instr_key(
+        toku_instr_object_type::file, toku_instr_group_name, "tokudb_data_file");
+    tokudb_file_load_key = new toku_instr_key(
+        toku_instr_object_type::file, toku_instr_group_name, "tokudb_load_file");
+    tokudb_file_tmp_key = new toku_instr_key(
+        toku_instr_object_type::file, toku_instr_group_name, "tokudb_tmp_file");
+    tokudb_file_log_key = new toku_instr_key(
+        toku_instr_object_type::file, toku_instr_group_name, "tokudb_log_file");
+
+    fti_probe_1_key =
+        new toku_instr_key(toku_instr_object_type::mutex, toku_instr_group_name,
+        "fti_probe_1");
+
+    extractor_thread_key = new toku_instr_key(
+        toku_instr_object_type::thread, toku_instr_group_name,
+        "extractor_thread");
+    fractal_thread_key = new toku_instr_key(
+        toku_instr_object_type::thread, toku_instr_group_name, "fractal_thread");
+    io_thread_key =
+        new toku_instr_key(toku_instr_object_type::thread, toku_instr_group_name,
+        "io_thread");
+    eviction_thread_key = new toku_instr_key(
+        toku_instr_object_type::thread, toku_instr_group_name,
+        "eviction_thread");
+    kibbutz_thread_key = new toku_instr_key(
+        toku_instr_object_type::thread, toku_instr_group_name, "kibbutz_thread");
+    minicron_thread_key = new toku_instr_key(
+        toku_instr_object_type::thread, toku_instr_group_name,
+        "minicron_thread");
+    tp_internal_thread_key = new toku_instr_key(
+        toku_instr_object_type::thread, toku_instr_group_name,
+        "tp_internal_thread");
+
+    result_state_cond_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "result_state_cond");
+    bjm_jobs_wait_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name, "bjm_jobs_wait");
+    cachetable_p_refcount_wait_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "cachetable_p_refcount_wait");
+    cachetable_m_flow_control_cond_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "cachetable_m_flow_control_cond");
+    cachetable_m_ev_thread_cond_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "cachetable_m_ev_thread_cond");
+    bfs_cond_key =
+        new toku_instr_key(toku_instr_object_type::cond, toku_instr_group_name,
+        "bfs_cond");
+    result_output_condition_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "result_output_condition");
+    manager_m_escalator_done_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "manager_m_escalator_done");
+    lock_request_m_wait_cond_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "lock_request_m_wait_cond");
+    queue_result_cond_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "queue_result_cond");
+    ws_worker_wait_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name, "ws_worker_wait");
+    rwlock_wait_read_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name, "rwlock_wait_read");
+    rwlock_wait_write_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "rwlock_wait_write");
+    rwlock_cond_key =
+        new toku_instr_key(toku_instr_object_type::cond, toku_instr_group_name,
+        "rwlock_cond");
+    tp_thread_wait_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name, "tp_thread_wait");
+    tp_pool_wait_free_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "tp_pool_wait_free");
+    frwlock_m_wait_read_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "frwlock_m_wait_read");
+    kibbutz_k_cond_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name, "kibbutz_k_cond");
+    minicron_p_condvar_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "minicron_p_condvar");
+    locktree_request_info_retry_cv_key = new toku_instr_key(
+        toku_instr_object_type::cond, toku_instr_group_name,
+        "locktree_request_info_retry_cv_key");
+
+    multi_operation_lock_key = new toku_instr_key(
+        toku_instr_object_type::rwlock, toku_instr_group_name,
+        "multi_operation_lock");
+    low_priority_multi_operation_lock_key =
+        new toku_instr_key(toku_instr_object_type::rwlock,
+                           toku_instr_group_name,
+                           "low_priority_multi_operation_lock");
+    cachetable_m_list_lock_key = new toku_instr_key(
+        toku_instr_object_type::rwlock, toku_instr_group_name,
+        "cachetable_m_list_lock");
+    cachetable_m_pending_lock_expensive_key =
+        new toku_instr_key(toku_instr_object_type::rwlock,
+                           toku_instr_group_name,
+                           "cachetable_m_pending_lock_expensive");
+    cachetable_m_pending_lock_cheap_key =
+        new toku_instr_key(toku_instr_object_type::rwlock,
+                           toku_instr_group_name,
+                           "cachetable_m_pending_lock_cheap");
+    cachetable_m_lock_key = new toku_instr_key(
+        toku_instr_object_type::rwlock, toku_instr_group_name,
+        "cachetable_m_lock");
+    result_i_open_dbs_rwlock_key = new toku_instr_key(
+        toku_instr_object_type::rwlock, toku_instr_group_name,
+        "result_i_open_dbs_rwlock");
+    checkpoint_safe_rwlock_key = new toku_instr_key(
+        toku_instr_object_type::rwlock, toku_instr_group_name,
+        "checkpoint_safe_rwlock");
+    cachetable_value_key = new toku_instr_key(
+        toku_instr_object_type::rwlock, toku_instr_group_name,
+        "cachetable_value");
+    safe_file_size_lock_rwlock_key = new toku_instr_key(
+        toku_instr_object_type::rwlock, toku_instr_group_name,
+        "safe_file_size_lock_rwlock");
+    cachetable_disk_nb_rwlock_key = new toku_instr_key(
+        toku_instr_object_type::rwlock, toku_instr_group_name,
+        "cachetable_disk_nb_rwlock");
+
+    toku_instr_probe_1 = new toku_instr_probe(*fti_probe_1_key);
+}
+
+static void toku_pfs_keys_destroy(void) {
+    delete kibbutz_mutex_key;
+    delete minicron_p_mutex_key;
+    delete queue_result_mutex_key;
+    delete tpool_lock_mutex_key;
+    delete workset_lock_mutex_key;
+    delete bjm_jobs_lock_mutex_key;
+    delete log_internal_lock_mutex_key;
+    delete cachetable_ev_thread_lock_mutex_key;
+    delete cachetable_disk_nb_mutex_key;
+    delete safe_file_size_lock_mutex_key;
+    delete cachetable_m_mutex_key;
+    delete checkpoint_safe_mutex_key;
+    delete ft_ref_lock_mutex_key;
+    delete ft_open_close_lock_mutex_key;
+    delete loader_error_mutex_key;
+    delete bfs_mutex_key;
+    delete loader_bl_mutex_key;
+    delete loader_fi_lock_mutex_key;
+    delete loader_out_mutex_key;
+    delete result_output_condition_lock_mutex_key;
+    delete block_table_mutex_key;
+    delete rollback_log_node_cache_mutex_key;
+    delete txn_lock_mutex_key;
+    delete txn_state_lock_mutex_key;
+    delete txn_child_manager_mutex_key;
+    delete txn_manager_lock_mutex_key;
+    delete treenode_mutex_key;
+    delete locktree_request_info_mutex_key;
+    delete locktree_request_info_retry_mutex_key;
+    delete manager_mutex_key;
+    delete manager_escalation_mutex_key;
+    delete db_txn_struct_i_txn_mutex_key;
+    delete manager_escalator_mutex_key;
+    delete indexer_i_indexer_lock_mutex_key;
+    delete indexer_i_indexer_estimate_lock_mutex_key;
+
+    delete tokudb_file_data_key;
+    delete tokudb_file_load_key;
+    delete tokudb_file_tmp_key;
+    delete tokudb_file_log_key;
+
+    delete fti_probe_1_key;
+
+    delete extractor_thread_key;
+    delete fractal_thread_key;
+    delete io_thread_key;
+    delete eviction_thread_key;
+    delete kibbutz_thread_key;
+    delete minicron_thread_key;
+    delete tp_internal_thread_key;
+
+    delete result_state_cond_key;
+    delete bjm_jobs_wait_key;
+    delete cachetable_p_refcount_wait_key;
+    delete cachetable_m_flow_control_cond_key;
+    delete cachetable_m_ev_thread_cond_key;
+    delete bfs_cond_key;
+    delete result_output_condition_key;
+    delete manager_m_escalator_done_key;
+    delete lock_request_m_wait_cond_key;
+    delete queue_result_cond_key;
+    delete ws_worker_wait_key;
+    delete rwlock_wait_read_key;
+    delete rwlock_wait_write_key;
+    delete rwlock_cond_key;
+    delete tp_thread_wait_key;
+    delete tp_pool_wait_free_key;
+    delete frwlock_m_wait_read_key;
+    delete kibbutz_k_cond_key;
+    delete minicron_p_condvar_key;
+    delete locktree_request_info_retry_cv_key;
+
+    delete multi_operation_lock_key;
+    delete low_priority_multi_operation_lock_key;
+    delete cachetable_m_list_lock_key;
+    delete cachetable_m_pending_lock_expensive_key;
+    delete cachetable_m_pending_lock_cheap_key;
+    delete cachetable_m_lock_key;
+    delete result_i_open_dbs_rwlock_key;
+    delete checkpoint_safe_rwlock_key;
+    delete cachetable_value_key;
+    delete safe_file_size_lock_rwlock_key;
+
+    delete cachetable_disk_nb_rwlock_key;
+    delete toku_instr_probe_1;
+}
+
 int toku_ft_layer_init(void) {
     int r = 0;
-    //Portability must be initialized first
+
+    // Portability must be initialized first
     r = toku_portability_init();
-    if (r) { goto exit; }
+    if (r) {
+        goto exit;
+    }
+
+    toku_pfs_keys_init("fti");
+
     r = db_env_set_toku_product_name("tokudb");
-    if (r) { goto exit; }
+    if (r) {
+        goto exit;
+    }
 
     partitioned_counters_init();
     toku_status_init();
     toku_context_status_init();
     toku_checkpoint_init();
     toku_ft_serialize_layer_init();
-    toku_mutex_init(&ft_open_close_lock, NULL);
+    toku_mutex_init(
+        *ft_open_close_lock_mutex_key, &ft_open_close_lock, nullptr);
     toku_scoped_malloc_init();
 exit:
     return r;
@@ -4340,7 +5004,9 @@ void toku_ft_layer_destroy(void) {
     toku_status_destroy();
     partitioned_counters_destroy();
     toku_scoped_malloc_destroy();
-    //Portability must be cleaned up last
+    toku_pfs_keys_destroy();
+
+    // Portability must be cleaned up last
     toku_portability_destroy();
 }
 
@@ -4397,6 +5063,57 @@ void toku_ft_unlink(FT_HANDLE handle) {
     CACHEFILE cf;
     cf = handle->ft->cf;
     toku_cachefile_unlink_on_close(cf);
+}
+
+int toku_ft_rename_iname(DB_TXN *txn,
+                         const char *data_dir,
+                         const char *old_iname,
+                         const char *new_iname,
+                         CACHETABLE ct) {
+    int r = 0;
+
+    std::unique_ptr<char[], decltype(&toku_free)> new_iname_full(nullptr,
+                                                                 &toku_free);
+    std::unique_ptr<char[], decltype(&toku_free)> old_iname_full(nullptr,
+                                                                 &toku_free);
+
+    new_iname_full.reset(toku_construct_full_name(2, data_dir, new_iname));
+    old_iname_full.reset(toku_construct_full_name(2, data_dir, old_iname));
+
+    if (txn) {
+        BYTESTRING bs_old_name = {static_cast<uint32_t>(strlen(old_iname) + 1),
+                                  const_cast<char *>(old_iname)};
+        BYTESTRING bs_new_name = {static_cast<uint32_t>(strlen(new_iname) + 1),
+                                  const_cast<char *>(new_iname)};
+        FILENUM filenum = FILENUM_NONE;
+        {
+            CACHEFILE cf;
+            r = toku_cachefile_of_iname_in_env(ct, old_iname, &cf);
+            if (r != ENOENT) {
+                char *old_fname_in_cf = toku_cachefile_fname_in_env(cf);
+                toku_cachefile_set_fname_in_env(cf, toku_xstrdup(new_iname));
+                toku_free(old_fname_in_cf);
+                filenum = toku_cachefile_filenum(cf);
+            }
+        }
+        toku_logger_save_rollback_frename(
+            db_txn_struct_i(txn)->tokutxn, &bs_old_name, &bs_new_name);
+        toku_log_frename(db_txn_struct_i(txn)->tokutxn->logger,
+                         (LSN *)0,
+                         0,
+                         toku_txn_get_txnid(db_txn_struct_i(txn)->tokutxn),
+                         bs_old_name,
+                         filenum,
+                         bs_new_name);
+    }
+
+    if (!toku_create_subdirs_if_needed(new_iname_full.get()))
+        return get_error_errno();
+    r = toku_os_rename(old_iname_full.get(), new_iname_full.get());
+    if (r != 0)
+        return r;
+    r = toku_fsync_directory(new_iname_full.get());
+    return r;
 }
 
 int toku_ft_get_fragmentation(FT_HANDLE ft_handle, TOKU_DB_FRAGMENTATION report) {

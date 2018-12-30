@@ -1,7 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2007, 2015, Oracle and/or its affiliates.
-Copyrigth (c) 2014, 2016, MariaDB Corporation
+Copyright (c) 2007, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2014, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -783,7 +783,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_trx =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic table INFORMATION_SCHEMA.innodb_locks */
@@ -1043,7 +1043,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_locks =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic table INFORMATION_SCHEMA.innodb_lock_waits */
@@ -1226,7 +1226,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_lock_waits =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /*******************************************************************//**
@@ -1428,19 +1428,16 @@ i_s_cmp_fill_low(
 		clear it.  We could introduce mutex protection, but it
 		could cause a measureable performance hit in
 		page0zip.cc. */
-		table->field[1]->store(
-			static_cast<double>(zip_stat->compressed));
-		table->field[2]->store(
-			static_cast<double>(zip_stat->compressed_ok));
-		table->field[3]->store(
-			static_cast<double>(zip_stat->compressed_usec / 1000000));
-		table->field[4]->store(
-			static_cast<double>(zip_stat->decompressed));
-		table->field[5]->store(
-			static_cast<double>(zip_stat->decompressed_usec / 1000000));
+		table->field[1]->store(zip_stat->compressed, true);
+		table->field[2]->store(zip_stat->compressed_ok, true);
+		table->field[3]->store(zip_stat->compressed_usec / 1000000,
+				       true);
+		table->field[4]->store(zip_stat->decompressed, true);
+		table->field[5]->store(zip_stat->decompressed_usec / 1000000,
+				       true);
 
 		if (reset) {
-			memset(zip_stat, 0, sizeof *zip_stat);
+			new (zip_stat) page_zip_stat_t();
 		}
 
 		if (schema_table_store_record(thd, table)) {
@@ -1562,7 +1559,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_cmp =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 UNIV_INTERN struct st_maria_plugin	i_s_innodb_cmp_reset =
@@ -1612,7 +1609,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_cmp_reset =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic tables
@@ -1912,7 +1909,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_cmp_per_index =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 UNIV_INTERN struct st_maria_plugin	i_s_innodb_cmp_per_index_reset =
@@ -1962,7 +1959,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_cmp_per_index_reset =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic table information_schema.innodb_cmpmem. */
@@ -2205,7 +2202,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_cmpmem =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 UNIV_INTERN struct st_maria_plugin	i_s_innodb_cmpmem_reset =
@@ -2255,7 +2252,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_cmpmem_reset =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic table INFORMATION_SCHEMA.innodb_metrics */
@@ -2779,7 +2776,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_metrics =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 /* Fields of the dynamic table INFORMATION_SCHEMA.innodb_ft_default_stopword */
 static ST_FIELD_INFO	i_s_stopword_fields_info[] =
@@ -2892,7 +2889,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_ft_default_stopword =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic table INFORMATION_SCHEMA.INNODB_FT_DELETED
@@ -2941,14 +2938,25 @@ i_s_fts_deleted_generic_fill(
 		DBUG_RETURN(0);
 	}
 
-	deleted = fts_doc_ids_create();
+	/* Prevent DDL to drop fts aux tables. */
+	rw_lock_s_lock(&dict_operation_lock);
 
 	user_table = dict_table_open_on_name(
 		fts_internal_tbl_name, FALSE, FALSE, DICT_ERR_IGNORE_NONE);
 
 	if (!user_table) {
+		rw_lock_s_unlock(&dict_operation_lock);
+
+		DBUG_RETURN(0);
+	} else if (!dict_table_has_fts_index(user_table)) {
+		dict_table_close(user_table, FALSE, FALSE);
+
+		rw_lock_s_unlock(&dict_operation_lock);
+
 		DBUG_RETURN(0);
 	}
+
+	deleted = fts_doc_ids_create();
 
 	trx = trx_allocate_for_background();
 	trx->op_info = "Select for FTS DELETE TABLE";
@@ -2961,14 +2969,16 @@ i_s_fts_deleted_generic_fill(
 
 	fields = table->field;
 
+	int	ret = 0;
+
 	for (ulint j = 0; j < ib_vector_size(deleted->doc_ids); ++j) {
 		doc_id_t	doc_id;
 
 		doc_id = *(doc_id_t*) ib_vector_get_const(deleted->doc_ids, j);
 
-		OK(fields[I_S_FTS_DOC_ID]->store((longlong) doc_id, true));
+		BREAK_IF(ret = fields[I_S_FTS_DOC_ID]->store(doc_id, true));
 
-		OK(schema_table_store_record(thd, table));
+		BREAK_IF(ret = schema_table_store_record(thd, table));
 	}
 
 	trx_free_for_background(trx);
@@ -2977,7 +2987,9 @@ i_s_fts_deleted_generic_fill(
 
 	dict_table_close(user_table, FALSE, FALSE);
 
-	DBUG_RETURN(0);
+	rw_lock_s_unlock(&dict_operation_lock);
+
+	DBUG_RETURN(ret);
 }
 
 /*******************************************************************//**
@@ -3060,7 +3072,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_ft_deleted =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /*******************************************************************//**
@@ -3143,7 +3155,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_ft_being_deleted =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic table INFORMATION_SCHEMA.INNODB_FT_INDEX_CACHED and
@@ -3217,13 +3229,13 @@ i_s_fts_index_cache_fill_one_index(
 /*===============================*/
 	fts_index_cache_t*	index_cache,	/*!< in: FTS index cache */
 	THD*			thd,		/*!< in: thread */
+	fts_string_t*		conv_str,	/*!< in/out: buffer */
 	TABLE_LIST*		tables)		/*!< in/out: tables to fill */
 {
 	TABLE*			table = (TABLE*) tables->table;
 	Field**			fields;
 	CHARSET_INFO*		index_charset;
 	const ib_rbt_node_t*	rbt_node;
-	fts_string_t		conv_str;
 	uint			dummy_errors;
 	char*			word_str;
 
@@ -3232,10 +3244,9 @@ i_s_fts_index_cache_fill_one_index(
 	fields = table->field;
 
 	index_charset = index_cache->charset;
-	conv_str.f_len = system_charset_info->mbmaxlen
-		* FTS_MAX_WORD_LEN_IN_CHAR;
-	conv_str.f_str = static_cast<byte*>(ut_malloc(conv_str.f_len));
-	conv_str.f_n_char = 0;
+	conv_str->f_n_char = 0;
+
+	int	ret = 0;
 
 	/* Go through each word in the index cache */
 	for (rbt_node = rbt_first(index_cache->words);
@@ -3247,16 +3258,16 @@ i_s_fts_index_cache_fill_one_index(
 
 		/* Convert word from index charset to system_charset_info */
 		if (index_charset->cset != system_charset_info->cset) {
-			conv_str.f_n_char = my_convert(
-				reinterpret_cast<char*>(conv_str.f_str),
-				static_cast<uint32>(conv_str.f_len),
+			conv_str->f_n_char = my_convert(
+				reinterpret_cast<char*>(conv_str->f_str),
+				static_cast<uint32>(conv_str->f_len),
 				system_charset_info,
 				reinterpret_cast<char*>(word->text.f_str),
 				static_cast<uint32>(word->text.f_len),
 				index_charset, &dummy_errors);
-			ut_ad(conv_str.f_n_char <= conv_str.f_len);
-			conv_str.f_str[conv_str.f_n_char] = 0;
-			word_str = reinterpret_cast<char*>(conv_str.f_str);
+			ut_ad(conv_str->f_n_char <= conv_str->f_len);
+			conv_str->f_str[conv_str->f_n_char] = 0;
+			word_str = reinterpret_cast<char*>(conv_str->f_str);
 		} else {
 			word_str = reinterpret_cast<char*>(word->text.f_str);
 		}
@@ -3314,9 +3325,7 @@ i_s_fts_index_cache_fill_one_index(
 		}
 	}
 
-	ut_free(conv_str.f_str);
-
-	DBUG_RETURN(0);
+	DBUG_RETURN(ret);
 }
 /*******************************************************************//**
 Fill the dynamic table INFORMATION_SCHEMA.INNODB_FT_INDEX_CACHED
@@ -3350,9 +3359,21 @@ i_s_fts_index_cache_fill(
 		DBUG_RETURN(0);
 	}
 
+	if (user_table->fts == NULL || user_table->fts->cache == NULL) {
+		dict_table_close(user_table, FALSE, FALSE);
+
+		DBUG_RETURN(0);
+	}
+
 	cache = user_table->fts->cache;
 
 	ut_a(cache);
+
+	int			ret = 0;
+	fts_string_t		conv_str;
+	conv_str.f_len = system_charset_info->mbmaxlen
+		* FTS_MAX_WORD_LEN_IN_CHAR;
+	conv_str.f_str = static_cast<byte*>(ut_malloc(conv_str.f_len));
 
 	for (ulint i = 0; i < ib_vector_size(cache->indexes); i++) {
 		fts_index_cache_t*      index_cache;
@@ -3360,12 +3381,15 @@ i_s_fts_index_cache_fill(
 		index_cache = static_cast<fts_index_cache_t*> (
 			ib_vector_get(cache->indexes, i));
 
-		i_s_fts_index_cache_fill_one_index(index_cache, thd, tables);
+		BREAK_IF(ret = i_s_fts_index_cache_fill_one_index(
+				 index_cache, thd, &conv_str, tables));
 	}
+
+	ut_free(conv_str.f_str);
 
 	dict_table_close(user_table, FALSE, FALSE);
 
-	DBUG_RETURN(0);
+	DBUG_RETURN(ret);
 }
 
 /*******************************************************************//**
@@ -3432,7 +3456,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_ft_index_cache =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /*******************************************************************//**
@@ -3669,8 +3693,6 @@ i_s_fts_index_table_fill_one_fetch(
 		}
 	}
 
-	i_s_fts_index_table_free_one_fetch(words);
-
 	DBUG_RETURN(ret);
 }
 
@@ -3684,13 +3706,13 @@ i_s_fts_index_table_fill_one_index(
 /*===============================*/
 	dict_index_t*		index,		/*!< in: FTS index */
 	THD*			thd,		/*!< in: thread */
+	fts_string_t*		conv_str,	/*!< in/out: buffer */
 	TABLE_LIST*		tables)		/*!< in/out: tables to fill */
 {
 	ib_vector_t*		words;
 	mem_heap_t*		heap;
 	fts_string_t		word;
 	CHARSET_INFO*		index_charset;
-	fts_string_t		conv_str;
 	dberr_t			error;
 	int			ret = 0;
 
@@ -3707,10 +3729,6 @@ i_s_fts_index_table_fill_one_index(
 	word.f_n_char = 0;
 
 	index_charset = fts_index_get_charset(index);
-	conv_str.f_len = system_charset_info->mbmaxlen
-		* FTS_MAX_WORD_LEN_IN_CHAR;
-	conv_str.f_str = static_cast<byte*>(ut_malloc(conv_str.f_len));
-	conv_str.f_n_char = 0;
 
 	/* Iterate through each auxiliary table as described in
 	fts_index_selector */
@@ -3744,17 +3762,17 @@ i_s_fts_index_table_fill_one_index(
 
 			/* Fill into tables */
 			ret = i_s_fts_index_table_fill_one_fetch(
-				index_charset, thd, tables, words, &conv_str, has_more);
+				index_charset, thd, tables, words, conv_str,
+				has_more);
+			i_s_fts_index_table_free_one_fetch(words);
 
 			if (ret != 0) {
-				i_s_fts_index_table_free_one_fetch(words);
 				goto func_exit;
 			}
 		} while (has_more);
 	}
 
 func_exit:
-	ut_free(conv_str.f_str);
 	mem_heap_free(heap);
 
 	DBUG_RETURN(ret);
@@ -3784,23 +3802,39 @@ i_s_fts_index_table_fill(
 		DBUG_RETURN(0);
 	}
 
+	/* Prevent DDL to drop fts aux tables. */
+	rw_lock_s_lock(&dict_operation_lock);
+
 	user_table = dict_table_open_on_name(
 		fts_internal_tbl_name, FALSE, FALSE, DICT_ERR_IGNORE_NONE);
 
 	if (!user_table) {
+		rw_lock_s_unlock(&dict_operation_lock);
+
 		DBUG_RETURN(0);
 	}
+
+	int		ret = 0;
+	fts_string_t	conv_str;
+	conv_str.f_len = system_charset_info->mbmaxlen
+		* FTS_MAX_WORD_LEN_IN_CHAR;
+	conv_str.f_str = static_cast<byte*>(ut_malloc(conv_str.f_len));
 
 	for (index = dict_table_get_first_index(user_table);
 	     index; index = dict_table_get_next_index(index)) {
 		if (index->type & DICT_FTS) {
-			i_s_fts_index_table_fill_one_index(index, thd, tables);
+			BREAK_IF(ret = i_s_fts_index_table_fill_one_index(
+					 index, thd, &conv_str, tables));
 		}
 	}
 
 	dict_table_close(user_table, FALSE, FALSE);
 
-	DBUG_RETURN(0);
+	rw_lock_s_unlock(&dict_operation_lock);
+
+	ut_free(conv_str.f_str);
+
+	DBUG_RETURN(ret);
 }
 
 /*******************************************************************//**
@@ -3867,7 +3901,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_ft_index_table =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic table INFORMATION_SCHEMA.INNODB_FT_CONFIG */
@@ -3933,15 +3967,24 @@ i_s_fts_config_fill(
 		DBUG_RETURN(0);
 	}
 
+	DEBUG_SYNC_C("i_s_fts_config_fille_check");
+
 	fields = table->field;
+
+	/* Prevent DDL to drop fts aux tables. */
+	rw_lock_s_lock(&dict_operation_lock);
 
 	user_table = dict_table_open_on_name(
 		fts_internal_tbl_name, FALSE, FALSE, DICT_ERR_IGNORE_NONE);
 
 	if (!user_table) {
+		rw_lock_s_unlock(&dict_operation_lock);
+
 		DBUG_RETURN(0);
 	} else if (!dict_table_has_fts_index(user_table)) {
 		dict_table_close(user_table, FALSE, FALSE);
+
+		rw_lock_s_unlock(&dict_operation_lock);
 
 		DBUG_RETURN(0);
 	}
@@ -3956,6 +3999,8 @@ i_s_fts_config_fill(
 				user_table->fts->indexes, 0);
 		DBUG_ASSERT(!dict_index_is_online_ddl(index));
 	}
+
+	int	ret = 0;
 
 	while (fts_config_key[i]) {
 		fts_string_t	value;
@@ -3981,13 +4026,14 @@ i_s_fts_config_fill(
 			ut_free(key_name);
 		}
 
-		OK(field_store_string(
-                        fields[FTS_CONFIG_KEY], fts_config_key[i]));
+		BREAK_IF(ret = field_store_string(
+				 fields[FTS_CONFIG_KEY], fts_config_key[i]));
 
-		OK(field_store_string(
-                        fields[FTS_CONFIG_VALUE], (const char*) value.f_str));
+		BREAK_IF(ret = field_store_string(
+				 fields[FTS_CONFIG_VALUE],
+				 reinterpret_cast<const char*>(value.f_str)));
 
-		OK(schema_table_store_record(thd, table));
+		BREAK_IF(ret = schema_table_store_record(thd, table));
 
 		i++;
 	}
@@ -3998,7 +4044,9 @@ i_s_fts_config_fill(
 
 	dict_table_close(user_table, FALSE, FALSE);
 
-	DBUG_RETURN(0);
+	rw_lock_s_unlock(&dict_operation_lock);
+
+	DBUG_RETURN(ret);
 }
 
 /*******************************************************************//**
@@ -4065,7 +4113,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_ft_config =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic table INNODB_BUFFER_POOL_STATS. */
@@ -4614,7 +4662,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_buffer_stats =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /* Fields of the dynamic table INNODB_BUFFER_POOL_PAGE. */
@@ -4840,34 +4888,29 @@ i_s_innodb_buffer_page_fill(
 		state_str = NULL;
 
 		OK(fields[IDX_BUFFER_POOL_ID]->store(
-			static_cast<double>(page_info->pool_id)));
+			   page_info->pool_id, true));
 
 		OK(fields[IDX_BUFFER_BLOCK_ID]->store(
-			static_cast<double>(page_info->block_id)));
+			   page_info->block_id, true));
 
 		OK(fields[IDX_BUFFER_PAGE_SPACE]->store(
-			static_cast<double>(page_info->space_id)));
+			   page_info->space_id, true));
 
 		OK(fields[IDX_BUFFER_PAGE_NUM]->store(
-			static_cast<double>(page_info->page_num)));
+			   page_info->page_num, true));
 
 		OK(field_store_string(
 			fields[IDX_BUFFER_PAGE_TYPE],
 			i_s_page_type[page_info->page_type].type_str));
 
 		OK(fields[IDX_BUFFER_PAGE_FLUSH_TYPE]->store(
-			page_info->flush_type));
+			   page_info->flush_type, true));
 
 		OK(fields[IDX_BUFFER_PAGE_FIX_COUNT]->store(
-			page_info->fix_count));
+			   page_info->fix_count, true));
 
-		if (page_info->hashed) {
-			OK(field_store_string(
-				fields[IDX_BUFFER_PAGE_HASHED], "YES"));
-		} else {
-			OK(field_store_string(
-				fields[IDX_BUFFER_PAGE_HASHED], "NO"));
-		}
+		OK(field_store_string(fields[IDX_BUFFER_PAGE_HASHED],
+				      page_info->hashed ? "YES" : "NO"));
 
 		OK(fields[IDX_BUFFER_PAGE_NEWEST_MOD]->store(
 			(longlong) page_info->newest_mod, true));
@@ -4876,7 +4919,7 @@ i_s_innodb_buffer_page_fill(
 			(longlong) page_info->oldest_mod, true));
 
 		OK(fields[IDX_BUFFER_PAGE_ACCESS_TIME]->store(
-			page_info->access_time));
+			   page_info->access_time, true));
 
 		fields[IDX_BUFFER_PAGE_TABLE_NAME]->set_null();
 
@@ -4885,44 +4928,53 @@ i_s_innodb_buffer_page_fill(
 		/* If this is an index page, fetch the index name
 		and table name */
 		if (page_info->page_type == I_S_PAGE_TYPE_INDEX) {
-			const dict_index_t*	index;
+			bool ret = false;
 
 			mutex_enter(&dict_sys->mutex);
-			index = dict_index_get_if_in_cache_low(
-				page_info->index_id);
+
+			const dict_index_t* index =
+				dict_index_get_if_in_cache_low(
+					page_info->index_id);
 
 			if (index) {
-
 				table_name_end = innobase_convert_name(
 					table_name, sizeof(table_name),
 					index->table_name,
 					strlen(index->table_name),
 					thd, TRUE);
 
-				OK(fields[IDX_BUFFER_PAGE_TABLE_NAME]->store(
-					table_name,
-					static_cast<uint>(table_name_end - table_name),
-					system_charset_info));
-				fields[IDX_BUFFER_PAGE_TABLE_NAME]->set_notnull();
-
-				OK(field_store_index_name(
-					fields[IDX_BUFFER_PAGE_INDEX_NAME],
-					index->name));
+				ret = fields[IDX_BUFFER_PAGE_TABLE_NAME]
+					->store(table_name,
+						static_cast<uint>(
+							table_name_end
+							- table_name),
+						system_charset_info)
+					|| field_store_index_name(
+						fields
+						[IDX_BUFFER_PAGE_INDEX_NAME],
+						index->name);
 			}
 
 			mutex_exit(&dict_sys->mutex);
+
+			OK(ret);
+
+			if (index) {
+				fields[IDX_BUFFER_PAGE_TABLE_NAME]
+					->set_notnull();
+			}
 		}
 
 		OK(fields[IDX_BUFFER_PAGE_NUM_RECS]->store(
-			page_info->num_recs));
+			   page_info->num_recs, true));
 
 		OK(fields[IDX_BUFFER_PAGE_DATA_SIZE]->store(
-			page_info->data_size));
+			   page_info->data_size, true));
 
 		OK(fields[IDX_BUFFER_PAGE_ZIP_SIZE]->store(
-			page_info->zip_ssize
-			? (UNIV_ZIP_SIZE_MIN >> 1) << page_info->zip_ssize
-			: 0));
+			   page_info->zip_ssize
+			   ? (UNIV_ZIP_SIZE_MIN >> 1) << page_info->zip_ssize
+			   : 0, true));
 
 #if BUF_PAGE_STATE_BITS > 3
 # error "BUF_PAGE_STATE_BITS > 3, please ensure that all 1<<BUF_PAGE_STATE_BITS values are checked for"
@@ -4960,22 +5012,21 @@ i_s_innodb_buffer_page_fill(
 
 		switch (page_info->io_fix) {
 		case BUF_IO_NONE:
-			OK(field_store_string(fields[IDX_BUFFER_PAGE_IO_FIX],
-					      "IO_NONE"));
+			state_str = "IO_NONE";
 			break;
 		case BUF_IO_READ:
-			OK(field_store_string(fields[IDX_BUFFER_PAGE_IO_FIX],
-					      "IO_READ"));
+			state_str = "IO_READ";
 			break;
 		case BUF_IO_WRITE:
-			OK(field_store_string(fields[IDX_BUFFER_PAGE_IO_FIX],
-					      "IO_WRITE"));
+			state_str = "IO_WRITE";
 			break;
 		case BUF_IO_PIN:
-			OK(field_store_string(fields[IDX_BUFFER_PAGE_IO_FIX],
-					      "IO_PIN"));
+			state_str = "IO_PIN";
 			break;
 		}
+
+		OK(field_store_string(fields[IDX_BUFFER_PAGE_IO_FIX],
+				      state_str));
 
 		OK(field_store_string(fields[IDX_BUFFER_PAGE_IS_OLD],
 				      (page_info->is_old) ? "YES" : "NO"));
@@ -4983,9 +5034,7 @@ i_s_innodb_buffer_page_fill(
 		OK(fields[IDX_BUFFER_PAGE_FREE_CLOCK]->store(
 			page_info->freed_page_clock));
 
-		if (schema_table_store_record(thd, table)) {
-			DBUG_RETURN(1);
-		}
+		OK(schema_table_store_record(thd, table));
 	}
 
 	DBUG_RETURN(0);
@@ -5326,7 +5375,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_buffer_page =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 static ST_FIELD_INFO	i_s_innodb_buf_page_lru_fields_info[] =
@@ -5529,17 +5578,10 @@ i_s_innodb_buf_page_lru_fill(
 	ulint			num_page)	/*!< in: number of page info
 						 cached */
 {
-	TABLE*			table;
-	Field**			fields;
-	mem_heap_t*		heap;
-
 	DBUG_ENTER("i_s_innodb_buf_page_lru_fill");
 
-	table = tables->table;
-
-	fields = table->field;
-
-	heap = mem_heap_create(1000);
+	TABLE*	table	= tables->table;
+	Field**	fields	= table->field;
 
 	/* Iterate through the cached array and fill the I_S table rows */
 	for (ulint i = 0; i < num_page; i++) {
@@ -5554,43 +5596,37 @@ i_s_innodb_buf_page_lru_fill(
 		page_info = info_array + i;
 
 		OK(fields[IDX_BUF_LRU_POOL_ID]->store(
-			static_cast<double>(page_info->pool_id)));
-
+			   page_info->pool_id, true));
 		OK(fields[IDX_BUF_LRU_POS]->store(
-			static_cast<double>(page_info->block_id)));
+			   page_info->block_id, true));
 
 		OK(fields[IDX_BUF_LRU_PAGE_SPACE]->store(
-			static_cast<double>(page_info->space_id)));
+			   page_info->space_id, true));
 
 		OK(fields[IDX_BUF_LRU_PAGE_NUM]->store(
-			static_cast<double>(page_info->page_num)));
+			   page_info->page_num, true));
 
 		OK(field_store_string(
-			fields[IDX_BUF_LRU_PAGE_TYPE],
-			i_s_page_type[page_info->page_type].type_str));
+			   fields[IDX_BUF_LRU_PAGE_TYPE],
+			   i_s_page_type[page_info->page_type].type_str));
 
 		OK(fields[IDX_BUF_LRU_PAGE_FLUSH_TYPE]->store(
-			static_cast<double>(page_info->flush_type)));
+			   page_info->flush_type, true));
 
 		OK(fields[IDX_BUF_LRU_PAGE_FIX_COUNT]->store(
-			static_cast<double>(page_info->fix_count)));
+			   page_info->fix_count, true));
 
-		if (page_info->hashed) {
-			OK(field_store_string(
-				fields[IDX_BUF_LRU_PAGE_HASHED], "YES"));
-		} else {
-			OK(field_store_string(
-				fields[IDX_BUF_LRU_PAGE_HASHED], "NO"));
-		}
+		OK(field_store_string(fields[IDX_BUF_LRU_PAGE_HASHED],
+				      page_info->hashed ? "YES" : "NO"));
 
 		OK(fields[IDX_BUF_LRU_PAGE_NEWEST_MOD]->store(
-			page_info->newest_mod, true));
+			   page_info->newest_mod, true));
 
 		OK(fields[IDX_BUF_LRU_PAGE_OLDEST_MOD]->store(
-			page_info->oldest_mod, true));
+			   page_info->oldest_mod, true));
 
 		OK(fields[IDX_BUF_LRU_PAGE_ACCESS_TIME]->store(
-			page_info->access_time));
+			   page_info->access_time, true));
 
 		fields[IDX_BUF_LRU_PAGE_TABLE_NAME]->set_null();
 
@@ -5599,43 +5635,52 @@ i_s_innodb_buf_page_lru_fill(
 		/* If this is an index page, fetch the index name
 		and table name */
 		if (page_info->page_type == I_S_PAGE_TYPE_INDEX) {
-			const dict_index_t*	index;
+			bool ret = false;
 
 			mutex_enter(&dict_sys->mutex);
-			index = dict_index_get_if_in_cache_low(
-				page_info->index_id);
+
+			const dict_index_t* index =
+				dict_index_get_if_in_cache_low(
+					page_info->index_id);
 
 			if (index) {
-
 				table_name_end = innobase_convert_name(
 					table_name, sizeof(table_name),
 					index->table_name,
 					strlen(index->table_name),
 					thd, TRUE);
 
-				OK(fields[IDX_BUF_LRU_PAGE_TABLE_NAME]->store(
-					table_name,
-					static_cast<uint>(table_name_end - table_name),
-					system_charset_info));
-				fields[IDX_BUF_LRU_PAGE_TABLE_NAME]->set_notnull();
-
-				OK(field_store_index_name(
-					fields[IDX_BUF_LRU_PAGE_INDEX_NAME],
-					index->name));
+				ret = fields[IDX_BUF_LRU_PAGE_TABLE_NAME]
+					->store(table_name,
+						static_cast<uint>(
+							table_name_end
+							- table_name),
+						system_charset_info)
+					|| field_store_index_name(
+						fields
+						[IDX_BUF_LRU_PAGE_INDEX_NAME],
+						index->name);
 			}
 
 			mutex_exit(&dict_sys->mutex);
+
+			OK(ret);
+
+			if (index) {
+				fields[IDX_BUF_LRU_PAGE_TABLE_NAME]
+					->set_notnull();
+			}
 		}
 
 		OK(fields[IDX_BUF_LRU_PAGE_NUM_RECS]->store(
-			page_info->num_recs));
+			   page_info->num_recs, true));
 
 		OK(fields[IDX_BUF_LRU_PAGE_DATA_SIZE]->store(
-			page_info->data_size));
+			   page_info->data_size, true));
 
 		OK(fields[IDX_BUF_LRU_PAGE_ZIP_SIZE]->store(
-			page_info->zip_ssize ?
-				 512 << page_info->zip_ssize : 0));
+			   page_info->zip_ssize
+			   ? 512 << page_info->zip_ssize : 0, true));
 
 		state = static_cast<enum buf_page_state>(page_info->page_state);
 
@@ -5664,34 +5709,30 @@ i_s_innodb_buf_page_lru_fill(
 
 		switch (page_info->io_fix) {
 		case BUF_IO_NONE:
-			OK(field_store_string(fields[IDX_BUF_LRU_PAGE_IO_FIX],
-					      "IO_NONE"));
+			state_str = "IO_NONE";
 			break;
 		case BUF_IO_READ:
-			OK(field_store_string(fields[IDX_BUF_LRU_PAGE_IO_FIX],
-					      "IO_READ"));
+			state_str = "IO_READ";
 			break;
 		case BUF_IO_WRITE:
-			OK(field_store_string(fields[IDX_BUF_LRU_PAGE_IO_FIX],
-					      "IO_WRITE"));
+			state_str = "IO_WRITE";
+			break;
+		case BUF_IO_PIN:
+			state_str = "IO_PIN";
 			break;
 		}
 
+		OK(field_store_string(fields[IDX_BUF_LRU_PAGE_IO_FIX],
+				      state_str));
+
 		OK(field_store_string(fields[IDX_BUF_LRU_PAGE_IS_OLD],
-				      (page_info->is_old) ? "YES" : "NO"));
+				      page_info->is_old ? "YES" : "NO"));
 
 		OK(fields[IDX_BUF_LRU_PAGE_FREE_CLOCK]->store(
-			page_info->freed_page_clock));
+			   page_info->freed_page_clock, true));
 
-		if (schema_table_store_record(thd, table)) {
-			mem_heap_free(heap);
-			DBUG_RETURN(1);
-		}
-
-		mem_heap_empty(heap);
+		OK(schema_table_store_record(thd, table));
 	}
-
-	mem_heap_free(heap);
 
 	DBUG_RETURN(0);
 }
@@ -5873,7 +5914,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_buffer_page_lru =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /*******************************************************************//**
@@ -6167,7 +6208,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_tables =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  SYS_TABLESTATS  ***********************************************/
@@ -6349,6 +6390,7 @@ i_s_sys_tables_fill_table_stats(
 	}
 
 	heap = mem_heap_create(1000);
+	rw_lock_s_lock(&dict_operation_lock);
 	mutex_enter(&dict_sys->mutex);
 	mtr_start(&mtr);
 
@@ -6375,9 +6417,11 @@ i_s_sys_tables_fill_table_stats(
 					    err_msg);
 		}
 
+		rw_lock_s_unlock(&dict_operation_lock);
 		mem_heap_empty(heap);
 
 		/* Get the next record */
+		rw_lock_s_lock(&dict_operation_lock);
 		mutex_enter(&dict_sys->mutex);
 		mtr_start(&mtr);
 		rec = dict_getnext_system(&pcur, &mtr);
@@ -6385,6 +6429,7 @@ i_s_sys_tables_fill_table_stats(
 
 	mtr_commit(&mtr);
 	mutex_exit(&dict_sys->mutex);
+	rw_lock_s_unlock(&dict_operation_lock);
 	mem_heap_free(heap);
 
 	DBUG_RETURN(0);
@@ -6457,7 +6502,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_tablestats =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  SYS_INDEXES  **************************************************/
@@ -6709,7 +6754,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_indexes =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  SYS_COLUMNS  **************************************************/
@@ -6946,7 +6991,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_columns =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  SYS_FIELDS  ***************************************************/
@@ -7156,7 +7201,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_fields =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  SYS_FOREIGN        ********************************************/
@@ -7381,7 +7426,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_foreign =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  SYS_FOREIGN_COLS   ********************************************/
@@ -7598,7 +7643,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_foreign_cols =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  SYS_TABLESPACES    ********************************************/
@@ -7688,8 +7733,6 @@ i_s_dict_fill_sys_tablespaces(
 {
 	Field**	fields;
 	ulint	atomic_blobs	= FSP_FLAGS_HAS_ATOMIC_BLOBS(flags);
-	ulint	page_size	= fsp_flags_get_page_size(flags);
-	ulint	zip_size	= fsp_flags_get_zip_size(flags);
 	const char* file_format;
 	const char* row_format;
 
@@ -7706,13 +7749,11 @@ i_s_dict_fill_sys_tablespaces(
 
 	fields = table_to_fill->field;
 
-	OK(fields[SYS_TABLESPACES_SPACE]->store(
-		static_cast<double>(space)));
+	OK(fields[SYS_TABLESPACES_SPACE]->store(space, true));
 
 	OK(field_store_string(fields[SYS_TABLESPACES_NAME], name));
 
-	OK(fields[SYS_TABLESPACES_FLAGS]->store(
-		static_cast<double>(flags)));
+	OK(fields[SYS_TABLESPACES_FLAGS]->store(flags, true));
 
 	OK(field_store_string(fields[SYS_TABLESPACES_FILE_FORMAT],
 			      file_format));
@@ -7720,11 +7761,18 @@ i_s_dict_fill_sys_tablespaces(
 	OK(field_store_string(fields[SYS_TABLESPACES_ROW_FORMAT],
 			      row_format));
 
-	OK(fields[SYS_TABLESPACES_PAGE_SIZE]->store(
-		static_cast<double>(page_size)));
+	ulint cflags = fsp_flags_is_valid(flags, space)
+		? flags : fsp_flags_convert_from_101(flags);
+	if (cflags != ULINT_UNDEFINED) {
+		OK(fields[SYS_TABLESPACES_PAGE_SIZE]->store(
+			   fsp_flags_get_page_size(cflags), true));
 
-	OK(fields[SYS_TABLESPACES_ZIP_PAGE_SIZE]->store(
-		static_cast<double>(zip_size)));
+		OK(fields[SYS_TABLESPACES_ZIP_PAGE_SIZE]->store(
+			   fsp_flags_get_zip_size(cflags), true));
+	} else {
+		fields[SYS_TABLESPACES_PAGE_SIZE]->set_null();
+		fields[SYS_TABLESPACES_ZIP_PAGE_SIZE]->set_null();
+	}
 
 	OK(schema_table_store_record(thd, table_to_fill));
 
@@ -7866,7 +7914,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_tablespaces =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  SYS_DATAFILES  ************************************************/
@@ -8055,7 +8103,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_datafiles =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  TABLESPACES_ENCRYPTION    ********************************************/
@@ -8143,22 +8191,31 @@ static ST_FIELD_INFO	innodb_tablespaces_encryption_fields_info[] =
 	 STRUCT_FLD(old_name,		""),
 	 STRUCT_FLD(open_method,	SKIP_OPEN_TABLE)},
 
+#define TABLESPACES_ENCRYPTION_ROTATING_OR_FLUSHING 9
+	{STRUCT_FLD(field_name,		"ROTATING_OR_FLUSHING"),
+	 STRUCT_FLD(field_length,	1),
+	 STRUCT_FLD(field_type,		MYSQL_TYPE_LONG),
+	 STRUCT_FLD(value,		0),
+	 STRUCT_FLD(field_flags,	MY_I_S_UNSIGNED),
+	 STRUCT_FLD(old_name,		""),
+	 STRUCT_FLD(open_method,	SKIP_OPEN_TABLE)},
+
 	END_OF_ST_FIELD_INFO
 };
 
 /**********************************************************************//**
 Function to fill INFORMATION_SCHEMA.INNODB_TABLESPACES_ENCRYPTION
-with information collected by scanning SYS_TABLESPACES table and then use
-fil_space()
+with information collected by scanning SYS_TABLESPACES table.
+@param[in]	thd		thread handle
+@param[in]	space		Tablespace
+@param[in]	table_to_fill	I_S table to fill
 @return 0 on success */
 static
 int
 i_s_dict_fill_tablespaces_encryption(
-/*==========================*/
-	THD*		thd,		/*!< in: thread */
-	ulint		space,		/*!< in: space ID */
-	const char*	name,		/*!< in: tablespace name */
-	TABLE*		table_to_fill)	/*!< in/out: fill this table */
+	THD*		thd,
+	fil_space_t*	space,
+	TABLE*		table_to_fill)
 {
 	Field**	fields;
 	struct fil_space_crypt_status_t status;
@@ -8168,10 +8225,17 @@ i_s_dict_fill_tablespaces_encryption(
 	fields = table_to_fill->field;
 
 	fil_space_crypt_get_status(space, &status);
-	OK(fields[TABLESPACES_ENCRYPTION_SPACE]->store(space));
+
+	/* If tablespace id does not match, we did not find
+	encryption information for this tablespace. */
+	if (!space->crypt_data || space->id != status.space) {
+		goto skip;
+	}
+
+	OK(fields[TABLESPACES_ENCRYPTION_SPACE]->store(space->id));
 
 	OK(field_store_string(fields[TABLESPACES_ENCRYPTION_NAME],
-			      name));
+			      space->name));
 
 	OK(fields[TABLESPACES_ENCRYPTION_ENCRYPTION_SCHEME]->store(
 		   status.scheme));
@@ -8183,6 +8247,9 @@ i_s_dict_fill_tablespaces_encryption(
 		   status.current_key_version));
 	OK(fields[TABLESPACES_ENCRYPTION_CURRENT_KEY_ID]->store(
 		   status.key_id));
+	OK(fields[TABLESPACES_ENCRYPTION_ROTATING_OR_FLUSHING]->store(
+			(status.rotating || status.flushing) ? 1 : 0));
+
 	if (status.rotating) {
 		fields[TABLESPACES_ENCRYPTION_KEY_ROTATION_PAGE_NUMBER]->set_notnull();
 		OK(fields[TABLESPACES_ENCRYPTION_KEY_ROTATION_PAGE_NUMBER]->store(
@@ -8196,8 +8263,10 @@ i_s_dict_fill_tablespaces_encryption(
 		fields[TABLESPACES_ENCRYPTION_KEY_ROTATION_MAX_PAGE_NUMBER]
 			->set_null();
 	}
+
 	OK(schema_table_store_record(thd, table_to_fill));
 
+skip:
 	DBUG_RETURN(0);
 }
 /*******************************************************************//**
@@ -8235,28 +8304,34 @@ i_s_tablespaces_encryption_fill_table(
 
 	while (rec) {
 		const char*	err_msg;
-		ulint		space;
+		ulint		space_id;
 		const char*	name;
 		ulint		flags;
 
 		/* Extract necessary information from a SYS_TABLESPACES row */
 		err_msg = dict_process_sys_tablespaces(
-			heap, rec, &space, &name, &flags);
+			heap, rec, &space_id, &name, &flags);
 
 		mtr_commit(&mtr);
 		mutex_exit(&dict_sys->mutex);
 
-		if (space == 0) {
+		if (space_id == 0) {
 			found_space_0 = true;
 		}
 
-		if (!err_msg) {
+		fil_space_t* space = fil_space_acquire_silent(space_id);
+
+		if (!err_msg && space) {
 			i_s_dict_fill_tablespaces_encryption(
-				thd, space, name, tables->table);
+				thd, space, tables->table);
 		} else {
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
 					    ER_CANT_FIND_SYSTEM_REC, "%s",
 					    err_msg);
+		}
+
+		if (space) {
+			fil_space_release(space);
 		}
 
 		mem_heap_empty(heap);
@@ -8274,10 +8349,13 @@ i_s_tablespaces_encryption_fill_table(
 	if (found_space_0 == false) {
 		/* space 0 does for what ever unknown reason not show up
 		* in iteration above, add it manually */
-		ulint		space = 0;
-		const char*	name = NULL;
+
+		fil_space_t* space = fil_space_acquire_silent(0);
+
 		i_s_dict_fill_tablespaces_encryption(
-			thd, space, name, tables->table);
+			thd, space, tables->table);
+
+		fil_space_release(space);
 	}
 
 	DBUG_RETURN(0);
@@ -8349,7 +8427,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_tablespaces_encryption =
 
 	/* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-	STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA)
+	STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE)
 };
 
 /**  TABLESPACES_SCRUBBING    ********************************************/
@@ -8428,22 +8506,32 @@ static ST_FIELD_INFO	innodb_tablespaces_scrubbing_fields_info[] =
 	 STRUCT_FLD(old_name,		""),
 	 STRUCT_FLD(open_method,	SKIP_OPEN_TABLE)},
 
+#define TABLESPACES_ENCRYPTION_ROTATING_OR_FLUSHING 9
+	{STRUCT_FLD(field_name,		"ROTATING_OR_FLUSHING"),
+	 STRUCT_FLD(field_length,	MY_INT32_NUM_DECIMAL_DIGITS),
+	 STRUCT_FLD(field_type,		MYSQL_TYPE_LONG),
+	 STRUCT_FLD(value,		0),
+	 STRUCT_FLD(field_flags,	MY_I_S_UNSIGNED),
+	 STRUCT_FLD(old_name,		""),
+	 STRUCT_FLD(open_method,	SKIP_OPEN_TABLE)},
+
 	END_OF_ST_FIELD_INFO
 };
 
 /**********************************************************************//**
 Function to fill INFORMATION_SCHEMA.INNODB_TABLESPACES_SCRUBBING
-with information collected by scanning SYS_TABLESPACES table and then use
-fil_space()
+with information collected by scanning SYS_TABLESPACES table and
+fil_space.
+@param[in]	thd		Thread handle
+@param[in]	space		Tablespace
+@param[in]	table_to_fill	I_S table
 @return 0 on success */
 static
 int
 i_s_dict_fill_tablespaces_scrubbing(
-/*==========================*/
-	THD*		thd,		/*!< in: thread */
-	ulint		space,		/*!< in: space ID */
-	const char*	name,		/*!< in: tablespace name */
-	TABLE*		table_to_fill)	/*!< in/out: fill this table */
+	THD*		thd,
+	fil_space_t*	space,
+	TABLE*		table_to_fill)
 {
 	Field**	fields;
         struct fil_space_scrub_status_t status;
@@ -8453,10 +8541,11 @@ i_s_dict_fill_tablespaces_scrubbing(
 	fields = table_to_fill->field;
 
 	fil_space_get_scrub_status(space, &status);
-	OK(fields[TABLESPACES_SCRUBBING_SPACE]->store(space));
+
+	OK(fields[TABLESPACES_SCRUBBING_SPACE]->store(space->id));
 
 	OK(field_store_string(fields[TABLESPACES_SCRUBBING_NAME],
-			      name));
+			      space->name));
 
 	OK(fields[TABLESPACES_SCRUBBING_COMPRESSED]->store(
 		   status.compressed ? 1 : 0));
@@ -8476,6 +8565,7 @@ i_s_dict_fill_tablespaces_scrubbing(
 		TABLESPACES_SCRUBBING_CURRENT_SCRUB_ACTIVE_THREADS,
 		TABLESPACES_SCRUBBING_CURRENT_SCRUB_PAGE_NUMBER,
 		TABLESPACES_SCRUBBING_CURRENT_SCRUB_MAX_PAGE_NUMBER };
+
 	if (status.scrubbing) {
 		for (uint i = 0; i < array_elements(field_numbers); i++) {
 			fields[field_numbers[i]]->set_notnull();
@@ -8495,6 +8585,7 @@ i_s_dict_fill_tablespaces_scrubbing(
 			fields[field_numbers[i]]->set_null();
 		}
 	}
+
 	OK(schema_table_store_record(thd, table_to_fill));
 
 	DBUG_RETURN(0);
@@ -8534,28 +8625,34 @@ i_s_tablespaces_scrubbing_fill_table(
 
 	while (rec) {
 		const char*	err_msg;
-		ulint		space;
+		ulint		space_id;
 		const char*	name;
 		ulint		flags;
 
 		/* Extract necessary information from a SYS_TABLESPACES row */
 		err_msg = dict_process_sys_tablespaces(
-			heap, rec, &space, &name, &flags);
+			heap, rec, &space_id, &name, &flags);
 
 		mtr_commit(&mtr);
 		mutex_exit(&dict_sys->mutex);
 
-		if (space == 0) {
+		if (space_id == 0) {
 			found_space_0 = true;
 		}
 
-		if (!err_msg) {
+		fil_space_t* space = fil_space_acquire_silent(space_id);
+
+		if (!err_msg && space) {
 			i_s_dict_fill_tablespaces_scrubbing(
-				thd, space, name, tables->table);
+				thd, space, tables->table);
 		} else {
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
 					    ER_CANT_FIND_SYSTEM_REC, "%s",
 					    err_msg);
+		}
+
+		if (space) {
+			fil_space_release(space);
 		}
 
 		mem_heap_empty(heap);
@@ -8573,10 +8670,12 @@ i_s_tablespaces_scrubbing_fill_table(
 	if (found_space_0 == false) {
 		/* space 0 does for what ever unknown reason not show up
 		* in iteration above, add it manually */
-		ulint		space = 0;
-		const char*	name = NULL;
+		fil_space_t* space = fil_space_acquire_silent(0);
+
 		i_s_dict_fill_tablespaces_scrubbing(
-			thd, space, name, tables->table);
+			thd, space, tables->table);
+
+		fil_space_release(space);
 	}
 
 	DBUG_RETURN(0);
@@ -8648,7 +8747,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_tablespaces_scrubbing =
 
 	/* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-	STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA)
+	STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE)
 };
 
 /**  INNODB_MUTEXES  *********************************************/
@@ -8862,7 +8961,7 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_mutexes =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };
 
 /**  SYS_SEMAPHORE_WAITS  ************************************************/
@@ -9139,5 +9238,5 @@ UNIV_INTERN struct st_maria_plugin	i_s_innodb_sys_semaphore_waits =
 
         /* Maria extension */
 	STRUCT_FLD(version_info, INNODB_VERSION_STR),
-        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_GAMMA),
+        STRUCT_FLD(maturity, MariaDB_PLUGIN_MATURITY_STABLE),
 };

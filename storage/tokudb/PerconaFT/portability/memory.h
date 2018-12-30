@@ -107,7 +107,7 @@ size_t toku_malloc_usable_size(void *p) __attribute__((__visibility__("default")
 #define XMALLOC(v) CAST_FROM_VOIDP(v, toku_xmalloc(sizeof(*v)))
 #define XMALLOC_N(n,v) CAST_FROM_VOIDP(v, toku_xmalloc((n)*sizeof(*v)))
 #define XCALLOC_N(n,v) CAST_FROM_VOIDP(v, toku_xcalloc((n), (sizeof(*v))))
-#define XCALLOC(v) XCALLOC_N(1,(v))
+#define XCALLOC(v) XCALLOC_N(1,v)
 #define XREALLOC(v,s) CAST_FROM_VOIDP(v, toku_xrealloc(v, s))
 #define XREALLOC_N(n,v) CAST_FROM_VOIDP(v, toku_xrealloc(v, (n)*sizeof(*v)))
 
@@ -125,7 +125,9 @@ size_t toku_malloc_usable_size(void *p) __attribute__((__visibility__("default")
 void *toku_memdup (const void *v, size_t len);
 /* Toku-version of strdup.  Use this so that it calls toku_malloc() */
 char *toku_strdup (const char *s)   __attribute__((__visibility__("default")));
-
+/* Toku-version of strndup.  Use this so that it calls toku_malloc() */
+char *toku_strndup(const char *s, size_t n)
+    __attribute__((__visibility__("default")));
 /* Copy memory.  Analogous to strdup() Crashes instead of returning NULL */
 void *toku_xmemdup (const void *v, size_t len) __attribute__((__visibility__("default")));
 /* Toku-version of strdup.  Use this so that it calls toku_xmalloc()  Crashes instead of returning NULL */

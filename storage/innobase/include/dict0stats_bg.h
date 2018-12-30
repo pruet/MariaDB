@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 2012, 2013, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2012, 2017, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2017, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -32,7 +33,8 @@ Created Apr 26, 2012 Vasil Dimov
 #include "os0sync.h" /* os_event_t */
 #include "os0thread.h" /* DECLARE_THREAD */
 
-/** Event to wake up the stats thread */
+/** Event to wake up dict_stats_thread on dict_stats_recalc_pool_add()
+or shutdown. Not protected by any mutex. */
 extern os_event_t	dict_stats_event;
 
 /*****************************************************************//**
@@ -81,7 +83,7 @@ dict_stats_defrag_pool_del(
 /** Yield the data dictionary latch when waiting
 for the background thread to stop accessing a table.
 @param trx	transaction holding the data dictionary locks */
-#define DICT_STATS_BG_YIELD(trx)	do {	\
+#define DICT_BG_YIELD(trx)	do {	\
 	row_mysql_unlock_data_dictionary(trx);	\
 	os_thread_sleep(250000);		\
 	row_mysql_lock_data_dictionary(trx);	\
@@ -96,7 +98,7 @@ bool
 dict_stats_stop_bg(
 /*===============*/
 	dict_table_t*	table)	/*!< in/out: table */
-	__attribute__((warn_unused_result));
+	MY_ATTRIBUTE((warn_unused_result));
 
 /*****************************************************************//**
 Wait until background stats thread has stopped using the specified table.
@@ -141,6 +143,10 @@ DECLARE_THREAD(dict_stats_thread)(
 /*==============================*/
 	void*	arg);	/*!< in: a dummy parameter
 			required by os_thread_create */
+
+/** Shut down the dict_stats_thread. */
+void
+dict_stats_shutdown();
 
 # ifndef UNIV_NONINL
 #  include "dict0stats_bg.ic"

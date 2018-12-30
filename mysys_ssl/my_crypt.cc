@@ -26,6 +26,7 @@
 #include <openssl/evp.h>
 #include <openssl/aes.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
 
 #ifdef HAVE_ERR_remove_thread_state
 #define ERR_remove_state(X) ERR_remove_thread_state(NULL)
@@ -266,31 +267,37 @@ int my_aes_crypt(enum my_aes_mode mode, int flags,
   return res1 ? res1 : res2;
 }
 
-#ifdef HAVE_YASSL
-#include <random.hpp>
-int my_random_bytes(uchar* buf, int num)
+
+/*
+  calculate the length of the cyphertext from the length of the plaintext
+  for different AES encryption modes with padding enabled.
+  Without padding (ENCRYPTION_FLAG_NOPAD) cyphertext has the same length
+  as the plaintext
+*/
+unsigned int my_aes_get_size(enum my_aes_mode mode __attribute__((unused)), unsigned int source_length)
 {
-  TaoCrypt::RandomNumberGenerator rand;
-  rand.GenerateBlock((TaoCrypt::byte*) buf, num);
-  return MY_AES_OK;
+#ifdef HAVE_EncryptAes128Ctr
+  if (mode == MY_AES_CTR)
+    return source_length;
+#ifdef HAVE_EncryptAes128Gcm
+  if (mode == MY_AES_GCM)
+    return source_length + MY_AES_BLOCK_SIZE;
+#endif
+#endif
+  return (source_length / MY_AES_BLOCK_SIZE + 1) * MY_AES_BLOCK_SIZE;
 }
-#else
-#include <openssl/rand.h>
+
+
+unsigned int my_aes_ctx_size(enum my_aes_mode)
+{
+  return MY_AES_CTX_SIZE;
+}
 
 int my_random_bytes(uchar *buf, int num)
 {
-  /*
-    Unfortunately RAND_bytes manual page does not provide any guarantees
-    in relation to blocking behavior. Here we explicitly use SSLeay random
-    instead of whatever random engine is currently set in OpenSSL. That way
-    we are guaranteed to have a non-blocking random.
-  */
-  RAND_METHOD *rand = RAND_SSLeay();
-  if (rand == NULL || rand->bytes(buf, num) != 1)
+  if (RAND_bytes(buf, num) != 1)
     return MY_AES_OPENSSL_ERROR;
   return MY_AES_OK;
 }
-#endif
 
 }
-

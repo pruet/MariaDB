@@ -1,6 +1,7 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2013, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2014, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -419,11 +420,11 @@ trx_undo_page_init(
 Creates a new undo log segment in file.
 @return DB_SUCCESS if page creation OK possible error codes are:
 DB_TOO_MANY_CONCURRENT_TRXS DB_OUT_OF_FILE_SPACE */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 trx_undo_seg_create(
 /*================*/
-	trx_rseg_t*	rseg __attribute__((unused)),/*!< in: rollback segment */
+	trx_rseg_t*	rseg MY_ATTRIBUTE((unused)),/*!< in: rollback segment */
 	trx_rsegf_t*	rseg_hdr,/*!< in: rollback segment header, page
 				x-latched */
 	ulint		type,	/*!< in: type of the segment: TRX_UNDO_INSERT or
@@ -443,7 +444,9 @@ trx_undo_seg_create(
 	ibool		success;
 	dberr_t		err = DB_SUCCESS;
 
-	ut_ad(mtr && id && rseg_hdr);
+	ut_ad(mtr != NULL);
+	ut_ad(id != NULL);
+	ut_ad(rseg_hdr != NULL);
 	ut_ad(mutex_own(&(rseg->mutex)));
 
 	/*	fputs(type == TRX_UNDO_INSERT
@@ -827,7 +830,7 @@ byte*
 trx_undo_parse_discard_latest(
 /*==========================*/
 	byte*	ptr,	/*!< in: buffer */
-	byte*	end_ptr __attribute__((unused)), /*!< in: buffer end */
+	byte*	end_ptr MY_ATTRIBUTE((unused)), /*!< in: buffer end */
 	page_t*	page,	/*!< in: page or NULL */
 	mtr_t*	mtr)	/*!< in: mtr or NULL */
 {
@@ -1067,9 +1070,11 @@ Truncates an undo log from the end. This function is used during a rollback
 to free space from an undo log. */
 UNIV_INTERN
 void
-trx_undo_truncate_end(
+trx_undo_truncate_end_func(
 /*=======================*/
-	trx_t*		trx,	/*!< in: transaction whose undo log it is */
+#ifdef UNIV_DEBUG
+	const trx_t*	trx,	/*!< in: transaction whose undo log it is */
+#endif /* UNIV_DEBUG */
 	trx_undo_t*	undo,	/*!< in: undo log */
 	undo_no_t	limit)	/*!< in: all undo records with undo number
 				>= this value should be truncated */
@@ -1084,7 +1089,7 @@ trx_undo_truncate_end(
 	ut_ad(mutex_own(&(trx->rseg->mutex)));
 
 	for (;;) {
-		mtr_start_trx(&mtr, trx);
+		mtr_start(&mtr);
 
 		trunc_here = NULL;
 
@@ -1309,8 +1314,7 @@ trx_undo_mem_create_at_db_start(
 	/* Read X/Open XA transaction identification if it exists, or
 	set it to NULL. */
 
-	memset(&xid, 0, sizeof(xid));
-	xid.formatID = -1;
+	xid.null();
 
 	if (xid_exists == TRUE) {
 		trx_undo_read_xid(undo_header, &xid);
@@ -1555,7 +1559,7 @@ Creates a new undo log.
 @return DB_SUCCESS if successful in creating the new undo lob object,
 possible error codes are: DB_TOO_MANY_CONCURRENT_TRXS
 DB_OUT_OF_FILE_SPACE DB_OUT_OF_MEMORY */
-static __attribute__((nonnull, warn_unused_result))
+static MY_ATTRIBUTE((nonnull, warn_unused_result))
 dberr_t
 trx_undo_create(
 /*============*/
@@ -1771,7 +1775,7 @@ trx_undo_assign_undo(
 
 	ut_ad(mutex_own(&(trx->undo_mutex)));
 
-	mtr_start_trx(&mtr, trx);
+	mtr_start(&mtr);
 
 	mutex_enter(&rseg->mutex);
 
@@ -1984,7 +1988,9 @@ trx_undo_insert_cleanup(
 
 		mutex_exit(&(rseg->mutex));
 
-		trx_undo_seg_free(undo);
+		if (!srv_read_only_mode) {
+			trx_undo_seg_free(undo);
+		}
 
 		mutex_enter(&(rseg->mutex));
 
@@ -2009,13 +2015,57 @@ trx_undo_free_prepared(
 	ut_ad(srv_shutdown_state == SRV_SHUTDOWN_EXIT_THREADS);
 
 	if (trx->update_undo) {
-		ut_a(trx->update_undo->state == TRX_UNDO_PREPARED);
+		switch (trx->update_undo->state) {
+		case TRX_UNDO_PREPARED:
+			break;
+		case TRX_UNDO_CACHED:
+		case TRX_UNDO_TO_FREE:
+		case TRX_UNDO_TO_PURGE:
+			ut_ad(trx_state_eq(trx,
+					   TRX_STATE_COMMITTED_IN_MEMORY));
+			/* fall through */
+		case TRX_UNDO_ACTIVE:
+			/* lock_trx_release_locks() assigns
+			trx->is_recovered=false and
+			trx->state = TRX_STATE_COMMITTED_IN_MEMORY,
+			also for transactions that we faked
+			to TRX_STATE_PREPARED in trx_rollback_resurrected(). */
+			ut_a(srv_read_only_mode
+			     || srv_force_recovery >= SRV_FORCE_NO_TRX_UNDO
+			     || srv_fast_shutdown);
+			break;
+		default:
+			ut_error;
+		}
+
 		UT_LIST_REMOVE(undo_list, trx->rseg->update_undo_list,
 			       trx->update_undo);
 		trx_undo_mem_free(trx->update_undo);
 	}
 	if (trx->insert_undo) {
-		ut_a(trx->insert_undo->state == TRX_UNDO_PREPARED);
+		switch (trx->insert_undo->state) {
+		case TRX_UNDO_PREPARED:
+			break;
+		case TRX_UNDO_CACHED:
+		case TRX_UNDO_TO_FREE:
+		case TRX_UNDO_TO_PURGE:
+			ut_ad(trx_state_eq(trx,
+					   TRX_STATE_COMMITTED_IN_MEMORY));
+			/* fall through */
+		case TRX_UNDO_ACTIVE:
+			/* lock_trx_release_locks() assigns
+			trx->is_recovered=false and
+			trx->state = TRX_STATE_COMMITTED_IN_MEMORY,
+			also for transactions that we faked
+			to TRX_STATE_PREPARED in trx_rollback_resurrected(). */
+			ut_a(srv_read_only_mode
+			     || srv_force_recovery >= SRV_FORCE_NO_TRX_UNDO
+			     || srv_fast_shutdown);
+			break;
+		default:
+			ut_error;
+		}
+
 		UT_LIST_REMOVE(undo_list, trx->rseg->insert_undo_list,
 			       trx->insert_undo);
 		trx_undo_mem_free(trx->insert_undo);

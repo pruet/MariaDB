@@ -1,7 +1,7 @@
 /************* Tabutil cpp Declares Source Code File (.CPP) ************/
-/*  Name: TABUTIL.CPP   Version 1.1                                    */
+/*  Name: TABUTIL.CPP   Version 1.2                                    */
 /*                                                                     */
-/*  (C) Copyright to the author Olivier BERTRAND          2013 - 2016  */
+/*  (C) Copyright to the author Olivier BERTRAND          2013 - 2017  */
 /*                                                                     */
 /*  Utility function used by the PROXY, XCOL, OCCUR, and TBL tables.   */
 /***********************************************************************/
@@ -45,8 +45,9 @@
 #include "myutil.h"
 #include "valblk.h"
 #include "resource.h"
-#include "reldef.h"
+//#include "reldef.h"
 #include "xtable.h"
+#include "tabext.h"
 #include "tabmysql.h"
 #include "tabcol.h"
 #include "tabutil.h"
@@ -118,7 +119,8 @@ PQRYRES TabColumns(PGLOBAL g, THD *thd, const char *db,
                    FLD_LENGTH, FLD_SCALE, FLD_RADIX,    FLD_NULL,
                    FLD_REM,    FLD_NO,    FLD_CHARSET};
   unsigned int length[] = {0, 4, 16, 4, 4, 4, 4, 4, 0, 32, 32};
-  char        *pn, *tn, *fld, *colname, *chset, *fmt, v;
+	PCSZ         fmt;
+	char        *pn, *tn, *fld, *colname, v; // *chset
   int          i, n, ncol = sizeof(buftyp) / sizeof(int);
   int          prec, len, type, scale;
   int          zconv = GetConvSize();
@@ -183,8 +185,9 @@ PQRYRES TabColumns(PGLOBAL g, THD *thd, const char *db,
     colname = (char *)fp->field_name;
     crp->Kdata->SetValue(colname, i);
 
-    chset = (char *)fp->charset()->name;
-    v = (!strcmp(chset, "binary")) ? 'B' : 0;
+//  chset = (char *)fp->charset()->name;
+//  v = (!strcmp(chset, "binary")) ? 'B' : 0;
+		v = 0;
 
     if ((type = MYSQLtoPLG(fp->type(), &v)) == TYPE_ERROR) {
       if (v == 'K') {
@@ -226,7 +229,7 @@ PQRYRES TabColumns(PGLOBAL g, THD *thd, const char *db,
         fmt = MyDateFmt(fp->type());
         prec = len = strlen(fmt);
       } else {
-        fmt = (char*)fp->option_struct->dateformat;
+        fmt = (PCSZ)fp->option_struct->dateformat;
         prec = len = fp->field_length;
       } // endif mysql
 
@@ -313,7 +316,7 @@ bool PRXDEF::DefineAM(PGLOBAL g, LPCSTR, int)
       strcpy(g->Message, "Missing object table definition");
       return true;
     } else
-      tab = "Noname";
+      tab = PlugDup(g, "Noname");
 
   } else
     // Analyze the table name, it may have the format: [dbname.]tabname
@@ -356,7 +359,7 @@ TDBPRX::TDBPRX(PTDBPRX tdbp) : TDBASE(tdbp)
   } // end of TDBPRX copy constructor
 
 // Method
-PTDB TDBPRX::CopyOne(PTABS t)
+PTDB TDBPRX::Clone(PTABS t)
   {
   PTDB    tp;
   PPRXCOL cp1, cp2;
@@ -370,12 +373,12 @@ PTDB TDBPRX::CopyOne(PTABS t)
     } // endfor cp1
 
   return tp;
-  } // end of CopyOne
+  } // end of Clone
 
 /***********************************************************************/
 /*  Get the PTDB of the sub-table.                                     */
 /***********************************************************************/
-PTDBASE TDBPRX::GetSubTable(PGLOBAL g, PTABLE tabp, bool b)
+PTDB TDBPRX::GetSubTable(PGLOBAL g, PTABLE tabp, bool b)
   {
   const char  *sp = NULL;
   char        *db, *name;
@@ -426,7 +429,7 @@ PTDBASE TDBPRX::GetSubTable(PGLOBAL g, PTABLE tabp, bool b)
       char buf[MAX_STR];
 
       strcpy(buf, g->Message);
-      sprintf(g->Message, "Error accessing %s.%s: %s", db, name, buf);
+      snprintf(g->Message, MAX_STR, "Error accessing %s.%s: %s", db, name, buf);
       hc->tshp = NULL;
       goto err;
       } // endif Define
@@ -454,15 +457,15 @@ PTDBASE TDBPRX::GetSubTable(PGLOBAL g, PTABLE tabp, bool b)
     hc->get_table()->s->option_struct->srcdef = sp;
   } // endif s
 
-  if (trace && tdbp)
+  if (trace(1) && tdbp)
     htrc("Subtable %s in %s\n", 
-          name, SVP(((PTDBASE)tdbp)->GetDef()->GetDB()));
+          name, SVP(tdbp->GetDef()->GetDB()));
  
  err:
   if (s)
     free_table_share(s);
 
-  return (PTDBASE)tdbp;
+  return tdbp;
   } // end of GetSubTable
 
 /***********************************************************************/
@@ -560,9 +563,9 @@ bool TDBPRX::OpenDB(PGLOBAL g)
   /*  its column blocks in mode write (required by XML tables).        */
   /*********************************************************************/
   if (Mode == MODE_UPDATE) {
-    PTDBASE utp;
+    PTDB utp;
 
-    if (!(utp= (PTDBASE)Tdbp->Duplicate(g))) {
+    if (!(utp= Tdbp->Duplicate(g))) {
       sprintf(g->Message, MSG(INV_UPDT_TABLE), Tdbp->GetName());
       return true;
       } // endif tp
@@ -625,7 +628,7 @@ void TDBPRX::RemoveNext(PTABLE tp)
 /***********************************************************************/
 /*  PRXCOL public constructor.                                         */
 /***********************************************************************/
-PRXCOL::PRXCOL(PCOLDEF cdp, PTDB tdbp, PCOL cprec, int i, PSZ am)
+PRXCOL::PRXCOL(PCOLDEF cdp, PTDB tdbp, PCOL cprec, int i, PCSZ am)
       : COLBLK(cdp, tdbp, i)
   {
   if (cprec) {
@@ -644,7 +647,7 @@ PRXCOL::PRXCOL(PCOLDEF cdp, PTDB tdbp, PCOL cprec, int i, PSZ am)
   Pseudo = false;
   Colnum = cdp->GetOffset();     // If columns are retrieved by number
 
-  if (trace)
+  if (trace(1))
     htrc(" making new %sCOL C%d %s at %p\n", am, Index, Name, this);
 
   } // end of PRXCOL constructor
@@ -681,7 +684,7 @@ char *PRXCOL::Decode(PGLOBAL g, const char *cnm)
 /*  PRXCOL initialization routine.                                     */
 /*  Look for the matching column in the object table.                  */
 /***********************************************************************/
-bool PRXCOL::Init(PGLOBAL g, PTDBASE tp)
+bool PRXCOL::Init(PGLOBAL g, PTDB tp)
   {
   if (!tp)
     tp = ((PTDBPRX)To_Tdb)->Tdbp;
@@ -729,7 +732,7 @@ void PRXCOL::Reset(void)
 /***********************************************************************/
 void PRXCOL::ReadColumn(PGLOBAL g)
   {
-  if (trace > 1)
+  if (trace(2))
     htrc("PRX ReadColumn: name=%s\n", Name);
 
   if (Colp) {
@@ -740,7 +743,14 @@ void PRXCOL::ReadColumn(PGLOBAL g)
     if (Nullable)
       Value->SetNull(Value->IsNull());
 
-    } // endif Colp
+	} else {
+		Value->Reset();
+
+		// Set null when applicable
+		if (Nullable)
+			Value->SetNull(true);
+
+	}	// endif Colp
 
   } // end of ReadColumn
 
@@ -749,7 +759,7 @@ void PRXCOL::ReadColumn(PGLOBAL g)
 /***********************************************************************/
 void PRXCOL::WriteColumn(PGLOBAL g)
   {
-  if (trace > 1)
+  if (trace(2))
     htrc("PRX WriteColumn: name=%s\n", Name);
 
   if (Colp) {

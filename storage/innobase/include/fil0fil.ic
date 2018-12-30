@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2015, MariaDB Corporation.
+Copyright (c) 2015, 2018, MariaDB Corporation.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -27,28 +27,6 @@ Created 31/03/2015 Jan Lindström
 #define fil0fil_ic
 
 /*******************************************************************//**
-Return space name */
-UNIV_INLINE
-char*
-fil_space_name(
-/*===========*/
-	fil_space_t*	space)	/*!< in: space */
-{
-	return (space->name);
-}
-
-/*******************************************************************//**
-Return space flags */
-UNIV_INLINE
-ulint
-fil_space_flags(
-/*===========*/
-	fil_space_t*	space)	/*!< in: space */
-{
-	return (space->flags);
-}
-
-/*******************************************************************//**
 Return page type name */
 UNIV_INLINE
 const char*
@@ -58,38 +36,38 @@ fil_get_page_type_name(
 {
 	switch(page_type) {
 	case FIL_PAGE_PAGE_COMPRESSED:
-		return (const char*)"PAGE_COMPRESSED";
+		return "PAGE_COMPRESSED";
+	case FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED:
+		return "PAGE_COMPRESSED_ENCRYPTED";
 	case FIL_PAGE_INDEX:
-		return (const char*)"INDEX";
+		return "INDEX";
 	case FIL_PAGE_UNDO_LOG:
-		return (const char*)"UNDO LOG";
+		return "UNDO LOG";
 	case FIL_PAGE_INODE:
-		return (const char*)"INODE";
+		return "INODE";
 	case FIL_PAGE_IBUF_FREE_LIST:
-		return (const char*)"IBUF_FREE_LIST";
+		return "IBUF_FREE_LIST";
 	case FIL_PAGE_TYPE_ALLOCATED:
-		return (const char*)"ALLOCATED";
+		return "ALLOCATED";
 	case FIL_PAGE_IBUF_BITMAP:
-		return (const char*)"IBUF_BITMAP";
+		return "IBUF_BITMAP";
 	case FIL_PAGE_TYPE_SYS:
-		return (const char*)"SYS";
+		return "SYS";
 	case FIL_PAGE_TYPE_TRX_SYS:
-		return (const char*)"TRX_SYS";
+		return "TRX_SYS";
 	case FIL_PAGE_TYPE_FSP_HDR:
-		return (const char*)"FSP_HDR";
+		return "FSP_HDR";
 	case FIL_PAGE_TYPE_XDES:
-		return (const char*)"XDES";
+		return "XDES";
 	case FIL_PAGE_TYPE_BLOB:
-		return (const char*)"BLOB";
+		return "BLOB";
 	case FIL_PAGE_TYPE_ZBLOB:
-		return (const char*)"ZBLOB";
+		return "ZBLOB";
 	case FIL_PAGE_TYPE_ZBLOB2:
-		return (const char*)"ZBLOB2";
-	case FIL_PAGE_TYPE_COMPRESSED:
-		return (const char*)"ORACLE PAGE COMPRESSED";
-	default:
-		return (const char*)"PAGE TYPE CORRUPTED";
+		return "ZBLOB2";
 	}
+
+	return "PAGE TYPE CORRUPTED";
 }
 
 /****************************************************************//**
@@ -131,9 +109,9 @@ fil_page_type_validate(
 		page_type == FIL_PAGE_TYPE_XDES ||
 		page_type == FIL_PAGE_TYPE_BLOB ||
 		page_type == FIL_PAGE_TYPE_ZBLOB ||
-		page_type == FIL_PAGE_TYPE_COMPRESSED))) {
+		page_type == FIL_PAGE_TYPE_ZBLOB2))) {
 
-		uint key_version = mach_read_from_4(page + FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION);
+		ulint key_version = mach_read_from_4(page + FIL_PAGE_FILE_FLUSH_LSN_OR_KEY_VERSION);
 		bool page_compressed = (page_type == FIL_PAGE_PAGE_COMPRESSED);
 		bool page_compressed_encrypted = (page_type == FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED);
 		ulint space = mach_read_from_4(page + FIL_PAGE_ARCH_LOG_NO_OR_SPACE_ID);
@@ -145,27 +123,17 @@ fil_page_type_validate(
 		fil_system_exit();
 
 		/* Dump out the page info */
-		fprintf(stderr, "InnoDB: Space %lu offset %lu name %s page_type %lu page_type_name %s\n"
-			"InnoDB: key_version %u page_compressed %d page_compressed_encrypted %d lsn %llu compressed_len %lu\n",
-			space, offset, rspace->name, page_type, fil_get_page_type_name(page_type),
-			key_version, page_compressed, page_compressed_encrypted, (ulonglong)lsn, compressed_len);
-		fflush(stderr);
-
-		ut_ad(page_type == FIL_PAGE_PAGE_COMPRESSED ||
-			page_type == FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED ||
-			page_type == FIL_PAGE_INDEX ||
-			page_type == FIL_PAGE_UNDO_LOG ||
-			page_type == FIL_PAGE_INODE ||
-			page_type == FIL_PAGE_IBUF_FREE_LIST ||
-			page_type == FIL_PAGE_TYPE_ALLOCATED ||
-			page_type == FIL_PAGE_IBUF_BITMAP ||
-			page_type == FIL_PAGE_TYPE_SYS ||
-			page_type == FIL_PAGE_TYPE_TRX_SYS ||
-			page_type == FIL_PAGE_TYPE_FSP_HDR ||
-			page_type == FIL_PAGE_TYPE_XDES ||
-			page_type == FIL_PAGE_TYPE_BLOB ||
-			page_type == FIL_PAGE_TYPE_ZBLOB ||
-			page_type == FIL_PAGE_TYPE_COMPRESSED);
+		fprintf(stderr, "InnoDB: Page " ULINTPF ":" ULINTPF
+			" name %s page_type " ULINTPF " page_type_name %s\n"
+			"InnoDB: key_version " ULINTPF
+			" page_compressed %d page_compressed_encrypted %d lsn "
+			LSN_PF " compressed_len " ULINTPF "\n",
+			space, offset, rspace->name, page_type,
+			fil_get_page_type_name(page_type),
+			key_version,
+			page_compressed, page_compressed_encrypted,
+			lsn, compressed_len);
+		ut_error;
 		return false;
 	}
 

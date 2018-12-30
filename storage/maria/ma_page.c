@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 /*
   Read and write key blocks
@@ -224,17 +224,35 @@ my_bool _ma_write_keypage(MARIA_PAGE *page, enum pagecache_page_lock lock,
 #endif
 
   page_cleanup(share, page);
-  res= pagecache_write(share->pagecache,
-                       &share->kfile,
-                       (pgcache_page_no_t) (page->pos / block_size),
-                       level, buff, share->page_type,
-                       lock,
-                       lock == PAGECACHE_LOCK_LEFT_WRITELOCKED ?
-                       PAGECACHE_PIN_LEFT_PINNED :
-                       (lock == PAGECACHE_LOCK_WRITE_UNLOCK ?
-                        PAGECACHE_UNPIN : PAGECACHE_PIN),
-                       PAGECACHE_WRITE_DELAY, &page_link.link,
-		       LSN_IMPOSSIBLE);
+  {
+    PAGECACHE_BLOCK_LINK **link;
+    enum pagecache_page_pin pin;
+    if (lock == PAGECACHE_LOCK_LEFT_WRITELOCKED)
+    {
+      pin= PAGECACHE_PIN_LEFT_PINNED;
+      link= &page_link.link;
+    }
+    else if (lock == PAGECACHE_LOCK_WRITE_UNLOCK)
+    {
+      pin= PAGECACHE_UNPIN;
+      /*
+        We  unlock this page so link should be 0 to prevent it usage
+        even accidentally
+      */
+      link= NULL;
+    }
+    else
+    {
+      pin= PAGECACHE_PIN;
+      link= &page_link.link;
+    }
+    res= pagecache_write(share->pagecache,
+                         &share->kfile,
+                         (pgcache_page_no_t) (page->pos / block_size),
+                         level, buff, share->page_type,
+                         lock, pin, PAGECACHE_WRITE_DELAY, link,
+                         LSN_IMPOSSIBLE);
+  }
 
   if (lock == PAGECACHE_LOCK_WRITE)
   {

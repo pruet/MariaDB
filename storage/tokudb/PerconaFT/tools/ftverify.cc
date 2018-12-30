@@ -148,7 +148,7 @@ deserialize_headers(int fd, struct ft **h1p, struct ft **h2p)
         }
     }
     {
-        toku_off_t header_1_off = block_allocator::BLOCK_ALLOCATOR_HEADER_RESERVE;
+        toku_off_t header_1_off = BlockAllocator::BLOCK_ALLOCATOR_HEADER_RESERVE;
         r1 = deserialize_ft_from_fd_into_rbuf(
             fd,
             header_1_off,
@@ -325,7 +325,7 @@ check_block(BLOCKNUM blocknum, int64_t UU(blocksize), int64_t UU(address), void 
         }
         just_decompress_sub_block(&sb);
 	
-        r = verify_ftnode_sub_block(&sb);
+        r = verify_ftnode_sub_block(&sb, nullptr, blocknum);
         if (r != 0) {
             printf(" Uncompressed child partition %d checksum failed.\n", i);
             failure++;

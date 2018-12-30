@@ -44,6 +44,9 @@ Copyright (c) 2006, 2015, Percona and/or its affiliates. All rights reserved.
 #include "ft/ft-ops.h"
 #include "ft/logger/log.h"
 #include "util/dbt.h"
+#ifndef TOKU_MYSQL_WITH_PFS
+#include <my_global.h>
+#endif
 
 typedef struct ft *FT;
 typedef struct ft_options *FT_OPTIONS;
@@ -52,6 +55,12 @@ typedef struct ft_options *FT_OPTIONS;
 // if with a txn, then the unlink happens on commit.
 void toku_ft_unlink(FT_HANDLE handle);
 void toku_ft_unlink_on_commit(FT_HANDLE handle, TOKUTXN txn);
+
+int toku_ft_rename_iname(DB_TXN *txn,
+                         const char *data_dir,
+                         const char *old_iname,
+                         const char *new_iname,
+                         CACHETABLE ct);
 
 void toku_ft_init_reflock(FT ft);
 void toku_ft_destroy_reflock(FT ft);
@@ -127,13 +136,17 @@ DESCRIPTOR toku_ft_get_cmp_descriptor(FT_HANDLE ft_handle);
 
 typedef struct {
     // delta versions in basements could be negative
+    // These represent the physical leaf entries and do not account
+    // for pending deletes or other in-flight messages that have not been
+    // applied to a leaf entry.
     int64_t numrows;
     int64_t numbytes;
 } STAT64INFO_S, *STAT64INFO;
-static const STAT64INFO_S ZEROSTATS = { .numrows = 0, .numbytes = 0};
+static const STAT64INFO_S ZEROSTATS = { .numrows = 0, .numbytes = 0 };
 
 void toku_ft_update_stats(STAT64INFO headerstats, STAT64INFO_S delta);
 void toku_ft_decrease_stats(STAT64INFO headerstats, STAT64INFO_S delta);
+void toku_ft_adjust_logical_row_count(FT ft, int64_t delta);
 
 typedef void (*remove_ft_ref_callback)(FT ft, void *extra);
 void toku_ft_remove_reference(FT ft,

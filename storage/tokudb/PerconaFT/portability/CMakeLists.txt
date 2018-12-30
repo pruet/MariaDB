@@ -8,18 +8,18 @@ set(tokuportability_srcs
   portability
   toku_assert
   toku_crash
+  toku_instr_mysql
   toku_path
   toku_pthread
   toku_time
   )
 
 add_library(${LIBTOKUPORTABILITY} SHARED ${tokuportability_srcs})
-target_link_libraries(${LIBTOKUPORTABILITY} LINK_PRIVATE ${LIBJEMALLOC})
 target_link_libraries(${LIBTOKUPORTABILITY} LINK_PUBLIC ${CMAKE_THREAD_LIBS_INIT} ${EXTRA_SYSTEM_LIBS})
 
 add_library(tokuportability_static_conv STATIC ${tokuportability_srcs})
 set_target_properties(tokuportability_static_conv PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set(tokuportability_source_libs tokuportability_static_conv ${LIBJEMALLOC} ${CMAKE_THREAD_LIBS_INIT} ${EXTRA_SYSTEM_LIBS})
+set(tokuportability_source_libs tokuportability_static_conv ${CMAKE_THREAD_LIBS_INIT} ${EXTRA_SYSTEM_LIBS})
 toku_merge_static_libs(${LIBTOKUPORTABILITY}_static ${LIBTOKUPORTABILITY}_static "${tokuportability_source_libs}")
 
 maybe_add_gcov_to_libraries(${LIBTOKUPORTABILITY} tokuportability_static_conv)
@@ -54,6 +54,10 @@ if (NOT DEFINED MYSQL_PROJECT_NAME_DOCSTRING)
     DESTINATION ${INSTALL_LIBDIR}
     COMPONENT tokukv_libs_shared
     )
+else ()
+  set_property(SOURCE toku_pthread portability APPEND PROPERTY
+               COMPILE_DEFINITIONS MYSQL_TOKUDB_ENGINE=1 )
+  target_link_libraries(${LIBTOKUPORTABILITY} LINK_PRIVATE mysys)
 endif ()
 
 add_subdirectory(tests)

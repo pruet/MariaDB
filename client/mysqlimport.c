@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2015, Oracle and/or its affiliates.
-   Copyright (c) 2011, 2016, MariaDB
+   Copyright (c) 2011, 2017, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -37,6 +37,7 @@
 
 /* Global Thread counter */
 uint counter= 0;
+pthread_mutex_t init_mutex;
 pthread_mutex_t counter_mutex;
 pthread_cond_t count_threshhold;
 
@@ -248,8 +249,12 @@ get_one_option(int optid, const struct my_option *opt __attribute__((unused)),
     break;
 #endif
   case OPT_MYSQL_PROTOCOL:
-    opt_protocol= find_type_or_exit(argument, &sql_protocol_typelib,
-                                    opt->name);
+    if ((opt_protocol= find_type_with_warning(argument, &sql_protocol_typelib,
+                                              opt->name)) <= 0)
+    {
+      sf_leaking_memory= 1; /* no memory leak reports here */
+      exit(1);
+    }
     break;
   case '#':
     DBUG_PUSH(argument ? argument : "d:t:o");
@@ -421,8 +426,19 @@ static MYSQL *db_connect(char *host, char *database,
   MYSQL *mysql;
   if (verbose)
     fprintf(stdout, "Connecting to %s\n", host ? host : "localhost");
-  if (!(mysql= mysql_init(NULL)))
-    return 0;
+  if (opt_use_threads && !lock_tables)
+  {
+    pthread_mutex_lock(&init_mutex);
+    if (!(mysql= mysql_init(NULL)))
+    {
+      pthread_mutex_unlock(&init_mutex);
+      return 0;
+    }
+    pthread_mutex_unlock(&init_mutex);
+  }
+  else
+    if (!(mysql= mysql_init(NULL)))
+      return 0;
   if (opt_compress)
     mysql_options(mysql,MYSQL_OPT_COMPRESS,NullS);
   if (opt_local_file)
@@ -614,7 +630,7 @@ error:
   pthread_cond_signal(&count_threshhold);
   pthread_mutex_unlock(&counter_mutex);
   mysql_thread_end();
-
+  pthread_exit(0);
   return 0;
 }
 
@@ -625,8 +641,7 @@ int main(int argc, char **argv)
   MY_INIT(argv[0]);
   sf_leaking_memory=1; /* don't report memory leaks on early exits */
 
-  if (load_defaults("my",load_default_groups,&argc,&argv))
-    return 1;
+  load_defaults_or_exit("my", load_default_groups, &argc, &argv);
   /* argv is changed in the program */
   argv_to_free= argv;
   if (get_options(&argc, &argv))
@@ -638,16 +653,32 @@ int main(int argc, char **argv)
 
   if (opt_use_threads && !lock_tables)
   {
-    pthread_t mainthread;            /* Thread descriptor */
-    pthread_attr_t attr;          /* Thread attributes */
+    char **save_argv;
+    uint worker_thread_count= 0, table_count= 0, i= 0;
+    pthread_t *worker_threads;       /* Thread descriptor */
+    pthread_attr_t attr;             /* Thread attributes */
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr,
-                                PTHREAD_CREATE_DETACHED);
+                                PTHREAD_CREATE_JOINABLE);
 
+    pthread_mutex_init(&init_mutex, NULL);
     pthread_mutex_init(&counter_mutex, NULL);
     pthread_cond_init(&count_threshhold, NULL);
 
-    for (counter= 0; *argv != NULL; argv++) /* Loop through tables */
+    /* Count the number of tables. This number denotes the total number
+       of threads spawn.
+    */
+    save_argv= argv;
+    for (table_count= 0; *argv != NULL; argv++)
+      table_count++;
+    argv= save_argv;
+
+    if (!(worker_threads= (pthread_t*) my_malloc(table_count *
+                                                 sizeof(*worker_threads),
+                                                 MYF(0))))
+      return -2;
+
+    for (; *argv != NULL; argv++) /* Loop through tables */
     {
       pthread_mutex_lock(&counter_mutex);
       while (counter == opt_use_threads)
@@ -661,15 +692,16 @@ int main(int argc, char **argv)
       counter++;
       pthread_mutex_unlock(&counter_mutex);
       /* now create the thread */
-      if (pthread_create(&mainthread, &attr, worker_thread, 
-                         (void *)*argv) != 0)
+      if (pthread_create(&worker_threads[worker_thread_count], &attr,
+                         worker_thread, (void *)*argv) != 0)
       {
         pthread_mutex_lock(&counter_mutex);
         counter--;
         pthread_mutex_unlock(&counter_mutex);
-        fprintf(stderr,"%s: Could not create thread\n",
-                my_progname);
+        fprintf(stderr,"%s: Could not create thread\n", my_progname);
+        continue;
       }
+      worker_thread_count++;
     }
 
     /*
@@ -684,9 +716,18 @@ int main(int argc, char **argv)
       pthread_cond_timedwait(&count_threshhold, &counter_mutex, &abstime);
     }
     pthread_mutex_unlock(&counter_mutex);
+    pthread_mutex_destroy(&init_mutex);
     pthread_mutex_destroy(&counter_mutex);
     pthread_cond_destroy(&count_threshhold);
     pthread_attr_destroy(&attr);
+
+    for(i= 0; i < worker_thread_count; i++)
+    {
+      if (pthread_join(worker_threads[i], NULL))
+        fprintf(stderr,"%s: Could not join worker thread.\n", my_progname);
+    }
+
+    my_free(worker_threads);
   }
   else
   {

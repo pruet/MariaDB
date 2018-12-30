@@ -13,3 +13,19 @@
 
 --echo
 --echo End of tests
+
+# Multi-line exec
+exec $MYSQL \
+    test -e "select 1";
+exec $MYSQL test -e "select
+    2";
+let $query = select 3
+    as X;
+exec $MYSQL test -e "$query";
+
+# Not ran on Windows, since non-ASCII does not work on command line.
+# (MDEV-16220)
+--error 1
+--exec $MYSQL --default-character-set=utf8 -e "select 1" "test😁 " 2>&1
+--error 1
+--exec $MYSQL --default-character-set=binary -e "select 1" "test😁 " 2>&1

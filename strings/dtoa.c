@@ -1,4 +1,5 @@
 /* Copyright (c) 2007, 2012, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2017, MariaDB Corporation.
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -1377,7 +1378,7 @@ static double my_strtod_int(const char *s00, char **se, int *error, char *buf, s
     switch (*s) {
     case '-':
       sign= 1;
-      /* no break */
+      /* fall through */
     case '+':
       s++;
       goto break2;
@@ -1465,10 +1466,9 @@ static double my_strtod_int(const char *s00, char **se, int *error, char *buf, s
     esign= 0;
     if (++s < end)
       switch (c= *s) {
-      case '-':
-        esign= 1;
-      case '+':
-        c= *++s;
+      case '-': esign= 1;
+        /* fall through */
+      case '+': c= *++s;
       }
     if (s < end && c >= '0' && c <= '9')
     {
@@ -2360,7 +2360,7 @@ static char *dtoa(double dd, int mode, int ndigits, int *decpt, int *sign,
     break;
   case 2:
     leftright= 0;
-    /* no break */
+    /* fall through */
   case 4:
     if (ndigits <= 0)
       ndigits= 1;
@@ -2368,7 +2368,7 @@ static char *dtoa(double dd, int mode, int ndigits, int *decpt, int *sign,
     break;
   case 3:
     leftright= 0;
-    /* no break */
+    /* fall through */
   case 5:
     i= ndigits + k + 1;
     ilim= i;

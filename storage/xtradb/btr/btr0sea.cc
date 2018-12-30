@@ -1,7 +1,8 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2012, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2008, Google Inc.
+Copyright (c) 2018, MariaDB Corporation.
 
 Portions of this file contain modifications contributed and copyrighted by
 Google, Inc. Those modifications are gratefully acknowledged and are described
@@ -199,7 +200,7 @@ btr_search_sys_create(
 				&btr_search_latch_arr[i], SYNC_SEARCH_SYS);
 
 		btr_search_sys->hash_tables[i]
-			= ha_create(hash_size, 0, MEM_HEAP_FOR_BTR_SEARCH, 0);
+			= ib_create(hash_size, 0, MEM_HEAP_FOR_BTR_SEARCH, 0);
 
 #if defined UNIV_AHI_DEBUG || defined UNIV_DEBUG
 		btr_search_sys->hash_tables[i]->adaptive = TRUE;
@@ -512,7 +513,7 @@ btr_search_update_block_hash_info(
 /*==============================*/
 	btr_search_t*	info,	/*!< in: search info */
 	buf_block_t*	block,	/*!< in: buffer block */
-	btr_cur_t*	cursor __attribute__((unused)))
+	btr_cur_t*	cursor MY_ATTRIBUTE((unused)))
 				/*!< in: cursor */
 {
 #ifdef UNIV_SYNC_DEBUG
@@ -1299,17 +1300,11 @@ cleanup:
 	mem_free(folds);
 }
 
-/********************************************************************//**
-Drops a possible page hash index when a page is evicted from the buffer pool
-or freed in a file segment. */
+/** Drop possible adaptive hash index entries when a page is evicted
+from the buffer pool or freed in a file, or the index is being dropped. */
 UNIV_INTERN
 void
-btr_search_drop_page_hash_when_freed(
-/*=================================*/
-	ulint	space,		/*!< in: space id */
-	ulint	zip_size,	/*!< in: compressed page size in bytes
-				or 0 for uncompressed pages */
-	ulint	page_no)	/*!< in: page number */
+btr_search_drop_page_hash_when_freed(ulint space, ulint page_no)
 {
 	buf_block_t*	block;
 	mtr_t		mtr;
@@ -1322,7 +1317,7 @@ btr_search_drop_page_hash_when_freed(
 	are possibly holding, we cannot s-latch the page, but must
 	(recursively) x-latch it, even though we are only reading. */
 
-	block = buf_page_get_gen(space, zip_size, page_no, RW_X_LATCH, NULL,
+	block = buf_page_get_gen(space, 0, page_no, RW_X_LATCH, NULL,
 				 BUF_PEEK_IF_IN_POOL, __FILE__, __LINE__,
 				 &mtr);
 
@@ -2034,9 +2029,7 @@ btr_search_validate_one_table(
 					(ulong) block->curr_left_side);
 
 				if (n_page_dumps < 20) {
-					buf_page_print(
-						page, 0,
-						BUF_PAGE_PRINT_NO_CRASH);
+					buf_page_print(page, 0);
 					n_page_dumps++;
 				}
 			}

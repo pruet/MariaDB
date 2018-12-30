@@ -1,5 +1,6 @@
 /*
    Copyright (c) 2004, 2012, Oracle and/or its affiliates.
+   Copyright (c) 2010, 2018, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -503,6 +504,11 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
       goto end;
   }
 
+#ifdef WITH_WSREP
+  if (thd->wsrep_exec_mode == LOCAL_STATE)
+    WSREP_TO_ISOLATION_BEGIN(WSREP_MYSQL_DB, NULL, NULL);
+#endif
+
   /* We should have only one table in table list. */
   DBUG_ASSERT(tables->next_global == 0);
 
@@ -529,7 +535,7 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
     /* Under LOCK TABLES we must only accept write locked tables. */
     if (!(tables->table= find_table_for_mdl_upgrade(thd, tables->db,
                                                     tables->table_name,
-                                                    FALSE)))
+                                                    NULL)))
       goto end;
   }
   else
@@ -575,7 +581,7 @@ bool mysql_create_or_drop_trigger(THD *thd, TABLE_LIST *tables, bool create)
     Ignore the return value for now. It's better to
     keep master/slave in consistent state.
   */
-  if (thd->locked_tables_list.reopen_tables(thd))
+  if (thd->locked_tables_list.reopen_tables(thd, false))
     thd->clear_error();
 
   /*
@@ -606,7 +612,11 @@ end:
     my_ok(thd);
 
   DBUG_RETURN(result);
+
+WSREP_ERROR_LABEL:
+  DBUG_RETURN(true);
 }
+
 
 /**
   Build stmt_query to write it in the bin-log
@@ -1055,6 +1065,11 @@ Table_triggers_list::~Table_triggers_list()
     for (int j= 0; j < (int)TRG_ACTION_MAX; j++)
       delete bodies[i][j];
 
+  /* Free blobs used in insert */
+  if (record0_field)
+    for (Field **fld_ptr= record0_field; *fld_ptr; fld_ptr++)
+      (*fld_ptr)->free();
+
   if (record1_field)
     for (Field **fld_ptr= record1_field; *fld_ptr; fld_ptr++)
       delete *fld_ptr;
@@ -1082,7 +1097,7 @@ bool Table_triggers_list::prepare_record_accessors(TABLE *table)
       && (table->s->stored_fields != table->s->null_fields))
 
   {
-    int null_bytes= (table->s->stored_fields - table->s->null_fields + 7)/8;
+    int null_bytes= (table->s->fields - table->s->null_fields + 7)/8;
     if (!(extra_null_bitmap= (uchar*)alloc_root(&table->mem_root, null_bytes)))
       return 1;
     if (!(record0_field= (Field **)alloc_root(&table->mem_root,
@@ -1368,7 +1383,8 @@ bool Table_triggers_list::check_n_load(THD *thd, const char *db,
       List_iterator_fast<LEX_STRING> it_client_cs_name(triggers->client_cs_names);
       List_iterator_fast<LEX_STRING> it_connection_cl_name(triggers->connection_cl_names);
       List_iterator_fast<LEX_STRING> it_db_cl_name(triggers->db_cl_names);
-      LEX *old_lex= thd->lex, lex;
+      LEX *old_lex= thd->lex;
+      LEX lex;
       sp_rcontext *save_spcont= thd->spcont;
       ulonglong save_sql_mode= thd->variables.sql_mode;
       LEX_STRING *on_table_name;
@@ -2298,6 +2314,9 @@ void Table_triggers_list::mark_fields_used(trg_event_type event)
         bitmap_set_bit(trigger_table->read_set, trg_field->field_idx);
         if (trg_field->get_settable_routine_parameter())
           bitmap_set_bit(trigger_table->write_set, trg_field->field_idx);
+        if (trigger_table->field[trg_field->field_idx]->vcol_info)
+          trigger_table->mark_virtual_col(trigger_table->
+                                          field[trg_field->field_idx]);
       }
     }
   }

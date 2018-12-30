@@ -1,7 +1,8 @@
 #ifndef SQL_PARTITION_INCLUDED
 #define SQL_PARTITION_INCLUDED
 
-/* Copyright (c) 2006, 2013, Oracle and/or its affiliates.
+/* Copyright (c) 2006, 2017, Oracle and/or its affiliates.
+   Copyright (c) 2011, 2017, MariaDB
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -277,12 +278,12 @@ bool partition_key_modified(TABLE *table, const MY_BITMAP *fields);
 #define partition_key_modified(X,Y) 0
 #endif
 
-void create_partition_name(char *out, const char *in1,
-                           const char *in2, uint name_variant,
-                           bool translate);
-void create_subpartition_name(char *out, const char *in1,
-                              const char *in2, const char *in3,
-                              uint name_variant);
+int __attribute__((warn_unused_result))
+  create_partition_name(char *out, size_t outlen, const char *in1, const char
+                        *in2, uint name_variant, bool translate);
+int __attribute__((warn_unused_result))
+  create_subpartition_name(char *out, size_t outlen, const char *in1, const
+                           char *in2, const char *in3, uint name_variant);
 
 void set_field_ptr(Field **ptr, const uchar *new_buf, const uchar *old_buf);
 void set_key_field_ptr(KEY *key_info, const uchar *new_buf,

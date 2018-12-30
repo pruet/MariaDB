@@ -11,7 +11,7 @@
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
 
 #ifndef MYSQL_SERVER
 #define MYSQL_SERVER
@@ -245,7 +245,7 @@ maria_declare_plugin(wsrep_info)
   NULL,                                         /* Status variables   */
   NULL,                                         /* System variables   */
   "1.0",                                        /* Version (string)   */
-  MariaDB_PLUGIN_MATURITY_GAMMA                 /* Maturity           */
+  MariaDB_PLUGIN_MATURITY_STABLE                /* Maturity           */
 },
 {
   MYSQL_INFORMATION_SCHEMA_PLUGIN,
@@ -260,7 +260,7 @@ maria_declare_plugin(wsrep_info)
   NULL,                                         /* Status variables   */
   NULL,                                         /* System variables   */
   "1.0",                                        /* Version (string)   */
-  MariaDB_PLUGIN_MATURITY_GAMMA                 /* Maturity           */
+  MariaDB_PLUGIN_MATURITY_STABLE                /* Maturity           */
 }
 maria_declare_plugin_end;
 

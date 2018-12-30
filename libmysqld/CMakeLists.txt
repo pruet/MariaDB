@@ -1,4 +1,5 @@
 # Copyright (c) 2006, 2011, Oracle and/or its affiliates.
+# Copyright (c) 2009, 2018, MariaDB Corporation
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -56,7 +57,7 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/net_serv.cc ../sql/opt_range.cc ../sql/opt_sum.cc 
            ../sql/parse_file.cc ../sql/procedure.cc ../sql/protocol.cc 
            ../sql/records.cc ../sql/repl_failsafe.cc ../sql/rpl_filter.cc
-           ../sql/rpl_record.cc ../sql/sha2.cc ../sql/des_key_file.cc
+           ../sql/rpl_record.cc ../sql/des_key_file.cc
            ../sql/rpl_injector.cc ../sql/set_var.cc ../sql/spatial.cc 
            ../sql/sp_cache.cc ../sql/sp.cc ../sql/sp_head.cc 
            ../sql/sp_pcontext.cc ../sql/sp_rcontext.cc ../sql/sql_acl.cc 
@@ -122,8 +123,12 @@ ADD_DEPENDENCIES(sql_embedded GenError GenServerSource)
 # On Unix, it is libmysqld.a
 IF(WIN32)
   SET(MYSQLSERVER_OUTPUT_NAME mysqlserver)
+  SET(COMPONENT_MYSQLSERVER "Embedded")
+  SET(COMPONENT_LIBMYSQLD "Embedded")
 ELSE()
   SET(MYSQLSERVER_OUTPUT_NAME mysqld)
+  SET(COMPONENT_MYSQLSERVER "Development")
+  SET(COMPONENT_LIBMYSQLD "Server")
 ENDIF()
 
 
@@ -148,19 +153,10 @@ FOREACH(LIB ${LIBS})
 ENDFOREACH()
 
 MERGE_LIBRARIES(mysqlserver STATIC ${EMBEDDED_LIBS} 
-  OUTPUT_NAME ${MYSQLSERVER_OUTPUT_NAME} COMPONENT Development)
+  OUTPUT_NAME ${MYSQLSERVER_OUTPUT_NAME} COMPONENT ${COMPONENT_MYSQLSERVER})
 
-INSTALL(FILES embedded_priv.h DESTINATION ${INSTALL_INCLUDEDIR}/private COMPONENT Development)
+INSTALL(FILES embedded_priv.h DESTINATION ${INSTALL_INCLUDEDIR}/private COMPONENT  ${COMPONENT_MYSQLSERVER})
 
-# Visual Studio users need debug  static library 
-IF(MSVC)
- INSTALL_DEBUG_TARGET(mysqlserver DESTINATION ${INSTALL_LIBDIR}/debug)
-ENDIF()
-
-IF(UNIX)
- INSTALL_DEBUG_TARGET(mysqlserver DESTINATION ${INSTALL_LIBDIR} RENAME
-  ${CMAKE_STATIC_LIBRARY_PREFIX}mysqld-debug)
-ENDIF()
 
 # List of exported functions in embedded (client api except client plugin or 
 # async (*_start/*_cont functions)
@@ -177,7 +173,7 @@ ENDFOREACH()
 
 IF(NOT DISABLE_SHARED)
   MERGE_LIBRARIES(libmysqld SHARED mysqlserver EXPORTS ${EMBEDDED_API}
-    COMPONENT Server) 
+    COMPONENT  ${COMPONENT_LIBMYSQLD})
   IF(UNIX)
     # Name the shared library, handle versioning (provides same api as client
     # library hence the same version)
@@ -193,4 +189,3 @@ IF(NOT DISABLE_SHARED)
     ENDIF()
   ENDIF()
 ENDIF()
-

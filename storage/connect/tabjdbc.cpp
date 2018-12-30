@@ -1,11 +1,11 @@
 /************* TabJDBC C++ Program Source Code File (.CPP) *************/
 /* PROGRAM NAME: TABJDBC                                               */
 /* -------------                                                       */
-/*  Version 1.0                                                        */
+/*  Version 1.2                                                        */
 /*                                                                     */
 /* COPYRIGHT:                                                          */
 /* ----------                                                          */
-/*  (C) Copyright to the author Olivier BERTRAND          2016         */
+/*  (C) Copyright to the author Olivier BERTRAND          2016-2017    */
 /*                                                                     */
 /* WHAT THIS PROGRAM DOES:                                             */
 /* -----------------------                                             */
@@ -34,8 +34,10 @@
 /***********************************************************************/
 /*  Include relevant MariaDB header file.                              */
 /***********************************************************************/
+#define MYSQL_SERVER 1
 #include "my_global.h"
 #include "sql_class.h"
+#include "sql_servers.h"
 #if defined(__WIN__)
 #include <io.h>
 #include <fcntl.h>
@@ -67,10 +69,10 @@
 #include "plgdbsem.h"
 #include "mycat.h"
 #include "xtable.h"
-#include "jdbccat.h"
+#include "tabext.h"
 #include "tabjdbc.h"
 #include "tabmul.h"
-#include "reldef.h"
+//#include "reldef.h"
 #include "tabcol.h"
 #include "valblk.h"
 #include "ha_connect.h"
@@ -95,53 +97,138 @@ bool ExactInfo(void);
 /***********************************************************************/
 JDBCDEF::JDBCDEF(void)
 {
-	Jpath = Driver = Url = Tabname = Tabschema = Username = NULL;
-	Password = Tabcat = Tabtype = Srcdef = Qchar = Qrystr = Sep = NULL;
-	Options = Quoted = Maxerr = Maxres = Memory = 0;
-	Scrollable = Xsrc = false;
+	Driver = Url = Wrapname = NULL;
 }  // end of JDBCDEF constructor
+
+/***********************************************************************/
+/*  Called on table construction.                                      */
+/***********************************************************************/
+bool JDBCDEF::SetParms(PJPARM sjp)
+{
+	sjp->Url= Url;
+	sjp->User= Username;
+	sjp->Pwd= Password;
+//sjp->Properties = Prop;
+	return true;
+}  // end of SetParms
+
+/***********************************************************************/
+/* Parse connection string                                             */
+/*                                                                     */
+/* SYNOPSIS                                                            */
+/*   ParseURL()                                                        */
+/*   Url                 The connection string to parse                */
+/*                                                                     */
+/* DESCRIPTION                                                         */
+/*   This is used to set the Url in case a wrapper server as been      */
+/*   specified. This is rather experimental yet.                       */
+/*                                                                     */
+/* RETURN VALUE                                                        */
+/*   RC_OK       Url was a true URL                                    */
+/*   RC_NF       Url was a server name/table                           */
+/*   RC_FX       Error                                                 */
+/*                                                                     */
+/***********************************************************************/
+int JDBCDEF::ParseURL(PGLOBAL g, char *url, bool b)
+{
+	if (strncmp(url, "jdbc:", 5)) {
+		PSZ p;
+
+		// No "jdbc:" in connection string. Must be a straight
+		// "server" or "server/table"
+		// ok, so we do a little parsing, but not completely!
+		if ((p = strchr(url, '/'))) {
+			// If there is a single '/' in the connection string,
+			// this means the user is specifying a table name
+			*p++= '\0';
+
+			// there better not be any more '/'s !
+			if (strchr(p, '/'))
+				return RC_FX;
+
+			Tabname = p;
+//  } else if (b) {
+//	  // Otherwise, straight server name, 
+//	  Tabname = GetStringCatInfo(g, "Name", NULL);
+//	  Tabname = GetStringCatInfo(g, "Tabname", Tabname);
+		} // endif
+
+		if (trace(1))
+			htrc("server: %s Tabname: %s", url, Tabname);
+
+		// Now make the required URL
+		FOREIGN_SERVER *server, server_buffer;
+
+		// get_server_by_name() clones the server if exists
+		if (!(server= get_server_by_name(current_thd->mem_root, url, &server_buffer))) {
+			sprintf(g->Message, "Server %s does not exist!", url);
+			return RC_FX;
+		} // endif server
+
+		if (strncmp(server->host, "jdbc:", 5)) {
+			// Now make the required URL
+			Url = (PSZ)PlugSubAlloc(g, NULL, 0);
+			strcat(strcpy(Url, "jdbc:"), server->scheme);
+			strcat(strcat(Url, "://"), server->host);
+
+			if (server->port) {
+				char buf[16];
+
+				sprintf(buf, "%ld", server->port);
+				strcat(strcat(Url, ":"), buf);
+			} // endif port
+
+			if (server->db)
+				strcat(strcat(Url, "/"), server->db);
+
+			PlugSubAlloc(g, NULL, strlen(Url) + 1);
+		} else		 // host is a URL
+			Url = PlugDup(g, server->host);
+
+		if (server->username)
+			Username = PlugDup(g, server->username);
+
+		if (server->password)
+			Password = PlugDup(g, server->password);
+
+		return RC_NF;
+	} // endif
+
+	// Url was a JDBC URL, nothing to do
+	return RC_OK;
+} // end of ParseURL
 
 /***********************************************************************/
 /*  DefineAM: define specific AM block values from JDBC file.          */
 /***********************************************************************/
 bool JDBCDEF::DefineAM(PGLOBAL g, LPCSTR am, int poff)
 {
-	Jpath = GetStringCatInfo(g, "Jpath", "");
+	int rc = RC_OK;
+
+	if (EXTDEF::DefineAM(g, am, poff))
+		return true;
+
 	Driver = GetStringCatInfo(g, "Driver", NULL);
-	Desc = Url = GetStringCatInfo(g, "Url", NULL);
+	Desc = Url = GetStringCatInfo(g, "Connect", NULL);
 
 	if (!Url && !Catfunc) {
-		sprintf(g->Message, "Missing URL for JDBC table %s", Name);
-		return true;
+		// Look in the option list (deprecated)
+		Url = GetStringCatInfo(g, "Url", NULL);
+
+		if (!Url) {
+			sprintf(g->Message, "Missing URL for JDBC table %s", Name);
+			return true;
+		} // endif Url
+
 	} // endif Connect
 
-	Tabname = GetStringCatInfo(g, "Name",
-		(Catfunc & (FNC_TABLE | FNC_COL)) ? NULL : Name);
-	Tabname = GetStringCatInfo(g, "Tabname", Tabname);
-	Tabschema = GetStringCatInfo(g, "Dbname", NULL);
-	Tabschema = GetStringCatInfo(g, "Schema", Tabschema);
-	Tabcat = GetStringCatInfo(g, "Qualifier", NULL);
-	Tabcat = GetStringCatInfo(g, "Catalog", Tabcat);
-	Tabtype = GetStringCatInfo(g, "Tabtype", NULL);
-	Username = GetStringCatInfo(g, "User", NULL);
-	Password = GetStringCatInfo(g, "Password", NULL);
+	if (Url)
+		if ((rc = ParseURL(g, Url)) == RC_FX) {
+			sprintf(g->Message, "Wrong JDBC URL %s", Url);
+			return true;
+		} // endif rc
 
-	if ((Srcdef = GetStringCatInfo(g, "Srcdef", NULL)))
-		Read_Only = true;
-
-	Qrystr = GetStringCatInfo(g, "Query_String", "?");
-	Sep = GetStringCatInfo(g, "Separator", NULL);
-	Xsrc = GetBoolCatInfo("Execsrc", FALSE);
-	Maxerr = GetIntCatInfo("Maxerr", 0);
-	Maxres = GetIntCatInfo("Maxres", 0);
-	Quoted = GetIntCatInfo("Quoted", 0);
-//Options = JDBConn::noJDBCDialog;
-//Options = JDBConn::noJDBCDialog | JDBConn::useCursorLib;
-//Cto= GetIntCatInfo("ConnectTimeout", DEFAULT_LOGIN_TIMEOUT);
-//Qto= GetIntCatInfo("QueryTimeout", DEFAULT_QUERY_TIMEOUT);
-	Scrollable = GetBoolCatInfo("Scrollable", false);
-	Memory = GetIntCatInfo("Memory", 0);
-	Pseudo = 2;      // FILID is Ok but not ROWID
+	Wrapname = GetStringCatInfo(g, "Wrapper", NULL);
 	return false;
 } // end of DefineAM
 
@@ -150,7 +237,7 @@ bool JDBCDEF::DefineAM(PGLOBAL g, LPCSTR am, int poff)
 /***********************************************************************/
 PTDB JDBCDEF::GetTable(PGLOBAL g, MODE m)
 {
-	PTDBASE tdbp = NULL;
+	PTDB tdbp = NULL;
 
 	/*********************************************************************/
 	/*  Allocate a TDB of the proper type.                               */
@@ -198,7 +285,7 @@ int JDBCPARM::CheckSize(int rows)
 	if (Url && rows == 1) {
 		// Are we connected to a MySQL JDBC connector?
 		bool b = (!strncmp(Url, "jdbc:mysql:", 11) ||
-			!strncmp(Url, "jdbc:mariadb:", 13));
+			        !strncmp(Url, "jdbc:mariadb:", 13));
 		return b ? INT_MIN32 : rows;
 	} else
 		return rows;
@@ -210,107 +297,46 @@ int JDBCPARM::CheckSize(int rows)
 /***********************************************************************/
 /*  Implementation of the TDBJDBC class.                               */
 /***********************************************************************/
-TDBJDBC::TDBJDBC(PJDBCDEF tdp) : TDBASE(tdp)
+TDBJDBC::TDBJDBC(PJDBCDEF tdp) : TDBEXT(tdp)
 {
 	Jcp = NULL;
 	Cnp = NULL;
 
 	if (tdp) {
-		Jpath = tdp->Jpath;
 		Ops.Driver = tdp->Driver;
 		Ops.Url = tdp->Url;
-		TableName = tdp->Tabname;
-		Schema = tdp->Tabschema;
+		Wrapname = tdp->Wrapname;
 		Ops.User = tdp->Username;
 		Ops.Pwd = tdp->Password;
-		Catalog = tdp->Tabcat;
-		Srcdef = tdp->Srcdef;
-		Qrystr = tdp->Qrystr;
-		Sep = tdp->GetSep();
-		Options = tdp->Options;
-//	Ops.Cto = tdp->Cto;
-//	Ops.Qto = tdp->Qto;
-		Quoted = MY_MAX(0, tdp->GetQuoted());
-		Rows = tdp->GetElemt();
-		Memory = tdp->Memory;
 		Ops.Scrollable = tdp->Scrollable;
 	} else {
-		Jpath = NULL;
-		TableName = NULL;
-		Schema = NULL;
+		Wrapname = NULL;
 		Ops.Driver = NULL;
 		Ops.Url = NULL;
 		Ops.User = NULL;
 		Ops.Pwd = NULL;
-		Catalog = NULL;
-		Srcdef = NULL;
-		Qrystr = NULL;
-		Sep = 0;
-		Options = 0;
-//	Ops.Cto = DEFAULT_LOGIN_TIMEOUT;
-//	Ops.Qto = DEFAULT_QUERY_TIMEOUT;
-		Quoted = 0;
-		Rows = 0;
-		Memory = 0;
 		Ops.Scrollable = false;
 	} // endif tdp
 
-	Quote = NULL;
-	Query = NULL;
-	Count = NULL;
-//Where = NULL;
-	MulConn = NULL;
-	DBQ = NULL;
-	Qrp = NULL;
-	Fpos = 0;
-	Curpos = 0;
-	AftRows = 0;
-	CurNum = 0;
-	Rbuf = 0;
-	BufSize = 0;
-	Ncol = 0;
-	Nparm = 0;
-	Placed = false;
+	Prepared = false;
 	Werr = false;
 	Rerr = false;
 	Ops.Fsize = Ops.CheckSize(Rows);
 } // end of TDBJDBC standard constructor
 
-TDBJDBC::TDBJDBC(PTDBJDBC tdbp) : TDBASE(tdbp)
+TDBJDBC::TDBJDBC(PTDBJDBC tdbp) : TDBEXT(tdbp)
 {
 	Jcp = tdbp->Jcp;            // is that right ?
 	Cnp = tdbp->Cnp;
-	Jpath = tdbp->Jpath;
-	TableName = tdbp->TableName;
-	Schema = tdbp->Schema;
+	Wrapname = tdbp->Wrapname;
 	Ops = tdbp->Ops;
-	Catalog = tdbp->Catalog;
-	Srcdef = tdbp->Srcdef;
-	Qrystr = tdbp->Qrystr;
-	Memory = tdbp->Memory;
-//Scrollable = tdbp->Scrollable;
-	Quote = tdbp->Quote;
-	Query = tdbp->Query;
-	Count = tdbp->Count;
-//Where = tdbp->Where;
-	MulConn = tdbp->MulConn;
-	DBQ = tdbp->DBQ;
-	Options = tdbp->Options;
-	Quoted = tdbp->Quoted;
-	Rows = tdbp->Rows;
-	Fpos = 0;
-	Curpos = 0;
-	AftRows = 0;
-	CurNum = 0;
-	Rbuf = 0;
-	BufSize = tdbp->BufSize;
-	Nparm = tdbp->Nparm;
-	Qrp = tdbp->Qrp;
-	Placed = false;
+	Prepared = tdbp->Prepared;
+	Werr = tdbp->Werr;
+	Rerr = tdbp->Rerr;
 } // end of TDBJDBC copy constructor
 
 // Method
-PTDB TDBJDBC::CopyOne(PTABS t)
+PTDB TDBJDBC::Clone(PTABS t)
 {
 	PTDB     tp;
 	PJDBCCOL cp1, cp2;
@@ -324,7 +350,7 @@ PTDB TDBJDBC::CopyOne(PTABS t)
 	} // endfor cp1
 
 	return tp;
-} // end of CopyOne
+} // end of Clone
 
 /***********************************************************************/
 /*  Allocate JDBC column description block.                            */
@@ -334,142 +360,16 @@ PCOL TDBJDBC::MakeCol(PGLOBAL g, PCOLDEF cdp, PCOL cprec, int n)
 	return new(g)JDBCCOL(cdp, this, cprec, n);
 } // end of MakeCol
 
-/******************************************************************/
-/*  Convert an UTF-8 string to latin characters.                  */
-/******************************************************************/
-int TDBJDBC::Decode(char *txt, char *buf, size_t n)
-{
-	uint dummy_errors;
-	uint32 len= copy_and_convert(buf, n, &my_charset_latin1,
-		txt, strlen(txt),
-		&my_charset_utf8_general_ci,
-		&dummy_errors);
-	buf[len]= '\0';
-	return 0;
-} // end of Decode
-
-/***********************************************************************/
-/*  MakeSQL: make the SQL statement use with JDBC connection.          */
-/*  TODO: when implementing EOM filtering, column only used in local   */
-/*  filter should be removed from column list.                         */
-/***********************************************************************/
-bool TDBJDBC::MakeSQL(PGLOBAL g, bool cnt)
-{
-	char  *schmp = NULL, *catp = NULL, buf[NAM_LEN * 3];
-	int    len;
-	bool   oom = false, first = true;
-	PTABLE tablep = To_Table;
-	PCOL   colp;
-
-	if (Srcdef) {
-		Query = new(g)STRING(g, 0, Srcdef);
-		return false;
-	} // endif Srcdef
-
-	// Allocate the string used to contain the Query
-	Query = new(g)STRING(g, 1023, "SELECT ");
-
-	if (!cnt) {
-		if (Columns) {
-			// Normal SQL statement to retrieve results
-			for (colp = Columns; colp; colp = colp->GetNext())
-				if (!colp->IsSpecial()) {
-					if (!first)
-						oom |= Query->Append(", ");
-					else
-						first = false;
-
-					// Column name can be encoded in UTF-8
-					Decode(colp->GetName(), buf, sizeof(buf));
-
-					if (Quote) {
-						// Put column name between identifier quotes in case in contains blanks
-						oom |= Query->Append(Quote);
-						oom |= Query->Append(buf);
-						oom |= Query->Append(Quote);
-					} else
-						oom |= Query->Append(buf);
-
-					((PJDBCCOL)colp)->Rank = ++Ncol;
-				} // endif colp
-
-		} else
-			// !Columns can occur for queries such that sql count(*) from...
-			// for which we will count the rows from sql * from...
-			oom |= Query->Append('*');
-
-	} else
-		// SQL statement used to retrieve the size of the result
-		oom |= Query->Append("count(*)");
-
-	oom |= Query->Append(" FROM ");
-
-	if (Catalog && *Catalog)
-		catp = Catalog;
-
-	if (tablep->GetSchema())
-		schmp = (char*)tablep->GetSchema();
-	else if (Schema && *Schema)
-		schmp = Schema;
-
-	if (catp) {
-		oom |= Query->Append(catp);
-
-		if (schmp) {
-			oom |= Query->Append('.');
-			oom |= Query->Append(schmp);
-		} // endif schmp
-
-		oom |= Query->Append('.');
-	} else if (schmp) {
-		oom |= Query->Append(schmp);
-		oom |= Query->Append('.');
-	} // endif schmp
-
-	// Table name can be encoded in UTF-8
-	Decode(TableName, buf, sizeof(buf));
-
-	if (Quote) {
-		// Put table name between identifier quotes in case in contains blanks
-		oom |= Query->Append(Quote);
-		oom |= Query->Append(buf);
-		oom |= Query->Append(Quote);
-	} else
-		oom |= Query->Append(buf);
-
-	len = Query->GetLength();
-
-	if (To_CondFil) {
-		if (Mode == MODE_READ) {
-			oom |= Query->Append(" WHERE ");
-			oom |= Query->Append(To_CondFil->Body);
-			len = Query->GetLength() + 1;
-		} else
-			len += (strlen(To_CondFil->Body) + 256);
-
-	} else
-		len += ((Mode == MODE_READX) ? 256 : 1);
-
-	if (oom || Query->Resize(len)) {
-		strcpy(g->Message, "MakeSQL: Out of memory");
-		return true;
-	} // endif oom
-
-	if (trace)
-		htrc("Query=%s\n", Query->GetStr());
-
-	return false;
-} // end of MakeSQL
-
 /***********************************************************************/
 /*  MakeInsert: make the Insert statement used with JDBC connection.   */
 /***********************************************************************/
 bool TDBJDBC::MakeInsert(PGLOBAL g)
 {
-	char  *schmp = NULL, *catp = NULL, buf[NAM_LEN * 3];
+	PCSZ   schmp = NULL;
+	char  *catp = NULL, buf[NAM_LEN * 3];
 	int    len = 0;
 	uint   pos;
-	bool   b = false, oom = false;
+	bool   b = false;
 	PTABLE tablep = To_Table;
 	PCOL   colp;
 
@@ -481,7 +381,7 @@ bool TDBJDBC::MakeInsert(PGLOBAL g)
 			// Column name can be encoded in UTF-8
 			Decode(colp->GetName(), buf, sizeof(buf));
 			len += (strlen(buf) + 6);	 // comma + quotes + valist
-			((PJDBCCOL)colp)->Rank = ++Nparm;
+			((PEXTCOL)colp)->SetRank(++Nparm);
 		} // endif colp
 
 	// Below 32 is enough to contain the fixed part of the query
@@ -491,9 +391,10 @@ bool TDBJDBC::MakeInsert(PGLOBAL g)
 	if (catp)
 		len += strlen(catp) + 1;
 
-	if (tablep->GetSchema())
-		schmp = (char*)tablep->GetSchema();
-	else if (Schema && *Schema)
+	//if (tablep->GetSchema())
+	//	schmp = (char*)tablep->GetSchema();
+	//else
+	if (Schema && *Schema)
 		schmp = Schema;
 
 	if (schmp)
@@ -505,32 +406,32 @@ bool TDBJDBC::MakeInsert(PGLOBAL g)
 	Query = new(g)STRING(g, len, "INSERT INTO ");
 
 	if (catp) {
-		oom |= Query->Append(catp);
+		Query->Append(catp);
 
 		if (schmp) {
-			oom |= Query->Append('.');
-			oom |= Query->Append(schmp);
+			Query->Append('.');
+			Query->Append(schmp);
 		} // endif schmp
 
-		oom |= Query->Append('.');
+		Query->Append('.');
 	} else if (schmp) {
-		oom |= Query->Append(schmp);
-		oom |= Query->Append('.');
+		Query->Append(schmp);
+		Query->Append('.');
 	} // endif schmp
 
 	if (Quote) {
 		// Put table name between identifier quotes in case in contains blanks
-		oom |= Query->Append(Quote);
-		oom |= Query->Append(buf);
-		oom |= Query->Append(Quote);
+		Query->Append(Quote);
+		Query->Append(buf);
+		Query->Append(Quote);
 	} else
-		oom |= Query->Append(buf);
+		Query->Append(buf);
 
-	oom |= Query->Append('(');
+	Query->Append('(');
 
 	for (colp = Columns; colp; colp = colp->GetNext()) {
 		if (b)
-			oom |= Query->Append(", ");
+			Query->Append(", ");
 		else
 			b = true;
 
@@ -539,15 +440,15 @@ bool TDBJDBC::MakeInsert(PGLOBAL g)
 
 		if (Quote) {
 			// Put column name between identifier quotes in case in contains blanks
-			oom |= Query->Append(Quote);
-			oom |= Query->Append(buf);
-			oom |= Query->Append(Quote);
+			Query->Append(Quote);
+			Query->Append(buf);
+			Query->Append(Quote);
 		} else
-			oom |= Query->Append(buf);
+			Query->Append(buf);
 
 	} // endfor colp
 
-	if ((oom |= Query->Append(") VALUES ("))) {
+	if ((Query->Append(") VALUES ("))) {
 		strcpy(g->Message, "MakeInsert: Out of memory");
 		return true;
 	} else // in case prepared statement fails
@@ -555,9 +456,9 @@ bool TDBJDBC::MakeInsert(PGLOBAL g)
 
 	// Make prepared statement
 	for (int i = 0; i < Nparm; i++)
-		oom |= Query->Append("?,");
+		Query->Append("?,");
 
-	if (oom) {
+	if (Query->IsTruncated()) {
 		strcpy(g->Message, "MakeInsert: Out of memory");
 		return true;
 	} else
@@ -568,6 +469,9 @@ bool TDBJDBC::MakeInsert(PGLOBAL g)
 		Query->Truncate(pos);     // Restore query to not prepared
 	else
 		Prepared = true;
+
+	if (trace(33))
+		htrc("Insert=%s\n", Query->GetStr());
 
 	return false;
 } // end of MakeInsert
@@ -585,72 +489,6 @@ bool TDBJDBC::SetParameters(PGLOBAL g)
 
 	return false;
 } // end of SetParameters
-
-/***********************************************************************/
-/*  MakeCommand: make the Update or Delete statement to send to the    */
-/*  MySQL server. Limited to remote values and filtering.              */
-/***********************************************************************/
-bool TDBJDBC::MakeCommand(PGLOBAL g)
-{
-	char *p, *stmt, name[68], *body = NULL, *qc = Jcp->GetQuoteChar();
-	char *qrystr = (char*)PlugSubAlloc(g, NULL, strlen(Qrystr) + 1);
-	bool  qtd = Quoted > 0;
-	int   i = 0, k = 0;
-
-	// Make a lower case copy of the originale query and change
-	// back ticks to the data source identifier quoting character
-	do {
-		qrystr[i] = (Qrystr[i] == '`') ? *qc : tolower(Qrystr[i]);
-	} while (Qrystr[i++]);
-
-	if (To_CondFil && (p = strstr(qrystr, " where "))) {
-		p[7] = 0;           // Remove where clause
-		Qrystr[(p - qrystr) + 7] = 0;
-		body = To_CondFil->Body;
-		stmt = (char*)PlugSubAlloc(g, NULL, strlen(qrystr)
-			+ strlen(body) + 64);
-	} else
-		stmt = (char*)PlugSubAlloc(g, NULL, strlen(Qrystr) + 64);
-
-	// Check whether the table name is equal to a keyword
-	// If so, it must be quoted in the original query
-	strlwr(strcat(strcat(strcpy(name, " "), Name), " "));
-
-	if (!strstr(" update delete low_priority ignore quick from ", name))
-		strlwr(strcpy(name, Name));     // Not a keyword
-	else
-		strlwr(strcat(strcat(strcpy(name, qc), Name), qc));
-
-	if ((p = strstr(qrystr, name))) {
-		for (i = 0; i < p - qrystr; i++)
-			stmt[i] = (Qrystr[i] == '`') ? *qc : Qrystr[i];
-
-		stmt[i] = 0;
-		k = i + (int)strlen(Name);
-
-		if (qtd && *(p-1) == ' ')
-			strcat(strcat(strcat(stmt, qc), TableName), qc);
-		else
-			strcat(stmt, TableName);
-
-		i = (int)strlen(stmt);
-
-		do {
-			stmt[i++] = (Qrystr[k] == '`') ? *qc : Qrystr[k];
-		} while (Qrystr[k++]);
-
-		if (body)
-			strcat(stmt, body);
-
-	} else {
-		sprintf(g->Message, "Cannot use this %s command",
-			(Mode == MODE_UPDATE) ? "UPDATE" : "DELETE");
-		return NULL;
-	} // endif p
-
-	Query = new(g)STRING(g, 0, stmt);
-	return (!Query->GetSize());
-} // end of MakeCommand
 
 /***********************************************************************/
 /*  ResetSize: call by TDBMUL when calculating size estimate.          */
@@ -678,7 +516,7 @@ int TDBJDBC::Cardinality(PGLOBAL g)
 		char     qry[96], tbn[64];
 		JDBConn *jcp = new(g)JDBConn(g, this);
 
-		if (jcp->Open(Jpath, &Ops) == RC_FX)
+		if (jcp->Open(&Ops) == RC_FX)
 			return -1;
 
 		// Table name can be encoded in UTF-8
@@ -706,33 +544,6 @@ int TDBJDBC::Cardinality(PGLOBAL g)
 } // end of Cardinality
 
 /***********************************************************************/
-/*  JDBC GetMaxSize: returns table size estimate in number of lines.   */
-/***********************************************************************/
-int TDBJDBC::GetMaxSize(PGLOBAL g)
-{
-	if (MaxSize < 0) {
-		if (Mode == MODE_DELETE)
-			// Return 0 in mode DELETE in case of delete all.
-			MaxSize = 0;
-		else if (!Cardinality(NULL))
-			MaxSize = 10;   // To make MySQL happy
-		else if ((MaxSize = Cardinality(g)) < 0)
-			MaxSize = 12;   // So we can see an error occured
-
-	} // endif MaxSize
-
-	return MaxSize;
-} // end of GetMaxSize
-
-/***********************************************************************/
-/*  Return max size value.                                             */
-/***********************************************************************/
-int TDBJDBC::GetProgMax(PGLOBAL g)
-{
-	return GetMaxSize(g);
-} // end of GetProgMax
-
-/***********************************************************************/
 /*  JDBC Access Method opening routine.                                */
 /*  New method now that this routine is called recursively (last table */
 /*  first in reverse order): index blocks are immediately linked to    */
@@ -742,7 +553,7 @@ bool TDBJDBC::OpenDB(PGLOBAL g)
 {
 	bool rc = true;
 
-	if (trace)
+	if (trace(1))
 		htrc("JDBC OpenDB: tdbp=%p tdb=R%d use=%d mode=%d\n",
 		     this, Tdb_No, Use, Mode);
 
@@ -751,7 +562,7 @@ bool TDBJDBC::OpenDB(PGLOBAL g)
 		/*  Table already open, just replace it at its beginning.          */
 		/*******************************************************************/
 		if (Memory == 1) {
-			if ((Qrp = Jcp->AllocateResult(g)))
+			if ((Qrp = Jcp->AllocateResult(g, this)))
 				Memory = 2;            // Must be filled
 			else
 				Memory = 0;            // Allocation failed, don't use it
@@ -761,7 +572,7 @@ bool TDBJDBC::OpenDB(PGLOBAL g)
 
 		if (Memory < 3) {
 			// Method will depend on cursor type
-			if ((Rbuf = Jcp->Rewind(Query->GetStr())) < 0)
+			if ((Rbuf = Query ? Jcp->Rewind(Query->GetStr()) : 0) < 0)
 				if (Mode != MODE_READX) {
 					Jcp->Close();
 				  return true;
@@ -785,19 +596,23 @@ bool TDBJDBC::OpenDB(PGLOBAL g)
 	/*  drivers allowing concurency in getting results ???               */
 	/*********************************************************************/
 	if (!Jcp)
-		Jcp = new(g)JDBConn(g, this);
+		Jcp = new(g)JDBConn(g, Wrapname);
 	else if (Jcp->IsOpen())
 		Jcp->Close();
 
-	if (Jcp->Open(Jpath, &Ops) == RC_FX)
+	if (Jcp->Connect(&Ops))
 		return true;
 	else if (Quoted)
 		Quote = Jcp->GetQuoteChar();
 
+	if (Mode != MODE_READ && Mode != MODE_READX)
+		if (Jcp->SetUUID(g, this))
+			PushWarning(g, this, 1);
+
 	Use = USE_OPEN;       // Do it now in case we are recursively called
 
 	/*********************************************************************/
-	/*  Make the command and allocate whatever is used for getting results.                   */
+	/* Make the command and allocate whatever is used for getting results*/
 	/*********************************************************************/
 	if (Mode == MODE_READ || Mode == MODE_READX) {
 		if (Memory > 1 && !Srcdef) {
@@ -814,7 +629,7 @@ bool TDBJDBC::OpenDB(PGLOBAL g)
 				} else if (n) {
 					Jcp->m_Rows = n;
 
-					if ((Qrp = Jcp->AllocateResult(g)))
+					if ((Qrp = Jcp->AllocateResult(g, this)))
 						Memory = 2;            // Must be filled
 					else {
 						strcpy(g->Message, "Result set memory allocation failed");
@@ -869,6 +684,7 @@ bool TDBJDBC::OpenDB(PGLOBAL g)
 	return false;
 } // end of OpenDB
 
+#if 0
 /***********************************************************************/
 /*  GetRecpos: return the position of last read record.                */
 /***********************************************************************/
@@ -876,6 +692,7 @@ int TDBJDBC::GetRecpos(void)
 {
 	return Fpos;
 } // end of GetRecpos
+#endif // 0
 
 /***********************************************************************/
 /*  SetRecpos: set the position of next read record.                   */
@@ -884,18 +701,12 @@ bool TDBJDBC::SetRecpos(PGLOBAL g, int recpos)
 {
 	if (Jcp->m_Full) {
 		Fpos = 0;
-//	CurNum = 0;
 		CurNum = 1;
 	} else if (Memory == 3) {
-//	Fpos = recpos;
-//	CurNum = -1;
 		Fpos = 0;
 		CurNum = recpos;
 	} else if (Ops.Scrollable) {
 		// Is new position in the current row set?
-//	if (recpos >= Curpos && recpos < Curpos + Rbuf) {
-//		CurNum = recpos - Curpos;
-//		Fpos = 0;
 		if (recpos > 0 && recpos <= Rbuf) {
 		  CurNum = recpos;
 			Fpos = recpos;
@@ -944,7 +755,7 @@ bool TDBJDBC::ReadKey(PGLOBAL g, OPVAL op, const key_range *kr)
 				To_CondFil->Body= (char*)PlugSubAlloc(g, NULL, 0);
 				*To_CondFil->Body= 0;
 
-				if ((To_CondFil = hc->CheckCond(g, To_CondFil, To_CondFil->Cond)))
+				if ((To_CondFil = hc->CheckCond(g, To_CondFil, Cond)))
 					PlugSubAlloc(g, NULL, strlen(To_CondFil->Body) + 1);
 
 			} // endif active_index
@@ -960,7 +771,7 @@ bool TDBJDBC::ReadKey(PGLOBAL g, OPVAL op, const key_range *kr)
 		Mode = MODE_READ;
 	} // endif's op
 
-	if (trace)
+	if (trace(33))
 		htrc("JDBC ReadKey: Query=%s\n", Query->GetStr());
 
 	rc = Jcp->ExecuteQuery((char*)Query->GetStr());
@@ -976,9 +787,8 @@ int TDBJDBC::ReadDB(PGLOBAL g)
 {
 	int  rc;
 
-	if (trace > 1)
-		htrc("JDBC ReadDB: R%d Mode=%d key=%p link=%p Kindex=%p\n",
-		GetTdb_No(), Mode, To_Key_Col, To_Link, To_Kindex);
+	if (trace(2))
+		htrc("JDBC ReadDB: R%d Mode=%d\n", GetTdb_No(), Mode);
 
 	if (Mode == MODE_UPDATE || Mode == MODE_DELETE) {
 		if (!Query && MakeCommand(g))
@@ -996,12 +806,6 @@ int TDBJDBC::ReadDB(PGLOBAL g)
 		} // endif rc
 
 	} // endif Mode
-
-	if (To_Kindex) {
-		// Direct access of JDBC tables is not implemented
-		strcpy(g->Message, "No JDBC direct access");
-		return RC_FX;
-	} // endif To_Kindex
 
 	/*********************************************************************/
 	/*  Now start the reading process.                                   */
@@ -1036,7 +840,7 @@ int TDBJDBC::ReadDB(PGLOBAL g)
 
 	} // endif placed
 
-	if (trace > 1)
+	if (trace(2))
 		htrc(" Read: Rbuf=%d rc=%d\n", Rbuf, rc);
 
 	return rc;
@@ -1065,7 +869,6 @@ int TDBJDBC::WriteDB(PGLOBAL g)
 	// an insert query for each line to insert
 	uint len = Query->GetLength();
 	char buf[64];
-	bool oom = false;
 
 	// Make the Insert command value list
 	for (PCOL colp = Columns; colp; colp = colp->GetNext()) {
@@ -1073,30 +876,34 @@ int TDBJDBC::WriteDB(PGLOBAL g)
 			char *s = colp->GetValue()->GetCharString(buf);
 
 			if (colp->GetResultType() == TYPE_STRING)
-				oom |= Query->Append_quoted(s);
+				Query->Append_quoted(s);
 			else if (colp->GetResultType() == TYPE_DATE) {
 				DTVAL *dtv = (DTVAL*)colp->GetValue();
 
 				if (dtv->IsFormatted())
-					oom |= Query->Append_quoted(s);
+					Query->Append_quoted(s);
 				else
-					oom |= Query->Append(s);
+					Query->Append(s);
 
 			} else
-				oom |= Query->Append(s);
+				Query->Append(s);
 
 		} else
-			oom |= Query->Append("NULL");
+			Query->Append("NULL");
 
-		oom |= Query->Append(',');
+		Query->Append(',');
 	} // endfor colp
 
-	if (unlikely(oom)) {
+	if (unlikely(Query->IsTruncated())) {
 		strcpy(g->Message, "WriteDB: Out of memory");
 		return RC_FX;
-	} // endif oom
+	} // endif Query
 
 	Query->RepLast(')');
+
+	if (trace(2))
+		htrc("Inserting: %s\n", Query->GetStr());
+
 	rc = Jcp->ExecuteUpdate(Query->GetStr());
 	Query->Truncate(len);     // Restore query
 
@@ -1122,7 +929,7 @@ int TDBJDBC::DeleteDB(PGLOBAL g, int irc)
 			AftRows = Jcp->m_Aff;
 			sprintf(g->Message, "%s: %d affected rows", TableName, AftRows);
 
-			if (trace)
+			if (trace(1))
 				htrc("%s\n", g->Message);
 
 			PushWarning(g, this, 0);    // 0 means a Note
@@ -1140,22 +947,17 @@ int TDBJDBC::DeleteDB(PGLOBAL g, int irc)
 /***********************************************************************/
 void TDBJDBC::CloseDB(PGLOBAL g)
 {
-	//if (To_Kindex) {
-	//  To_Kindex->Close();
-	//  To_Kindex = NULL;
-	//  } // endif
-
 	if (Jcp)
 		Jcp->Close();
 
-	if (trace)
+	if (trace(1))
 		htrc("JDBC CloseDB: closing %s\n", Name);
 
 	if (!Werr && 
 		(Mode == MODE_INSERT || Mode == MODE_UPDATE || Mode == MODE_DELETE)) {
 		sprintf(g->Message, "%s: %d affected rows", TableName, AftRows);
 
-		if (trace)
+		if (trace(1))
 			htrc("%s\n", g->Message);
 
 		PushWarning(g, this, 0);    // 0 means a Note
@@ -1169,121 +971,31 @@ void TDBJDBC::CloseDB(PGLOBAL g)
 /***********************************************************************/
 /*  JDBCCOL public constructor.                                        */
 /***********************************************************************/
-JDBCCOL::JDBCCOL(PCOLDEF cdp, PTDB tdbp, PCOL cprec, int i, PSZ am)
-	: COLBLK(cdp, tdbp, i)
+JDBCCOL::JDBCCOL(PCOLDEF cdp, PTDB tdbp, PCOL cprec, int i, PCSZ am)
+	     : EXTCOL(cdp, tdbp, cprec, i, am)
 {
-	if (cprec) {
-		Next = cprec->GetNext();
-		cprec->SetNext(this);
-	} else {
-		Next = tdbp->GetColumns();
-		tdbp->SetColumns(this);
-	} // endif cprec
-
-	// Set additional JDBC access method information for column.
-	Crp = NULL;
-	//Long = cdp->GetLong();
-	Long = Precision;
-	//strcpy(F_Date, cdp->F_Date);
-	To_Val = NULL;
-//Slen = 0;
-//StrLen = &Slen;
-//Sqlbuf = NULL;
-	Bufp = NULL;
-	Blkp = NULL;
-	Rank = 0;           // Not known yet
-
-	if (trace)
-		htrc(" making new %sCOL C%d %s at %p\n", am, Index, Name, this);
-
+	uuid = false;
 } // end of JDBCCOL constructor
 
 /***********************************************************************/
 /*  JDBCCOL private constructor.                                       */
 /***********************************************************************/
-JDBCCOL::JDBCCOL(void) : COLBLK()
+JDBCCOL::JDBCCOL(void) : EXTCOL()
 {
-	Crp = NULL;
-	Buf_Type = TYPE_INT;     // This is a count(*) column
-	// Set additional Dos access method information for column.
-	Long = sizeof(int);
-	To_Val = NULL;
-//Slen = 0;
-//StrLen = &Slen;
-//Sqlbuf = NULL;
-	Bufp = NULL;
-	Blkp = NULL;
-	Rank = 1;
+	uuid = false;
 } // end of JDBCCOL constructor
 
 /***********************************************************************/
 /*  JDBCCOL constructor used for copying columns.                      */
 /*  tdbp is the pointer to the new table descriptor.                   */
 /***********************************************************************/
-JDBCCOL::JDBCCOL(JDBCCOL *col1, PTDB tdbp) : COLBLK(col1, tdbp)
+JDBCCOL::JDBCCOL(JDBCCOL *col1, PTDB tdbp) : EXTCOL(col1, tdbp)
 {
-	Crp = col1->Crp;
-	Long = col1->Long;
-	//strcpy(F_Date, col1->F_Date);
-	To_Val = col1->To_Val;
-//Slen = col1->Slen;
-//StrLen = col1->StrLen;
-//Sqlbuf = col1->Sqlbuf;
-	Bufp = col1->Bufp;
-	Blkp = col1->Blkp;
-	Rank = col1->Rank;
+	uuid = col1->uuid;
 } // end of JDBCCOL copy constructor
 
 /***********************************************************************/
-/*  SetBuffer: prepare a column block for write operation.             */
-/***********************************************************************/
-bool JDBCCOL::SetBuffer(PGLOBAL g, PVAL value, bool ok, bool check)
-{
-	if (!(To_Val = value)) {
-		sprintf(g->Message, MSG(VALUE_ERROR), Name);
-		return true;
-	} else if (Buf_Type == value->GetType()) {
-		// Values are of the (good) column type
-		if (Buf_Type == TYPE_DATE) {
-			// If any of the date values is formatted
-			// output format must be set for the receiving table
-			if (GetDomain() || ((DTVAL *)value)->IsFormatted())
-				goto newval;          // This will make a new value;
-
-		} else if (Buf_Type == TYPE_DOUBLE)
-			// Float values must be written with the correct (column) precision
-			// Note: maybe this should be forced by ShowValue instead of this ?
-			value->SetPrec(GetScale());
-
-		Value = value;            // Directly access the external value
-	} else {
-		// Values are not of the (good) column type
-		if (check) {
-			sprintf(g->Message, MSG(TYPE_VALUE_ERR), Name,
-				GetTypeName(Buf_Type), GetTypeName(value->GetType()));
-			return true;
-		} // endif check
-
-	newval:
-		if (InitValue(g))         // Allocate the matching value block
-			return true;
-
-	} // endif's Value, Buf_Type
-
-	// Because Colblk's have been made from a copy of the original TDB in
-	// case of Update, we must reset them to point to the original one.
-	if (To_Tdb->GetOrig())
-		To_Tdb = (PTDB)To_Tdb->GetOrig();
-
-	// Set the Column
-	Status = (ok) ? BUF_EMPTY : BUF_NO;
-	return false;
-} // end of SetBuffer
-
-/***********************************************************************/
-/*  ReadColumn: when SQLFetch is used there is nothing to do as the    */
-/*  column buffer was bind to the record set. This is also the case    */
-/*  when calculating MaxSize (Bufp is NULL even when Rows is not).     */
+/*  ReadColumn: retrieve the column value via the JDBC driver.         */
 /***********************************************************************/
 void JDBCCOL::ReadColumn(PGLOBAL g)
 {
@@ -1324,72 +1036,8 @@ void JDBCCOL::ReadColumn(PGLOBAL g)
 
 } // end of ReadColumn
 
-#if 0
 /***********************************************************************/
-/*  AllocateBuffers: allocate the extended buffer for SQLExtendedFetch */
-/*  or Fetch.  Note: we use Long+1 here because JDBC must have space   */
-/*  for the ending null character.                                     */
-/***********************************************************************/
-void JDBCCOL::AllocateBuffers(PGLOBAL g, int rows)
-{
-	if (Buf_Type == TYPE_DATE)
-		Sqlbuf = (TIMESTAMP_STRUCT*)PlugSubAlloc(g, NULL,
-		sizeof(TIMESTAMP_STRUCT));
-
-	if (!rows)
-		return;
-
-	if (Buf_Type == TYPE_DATE)
-		Bufp = PlugSubAlloc(g, NULL, rows * sizeof(TIMESTAMP_STRUCT));
-	else {
-		Blkp = AllocValBlock(g, NULL, Buf_Type, rows, GetBuflen(),
-			GetScale(), true, false, false);
-		Bufp = Blkp->GetValPointer();
-	} // endelse
-
-	if (rows > 1)
-		StrLen = (SQLLEN *)PlugSubAlloc(g, NULL, rows * sizeof(SQLLEN));
-
-} // end of AllocateBuffers
-
-/***********************************************************************/
-/*  Returns the buffer to use for Fetch or Extended Fetch.             */
-/***********************************************************************/
-void *JDBCCOL::GetBuffer(DWORD rows)
-{
-	if (rows && To_Tdb) {
-		assert(rows == (DWORD)((TDBJDBC*)To_Tdb)->Rows);
-		return Bufp;
-	} else
-		return (Buf_Type == TYPE_DATE) ? Sqlbuf : Value->GetTo_Val();
-
-} // end of GetBuffer
-
-/***********************************************************************/
-/*  Returns the buffer length to use for Fetch or Extended Fetch.      */
-/***********************************************************************/
-SWORD JDBCCOL::GetBuflen(void)
-{
-	SWORD flen;
-
-	switch (Buf_Type) {
-	case TYPE_DATE:
-		flen = (SWORD)sizeof(TIMESTAMP_STRUCT);
-		break;
-	case TYPE_STRING:
-	case TYPE_DECIM:
-		flen = (SWORD)Value->GetClen() + 1;
-		break;
-	default:
-		flen = (SWORD)Value->GetClen();
-	} // endswitch Buf_Type
-
-	return flen;
-} // end of GetBuflen
-#endif // 0
-
-/***********************************************************************/
-/*  WriteColumn: make sure the bind buffer is updated.                 */
+/*  WriteColumn: Convert if necessary.                                 */
 /***********************************************************************/
 void JDBCCOL::WriteColumn(PGLOBAL g)
 {
@@ -1399,30 +1047,6 @@ void JDBCCOL::WriteColumn(PGLOBAL g)
 	if (Value != To_Val)
 		Value->SetValue_pval(To_Val, FALSE);   // Convert the inserted value
 
-#if 0
-	if (Buf_Type == TYPE_DATE) {
-		struct tm tm, *dbtime = ((DTVAL*)Value)->GetGmTime(&tm);
-
-		Sqlbuf->second = dbtime->tm_sec;
-		Sqlbuf->minute = dbtime->tm_min;
-		Sqlbuf->hour   = dbtime->tm_hour;
-		Sqlbuf->day    = dbtime->tm_mday;
-		Sqlbuf->month  = dbtime->tm_mon + 1;
-		Sqlbuf->year   = dbtime->tm_year + 1900;
-		Sqlbuf->fraction = 0;
-	} else if (Buf_Type == TYPE_DECIM) {
-		// Some data sources require local decimal separator
-		char *p, sep = ((PTDBJDBC)To_Tdb)->Sep;
-
-		if (sep && (p = strchr(Value->GetCharValue(), '.')))
-			*p = sep;
-
-	} // endif Buf_Type
-
-	if (Nullable)
-		*StrLen = (Value->IsNull()) ? SQL_NULL_DATA :
-		(IsTypeChar(Buf_Type)) ? SQL_NTS : 0;
-#endif // 0
 } // end of WriteColumn
 
 /* -------------------------- Class TDBXJDC -------------------------- */
@@ -1477,26 +1101,6 @@ PCMD TDBXJDC::MakeCMD(PGLOBAL g)
 	return xcmd;
 } // end of MakeCMD
 
-#if 0
-/***********************************************************************/
-/*  JDBC Bind Parameter function.                                      */
-/***********************************************************************/
-bool TDBXJDC::BindParameters(PGLOBAL g)
-{
-	PJDBCCOL colp;
-
-	for (colp = (PJDBCCOL)Columns; colp; colp = (PJDBCCOL)colp->Next) {
-		colp->AllocateBuffers(g, 0);
-
-		if (Jcp->BindParam(colp))
-			return true;
-
-	} // endfor colp
-
-	return false;
-} // end of BindParameters
-#endif // 0
-
 /***********************************************************************/
 /*  XDBC GetMaxSize: returns table size (not always one row).          */
 /***********************************************************************/
@@ -1518,7 +1122,7 @@ bool TDBXJDC::OpenDB(PGLOBAL g)
 {
 	bool rc = false;
 
-	if (trace)
+	if (trace(1))
 		htrc("JDBC OpenDB: tdbp=%p tdb=R%d use=%d mode=%d\n",
 		this, Tdb_No, Use, Mode);
 
@@ -1535,11 +1139,11 @@ bool TDBXJDC::OpenDB(PGLOBAL g)
 	/*  drivers allowing concurency in getting results ???               */
 	/*********************************************************************/
 	if (!Jcp) {
-		Jcp = new(g) JDBConn(g, this);
+		Jcp = new(g) JDBConn(g, Wrapname);
 	} else if (Jcp->IsOpen())
 		Jcp->Close();
 
-	if (Jcp->Open(Jpath, &Ops) == RC_FX)
+	if (Jcp->Connect(&Ops))
 		return true;
 
 	Use = USE_OPEN;       // Do it now in case we are recursively called
@@ -1553,8 +1157,9 @@ bool TDBXJDC::OpenDB(PGLOBAL g)
 	/*  Get the command to execute.                                      */
 	/*********************************************************************/
 	if (!(Cmdlist = MakeCMD(g))) {
-		Jcp->Close();
-		return true;
+		// Next lines commented out because of CHECK TABLE
+		//Jcp->Close();
+		//return true;
 	} // endif Query
 
 	Rows = 1;
@@ -1574,7 +1179,7 @@ int TDBXJDC::ReadDB(PGLOBAL g)
 		else
 			Query->Set(Cmdlist->Cmd);
 
-		if ((rc = Jcp->ExecSQLcommand(Query->GetStr())) == RC_FX)
+		if ((rc = Jcp->ExecuteCommand(Query->GetStr())) == RC_FX)
 			Nerr++;
 
 		if (rc == RC_NF)
@@ -1585,8 +1190,10 @@ int TDBXJDC::ReadDB(PGLOBAL g)
 		Fpos++;                // Used for progress info
 		Cmdlist = (Nerr > Mxr) ? NULL : Cmdlist->Next;
 		return RC_OK;
-	} else
+	} else {
+		PushWarning(g, this, 1);
 		return RC_EF;
+	}	// endif Cmdlist
 
 } // end of ReadDB
 
@@ -1613,8 +1220,8 @@ int TDBXJDC::DeleteDB(PGLOBAL g, int irc)
 /***********************************************************************/
 /*  JSRCCOL public constructor.                                        */
 /***********************************************************************/
-JSRCCOL::JSRCCOL(PCOLDEF cdp, PTDB tdbp, PCOL cprec, int i, PSZ am)
-	: JDBCCOL(cdp, tdbp, cprec, i, am)
+JSRCCOL::JSRCCOL(PCOLDEF cdp, PTDB tdbp, PCOL cprec, int i, PCSZ am)
+	     : JDBCCOL(cdp, tdbp, cprec, i, am)
 {
 	// Set additional JDBC access method information for column.
 	Flag = cdp->GetOffset();
@@ -1651,7 +1258,7 @@ void JSRCCOL::WriteColumn(PGLOBAL g)
 /***********************************************************************/
 PQRYRES TDBJDRV::GetResult(PGLOBAL g)
 {
-	return JDBCDrivers(g, Jpath, Maxres, false);
+	return JDBCDrivers(g, Maxres, false);
 } // end of GetResult
 
 /* ---------------------------TDBJTB class --------------------------- */
@@ -1661,14 +1268,15 @@ PQRYRES TDBJDRV::GetResult(PGLOBAL g)
 /***********************************************************************/
 TDBJTB::TDBJTB(PJDBCDEF tdp) : TDBJDRV(tdp)
 {
-	Jpath = tdp->Jpath;
 	Schema = tdp->Tabschema;
 	Tab = tdp->Tabname;
-	Tabtype = tdp->Tabtype;
+	Tabtype = tdp->Tabtyp;
 	Ops.Driver = tdp->Driver;
 	Ops.Url = tdp->Url;
 	Ops.User = tdp->Username;
 	Ops.Pwd = tdp->Password;
+	Ops.Fsize = 0;
+	Ops.Scrollable = false;
 } // end of TDBJTB constructor
 
 /***********************************************************************/
@@ -1676,29 +1284,23 @@ TDBJTB::TDBJTB(PJDBCDEF tdp) : TDBJDRV(tdp)
 /***********************************************************************/
 PQRYRES TDBJTB::GetResult(PGLOBAL g)
 {
-	return JDBCTables(g, Jpath, Schema, Tab, Tabtype, Maxres, false, &Ops);
+	return JDBCTables(g, Schema, Tab, Tabtype, Maxres, false, &Ops);
 } // end of GetResult
 
 /* --------------------------TDBJDBCL class -------------------------- */
+
+/***********************************************************************/
+/*  TDBJDBCL class constructor.                                        */
+/***********************************************************************/
+TDBJDBCL::TDBJDBCL(PJDBCDEF tdp) : TDBJTB(tdp)
+{
+	Colpat = tdp->Colpat;
+} // end of TDBJDBCL constructor
 
 /***********************************************************************/
 /*  GetResult: Get the list of JDBC table columns.                     */
 /***********************************************************************/
 PQRYRES TDBJDBCL::GetResult(PGLOBAL g)
 {
-	return JDBCColumns(g, Jpath, Schema, Tab, NULL, Maxres, false, &Ops);
+	return JDBCColumns(g, Schema, Tab, Colpat, Maxres, false, &Ops);
 } // end of GetResult
-
-#if 0
-/* ---------------------------TDBJSRC class -------------------------- */
-
-/***********************************************************************/
-/*  GetResult: Get the list of JDBC data sources.                      */
-/***********************************************************************/
-PQRYRES TDBJSRC::GetResult(PGLOBAL g)
-{
-	return JDBCDataSources(g, Maxres, false);
-} // end of GetResult
-
-/* ------------------------ End of TabJDBC --------------------------- */
-#endif // 0

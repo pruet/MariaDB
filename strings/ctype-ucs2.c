@@ -1,5 +1,5 @@
 /* Copyright (c) 2003, 2013, Oracle and/or its affiliates
-   Copyright (c) 2009, 2014, SkySQL Ab.
+   Copyright (c) 2009, 2016, MariaDB
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Library General Public
@@ -53,17 +53,6 @@ static unsigned long lfactor[9]=
 
 
 #ifdef HAVE_CHARSET_mb2_or_mb4
-static inline int
-my_bincmp(const uchar *s, const uchar *se,
-          const uchar *t, const uchar *te)
-{
-  int slen= (int) (se - s), tlen= (int) (te - t);
-  int len= MY_MIN(slen, tlen);
-  int cmp= memcmp(s, t, len);
-  return cmp ? cmp : slen - tlen;
-}
-
-
 static size_t
 my_caseup_str_mb2_or_mb4(CHARSET_INFO * cs  __attribute__((unused)), 
                          char * s __attribute__((unused)))
@@ -1342,25 +1331,26 @@ my_tosort_utf16(MY_UNICASE_INFO *uni_plane, my_wc_t *wc)
 
 
 static size_t
-my_caseup_utf16(CHARSET_INFO *cs, char *src, size_t srclen,
-                char *dst __attribute__((unused)),
-                size_t dstlen __attribute__((unused)))
+my_caseup_utf16(CHARSET_INFO *cs, const char *src, size_t srclen,
+                char *dst, size_t dstlen)
 {
   my_wc_t wc;
   my_charset_conv_mb_wc mb_wc= cs->cset->mb_wc;
   my_charset_conv_wc_mb wc_mb= cs->cset->wc_mb;
   int res;
-  char *srcend= src + srclen;
+  const char *srcend= src + srclen;
+  char *dstend= dst + dstlen;
   MY_UNICASE_INFO *uni_plane= cs->caseinfo;
-  DBUG_ASSERT(src == dst && srclen == dstlen);
+  DBUG_ASSERT(srclen <= dstlen);
   
   while ((src < srcend) &&
          (res= mb_wc(cs, &wc, (uchar *) src, (uchar *) srcend)) > 0)
   {
     my_toupper_utf16(uni_plane, &wc);
-    if (res != wc_mb(cs, wc, (uchar *) src, (uchar *) srcend))
+    if (res != wc_mb(cs, wc, (uchar *) dst, (uchar *) dstend))
       break;
     src+= res;
+    dst+= res;
   }
   return srclen;
 }
@@ -1389,25 +1379,26 @@ my_hash_sort_utf16(CHARSET_INFO *cs, const uchar *s, size_t slen,
 
 
 static size_t
-my_casedn_utf16(CHARSET_INFO *cs, char *src, size_t srclen,
-                char *dst __attribute__((unused)),
-                size_t dstlen __attribute__((unused)))
+my_casedn_utf16(CHARSET_INFO *cs, const char *src, size_t srclen,
+                char *dst, size_t dstlen)
 {
   my_wc_t wc;
   my_charset_conv_mb_wc mb_wc= cs->cset->mb_wc;
   my_charset_conv_wc_mb wc_mb= cs->cset->wc_mb;
   int res;
-  char *srcend= src + srclen;
+  const char *srcend= src + srclen;
+  char *dstend= dst + dstlen;
   MY_UNICASE_INFO *uni_plane= cs->caseinfo;
-  DBUG_ASSERT(src == dst && srclen == dstlen);
+  DBUG_ASSERT(srclen <= dstlen);
 
   while ((src < srcend) &&
          (res= mb_wc(cs, &wc, (uchar *) src, (uchar *) srcend)) > 0)
   {
     my_tolower_utf16(uni_plane, &wc);
-    if (res != wc_mb(cs, wc, (uchar *) src, (uchar *) srcend))
+    if (res != wc_mb(cs, wc, (uchar *) dst, (uchar *) dstend))
       break;
     src+= res;
+    dst+= res;
   }
   return srclen;
 }
@@ -2003,23 +1994,24 @@ my_tosort_utf32(MY_UNICASE_INFO *uni_plane, my_wc_t *wc)
 
 
 static size_t
-my_caseup_utf32(CHARSET_INFO *cs, char *src, size_t srclen,
-                char *dst __attribute__((unused)),
-                size_t dstlen __attribute__((unused)))
+my_caseup_utf32(CHARSET_INFO *cs, const char *src, size_t srclen,
+                char *dst, size_t dstlen)
 {
   my_wc_t wc;
   int res;
-  char *srcend= src + srclen;
+  const char *srcend= src + srclen;
+  char *dstend= dst + dstlen;
   MY_UNICASE_INFO *uni_plane= cs->caseinfo;
-  DBUG_ASSERT(src == dst && srclen == dstlen);
+  DBUG_ASSERT(srclen <= dstlen);
   
   while ((src < srcend) &&
          (res= my_utf32_uni(cs, &wc, (uchar *)src, (uchar*) srcend)) > 0)
   {
     my_toupper_utf32(uni_plane, &wc);
-    if (res != my_uni_utf32(cs, wc, (uchar*) src, (uchar*) srcend))
+    if (res != my_uni_utf32(cs, wc, (uchar*) dst, (uchar*) dstend))
       break;
     src+= res;
+    dst+= res;
   }
   return srclen;
 }
@@ -2054,22 +2046,23 @@ my_hash_sort_utf32(CHARSET_INFO *cs, const uchar *s, size_t slen,
 
 
 static size_t
-my_casedn_utf32(CHARSET_INFO *cs, char *src, size_t srclen,
-                char *dst __attribute__((unused)),
-                size_t dstlen __attribute__((unused)))
+my_casedn_utf32(CHARSET_INFO *cs, const char *src, size_t srclen,
+                char *dst, size_t dstlen)
 {
   my_wc_t wc;
   int res;
-  char *srcend= src + srclen;
+  const char *srcend= src + srclen;
+  char *dstend= dst + dstlen;
   MY_UNICASE_INFO *uni_plane= cs->caseinfo;
-  DBUG_ASSERT(src == dst && srclen == dstlen);
+  DBUG_ASSERT(srclen <= dstlen);
 
   while ((res= my_utf32_uni(cs, &wc, (uchar*) src, (uchar*) srcend)) > 0)
   {
     my_tolower_utf32(uni_plane,&wc);
-    if (res != my_uni_utf32(cs, wc, (uchar*) src, (uchar*) srcend))
+    if (res != my_uni_utf32(cs, wc, (uchar*) dst, (uchar*) dstend))
       break;
     src+= res;
+    dst+= res;
   }
   return srclen;
 }
@@ -2792,23 +2785,24 @@ my_tosort_ucs2(MY_UNICASE_INFO *uni_plane, my_wc_t *wc)
     *wc= page[*wc & 0xFF].sort;
 }
 
-static size_t my_caseup_ucs2(CHARSET_INFO *cs, char *src, size_t srclen,
-                           char *dst __attribute__((unused)),
-                           size_t dstlen __attribute__((unused)))
+static size_t my_caseup_ucs2(CHARSET_INFO *cs, const char *src, size_t srclen,
+                           char *dst, size_t dstlen)
 {
   my_wc_t wc;
   int res;
-  char *srcend= src + srclen;
+  const char *srcend= src + srclen;
+  char *dstend= dst + dstlen;
   MY_UNICASE_INFO *uni_plane= cs->caseinfo;
-  DBUG_ASSERT(src == dst && srclen == dstlen);
+  DBUG_ASSERT(srclen <= dstlen);
   
   while ((src < srcend) &&
          (res= my_ucs2_uni(cs, &wc, (uchar *)src, (uchar*) srcend)) > 0)
   {
     my_toupper_ucs2(uni_plane, &wc);
-    if (res != my_uni_ucs2(cs, wc, (uchar*) src, (uchar*) srcend))
+    if (res != my_uni_ucs2(cs, wc, (uchar*) dst, (uchar*) dstend))
       break;
     src+= res;
+    dst+= res;
   }
   return srclen;
 }
@@ -2837,23 +2831,24 @@ static void my_hash_sort_ucs2(CHARSET_INFO *cs, const uchar *s, size_t slen,
 }
 
 
-static size_t my_casedn_ucs2(CHARSET_INFO *cs, char *src, size_t srclen,
-                           char *dst __attribute__((unused)),
-                           size_t dstlen __attribute__((unused)))
+static size_t my_casedn_ucs2(CHARSET_INFO *cs, const char *src, size_t srclen,
+                           char *dst, size_t dstlen)
 {
   my_wc_t wc;
   int res;
-  char *srcend= src + srclen;
+  const char *srcend= src + srclen;
+  char *dstend= dst + dstlen;
   MY_UNICASE_INFO *uni_plane= cs->caseinfo;
-  DBUG_ASSERT(src == dst && srclen == dstlen);
+  DBUG_ASSERT(srclen <= dstlen);
 
   while ((src < srcend) &&
          (res= my_ucs2_uni(cs, &wc, (uchar*) src, (uchar*) srcend)) > 0)
   {
     my_tolower_ucs2(uni_plane, &wc);
-    if (res != my_uni_ucs2(cs, wc, (uchar*) src, (uchar*) srcend))
+    if (res != my_uni_ucs2(cs, wc, (uchar*) dst, (uchar*) dstend))
       break;
     src+= res;
+    dst+= res;
   }
   return srclen;
 }

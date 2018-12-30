@@ -373,7 +373,8 @@ bool net_send_error_packet(THD *thd, uint sql_errno, const char *err,
   uint error;
   char converted_err[MYSQL_ERRMSG_SIZE];
   char buff[2+1+SQLSTATE_LENGTH+MYSQL_ERRMSG_SIZE], *pos;
-
+  my_bool ret;
+  uint8 save_compress;
   DBUG_ENTER("send_error_packet");
 
   if (net->vio == 0)
@@ -401,8 +402,16 @@ bool net_send_error_packet(THD *thd, uint sql_errno, const char *err,
   /* Converted error message is always null-terminated. */
   length= (uint) (strmake(pos, converted_err, MYSQL_ERRMSG_SIZE - 1) - buff);
 
-  DBUG_RETURN(net_write_command(net,(uchar) 255, (uchar*) "", 0, (uchar*) buff,
-                                length));
+  /*
+    Ensure that errors are not compressed. This is to ensure we can
+    detect out of bands error messages in the client
+  */
+  if ((save_compress= net->compress))
+    net->compress= 2;
+  ret= net_write_command(net,(uchar) 255, (uchar*) "", 0, (uchar*) buff,
+                         length);
+  net->compress= save_compress;
+  DBUG_RETURN(ret);
 }
 
 #endif /* EMBEDDED_LIBRARY */
@@ -645,7 +654,7 @@ uchar *net_store_data(uchar *to, const uchar *from, size_t length)
 
 uchar *net_store_data(uchar *to,int32 from)
 {
-  char buff[20];
+  char buff[22];
   uint length=(uint) (int10_to_str(from,buff,10)-buff);
   to=net_store_length_fast(to,length);
   memcpy(to,buff,length);
@@ -1062,7 +1071,7 @@ bool Protocol_text::store_tiny(longlong from)
   DBUG_ASSERT(field_types == 0 || field_types[field_pos] == MYSQL_TYPE_TINY);
   field_pos++;
 #endif
-  char buff[20];
+  char buff[22];
   return net_store_data((uchar*) buff,
 			(size_t) (int10_to_str((int) from, buff, -10) - buff));
 }
@@ -1076,7 +1085,7 @@ bool Protocol_text::store_short(longlong from)
 	      field_types[field_pos] == MYSQL_TYPE_SHORT);
   field_pos++;
 #endif
-  char buff[20];
+  char buff[22];
   return net_store_data((uchar*) buff,
 			(size_t) (int10_to_str((int) from, buff, -10) -
                                   buff));
@@ -1091,7 +1100,7 @@ bool Protocol_text::store_long(longlong from)
               field_types[field_pos] == MYSQL_TYPE_LONG);
   field_pos++;
 #endif
-  char buff[20];
+  char buff[22];
   return net_store_data((uchar*) buff,
 			(size_t) (int10_to_str((long int)from, buff,
                                                (from <0)?-10:10)-buff));

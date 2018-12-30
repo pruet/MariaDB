@@ -1,3 +1,7 @@
+#if defined(ZIP_SUPPORT)
+#include "filamzip.h"
+#endif   //	ZIP_SUPPORT
+
 /******************************************************************/
 /*  Dual XML implementation base classes defines.                 */
 /******************************************************************/
@@ -72,9 +76,9 @@ class XMLDOCUMENT : public BLOCK {
   virtual void    SetNofree(bool b) = 0;
 
   // Methods
-  virtual bool    Initialize(PGLOBAL) = 0;
-  virtual bool    ParseFile(char *) = 0;
-  virtual bool    NewDoc(PGLOBAL, char *) = 0;
+	virtual bool    Initialize(PGLOBAL, PCSZ, bool) = 0;
+  virtual bool    ParseFile(PGLOBAL, char *) = 0;
+  virtual bool    NewDoc(PGLOBAL, PCSZ) = 0;
   virtual void    AddComment(PGLOBAL, char *) = 0;
   virtual PXNODE  GetRoot(PGLOBAL) = 0;
   virtual PXNODE  NewRoot(PGLOBAL, char *) = 0;
@@ -91,8 +95,16 @@ class XMLDOCUMENT : public BLOCK {
 
   // Utility
   bool  MakeNSlist(PGLOBAL g);
+	bool  InitZip(PGLOBAL g, PCSZ entry);
+	char *GetMemDoc(PGLOBAL g, char *fn);
+	void  CloseZip(void);
 
   // Members
+#if defined(ZIP_SUPPORT)
+	UNZIPUTL *zip;												 /* Used for zipped file  */
+#else   // !ZIP_SUPPORT
+	bool     zip;													 /* Always false          */
+#endif  //	!ZIP_SUPPORT
   PNS   Namespaces;                      /* To the namespaces     */
   char *Encoding;                        /* The document encoding */
   char *Nslist;                          /* Namespace list        */
@@ -119,15 +131,15 @@ class XMLNODE : public BLOCK {
   virtual PXLIST SelectNodes(PGLOBAL, char *, PXLIST = NULL) = 0;
   virtual PXNODE SelectSingleNode(PGLOBAL, char *, PXNODE = NULL) = 0;
   virtual PXATTR GetAttribute(PGLOBAL, char *, PXATTR = NULL) = 0;
-  virtual PXNODE AddChildNode(PGLOBAL, char *, PXNODE = NULL) = 0;
+  virtual PXNODE AddChildNode(PGLOBAL, PCSZ, PXNODE = NULL) = 0;
   virtual PXATTR AddProperty(PGLOBAL, char *, PXATTR = NULL) = 0;
-  virtual void   AddText(PGLOBAL, char *) = 0;
+  virtual void   AddText(PGLOBAL, PCSZ) = 0;
   virtual void   DeleteChild(PGLOBAL, PXNODE) = 0;
 
  protected:
           PXNODE NewChild(PXNODE ncp);
           void   Delete(PXNODE dnp);
-          char  *BufAlloc(PGLOBAL g, char *p, int n);
+          char  *BufAlloc(PGLOBAL g, const char *p, int n);
 
   // Constructor
   XMLNODE(PXDOC dp);

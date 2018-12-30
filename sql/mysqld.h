@@ -83,7 +83,6 @@ void kill_mysql(void);
 void close_connection(THD *thd, uint sql_errno= 0);
 void handle_connection_in_main_thread(THD *thd);
 void create_thread_to_handle_connection(THD *thd);
-void delete_running_thd(THD *thd);
 void signal_thd_deleted();
 void unlink_thd(THD *thd);
 bool one_thread_per_connection_end(THD *thd, bool put_in_cache);
@@ -127,7 +126,7 @@ extern ulong slave_retried_transactions;
 extern ulong slave_run_triggers_for_rbr;
 extern ulonglong slave_type_conversions_options;
 extern my_bool read_only, opt_readonly;
-extern my_bool lower_case_file_system;
+extern MYSQL_PLUGIN_IMPORT my_bool lower_case_file_system;
 extern my_bool opt_enable_named_pipe, opt_sync_frm, opt_allow_suspicious_udfs;
 extern my_bool opt_secure_auth;
 extern const char *current_dbug_option;
@@ -139,7 +138,8 @@ extern my_bool sp_automatic_privileges, opt_noacl;
 extern ulong use_stat_tables;
 extern my_bool opt_old_style_user_limits, trust_function_creators;
 extern uint opt_crash_binlog_innodb;
-extern char *shared_memory_base_name, *mysqld_unix_port;
+extern const char *shared_memory_base_name;
+extern char *mysqld_unix_port;
 extern my_bool opt_enable_shared_memory;
 extern ulong opt_replicate_events_marked_for_skip;
 extern char *default_tz_name;
@@ -159,11 +159,13 @@ extern ulong opt_tc_log_size, tc_log_max_pages_used, tc_log_page_size;
 extern ulong tc_log_page_waits;
 extern my_bool relay_log_purge, opt_innodb_safe_binlog, opt_innodb;
 extern my_bool relay_log_recovery;
-extern uint test_flags,select_errors,ha_open_options;
+extern uint select_errors,ha_open_options;
+extern ulonglong test_flags;
 extern uint protocol_version, mysqld_port, dropping_tables;
 extern ulong delay_key_write_options;
 extern char *opt_logname, *opt_slow_logname, *opt_bin_logname, 
             *opt_relay_logname;
+extern char *opt_binlog_index_name;
 extern char *opt_backup_history_logname, *opt_backup_progress_logname,
             *opt_backup_settings_name;
 extern const char *log_output_str;
@@ -200,7 +202,7 @@ extern ulong slave_trans_retries;
 extern uint  slave_net_timeout;
 extern int max_user_connections;
 extern ulong what_to_log,flush_time;
-extern ulong max_prepared_stmt_count, prepared_stmt_count;
+extern uint max_prepared_stmt_count, prepared_stmt_count;
 extern ulong open_files_limit;
 extern ulonglong binlog_cache_size, binlog_stmt_cache_size;
 extern ulonglong max_binlog_cache_size, max_binlog_stmt_cache_size;
@@ -290,10 +292,10 @@ extern PSI_mutex_key key_BINLOG_LOCK_index, key_BINLOG_LOCK_xid_list,
   key_LOCK_prepared_stmt_count,
   key_LOCK_rpl_status, key_LOCK_server_started,
   key_LOCK_status, key_LOCK_show_status,
-  key_LOCK_thd_data,
+  key_LOCK_thd_data, key_LOCK_thd_kill,
   key_LOCK_user_conn, key_LOG_LOCK_log,
   key_master_info_data_lock, key_master_info_run_lock,
-  key_master_info_sleep_lock,
+  key_master_info_sleep_lock, key_master_info_start_stop_lock,
   key_mutex_slave_reporting_capability_err_lock, key_relay_log_info_data_lock,
   key_relay_log_info_log_space_lock, key_relay_log_info_run_lock,
   key_rpl_group_info_sleep_lock,
@@ -341,8 +343,8 @@ extern PSI_cond_key key_COND_wait_gtid, key_COND_gtid_ignore_duplicates;
 
 extern PSI_thread_key key_thread_bootstrap, key_thread_delayed_insert,
   key_thread_handle_manager, key_thread_kill_server, key_thread_main,
-  key_thread_one_connection, key_thread_signal_hand, key_thread_slave_init,
-  key_rpl_parallel_thread;
+  key_thread_one_connection, key_thread_signal_hand,
+  key_thread_slave_background, key_rpl_parallel_thread;
 
 extern PSI_file_key key_file_binlog, key_file_binlog_index, key_file_casetest,
   key_file_dbopt, key_file_des_key_file, key_file_ERRMSG, key_select_to_file,
@@ -474,11 +476,6 @@ extern PSI_stage_info stage_waiting_for_the_next_event_in_relay_log;
 extern PSI_stage_info stage_waiting_for_the_slave_thread_to_advance_position;
 extern PSI_stage_info stage_waiting_to_finalize_termination;
 extern PSI_stage_info stage_waiting_to_get_readlock;
-extern PSI_stage_info stage_slave_waiting_worker_to_release_partition;
-extern PSI_stage_info stage_slave_waiting_worker_to_free_events;
-extern PSI_stage_info stage_slave_waiting_worker_queue;
-extern PSI_stage_info stage_slave_waiting_event_from_coordinator;
-extern PSI_stage_info stage_slave_waiting_workers_to_exit;
 extern PSI_stage_info stage_binlog_waiting_background_tasks;
 extern PSI_stage_info stage_binlog_processing_checkpoint_notify;
 extern PSI_stage_info stage_binlog_stopping_background_thread;
@@ -493,6 +490,9 @@ extern PSI_stage_info stage_waiting_for_rpl_thread_pool;
 extern PSI_stage_info stage_master_gtid_wait_primary;
 extern PSI_stage_info stage_master_gtid_wait;
 extern PSI_stage_info stage_gtid_wait_other_connection;
+extern PSI_stage_info stage_slave_background_process_request;
+extern PSI_stage_info stage_slave_background_wait_request;
+extern PSI_stage_info stage_waiting_for_deadlock_kill;
 
 #ifdef HAVE_PSI_STATEMENT_INTERFACE
 /**
@@ -523,6 +523,8 @@ extern pthread_t signal_thread;
 #ifdef HAVE_OPENSSL
 extern struct st_VioSSLFd * ssl_acceptor_fd;
 #endif /* HAVE_OPENSSL */
+
+extern ulonglong my_pcre_frame_size;
 
 /*
   The following variables were under INNODB_COMPABILITY_HOOKS
@@ -561,7 +563,7 @@ extern mysql_mutex_t
        LOCK_slave_list, LOCK_active_mi, LOCK_manager,
        LOCK_global_system_variables, LOCK_user_conn,
        LOCK_prepared_stmt_count, LOCK_error_messages, LOCK_connection_count,
-       LOCK_slave_init;
+       LOCK_slave_background;
 extern MYSQL_PLUGIN_IMPORT mysql_mutex_t LOCK_thread_count;
 #ifdef HAVE_OPENSSL
 extern char* des_key_file;
@@ -573,7 +575,7 @@ extern mysql_rwlock_t LOCK_grant, LOCK_sys_init_connect, LOCK_sys_init_slave;
 extern mysql_rwlock_t LOCK_system_variables_hash;
 extern mysql_cond_t COND_thread_count;
 extern mysql_cond_t COND_manager;
-extern mysql_cond_t COND_slave_init;
+extern mysql_cond_t COND_slave_background;
 extern int32 thread_running;
 extern int32 thread_count, service_thread_count;
 
@@ -636,6 +638,10 @@ enum options_mysqld
   OPT_SSL_KEY,
   OPT_THREAD_CONCURRENCY,
   OPT_WANT_CORE,
+#ifdef WITH_WSREP
+  OPT_WSREP_CAUSAL_READS,
+  OPT_WSREP_SYNC_WAIT,
+#endif /* WITH_WSREP */
   OPT_MYSQL_COMPATIBILITY,
   OPT_MYSQL_TO_BE_IMPLEMENTED,
   OPT_which_is_always_the_last
@@ -759,20 +765,6 @@ inline void dec_thread_running()
 
 void set_server_version(void);
 
-#if defined(MYSQL_DYNAMIC_PLUGIN) && defined(_WIN32)
-extern "C" THD *_current_thd_noinline();
-#define _current_thd() _current_thd_noinline()
-#else
-/*
-  THR_THD is a key which will be used to set/get THD* for a thread,
-  using my_pthread_setspecific_ptr()/my_thread_getspecific_ptr().
-*/
-extern pthread_key(THD*, THR_THD);
-inline THD *_current_thd(void)
-{
-  return my_pthread_getspecific_ptr(THD*,THR_THD);
-}
-#endif
 #define current_thd _current_thd()
 inline int set_current_thd(THD *thd)
 {

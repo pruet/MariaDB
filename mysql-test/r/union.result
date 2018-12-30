@@ -1233,12 +1233,9 @@ a	b
 select * from ((select * from t1 limit 1) union (select * from t1 limit 1)) a;
 a	b
 1	a
-2	b
 select * from ((select * from t1 limit 1) union (select * from t1 limit 1) union (select * from t1 limit 1)) a;
 a	b
 1	a
-2	b
-3	c
 select * from ((((select * from t1))) union (select * from t1) union (select * from t1)) a;
 a	b
 1	a
@@ -1617,7 +1614,6 @@ NULL	UNION RESULT	<union1,2>	ALL	NULL	NULL	NULL	NULL	NULL	NULL	Using filesort
 Warnings:
 Note	1003	select NULL AS `a` from `test`.`t1` union select NULL AS `a` from `test`.`t1` order by `a`
 DROP TABLE t1;
-End of 5.0 tests
 #
 # Bug#32858: Error: "Incorrect usage of UNION and INTO" does not take 
 # subselects into account
@@ -1723,6 +1719,16 @@ DROP TABLE t1,t2;
 create table t1 (a int);
 insert into t1 values (10),(10),(10),(2),(3),(4),(5),(6),(7),(8),(9),(1),(10);
 select a from t1 where false UNION select a from t1 limit 8;
+a
+10
+2
+3
+4
+5
+6
+7
+8
+(select a from t1 where false) UNION (select a from t1) limit 8;
 a
 10
 2
@@ -2026,6 +2032,96 @@ cccc
 bbbb
 dddd
 drop table t1;
+#
+# MDEV-10172: UNION query returns incorrect rows outside
+# conditional evaluation
+#
+create table t1 (d datetime not null primary key);
+insert into t1(d) values ('2016-06-01'),('2016-06-02'),('2016-06-03'),('2016-06-04');
+select * from
+(
+select * from t1 where d between '2016-06-02' and '2016-06-05'
+	union
+(select * from t1 where d < '2016-06-05' order by d desc limit 1)
+) onlyJun2toJun4
+order by d;
+d
+2016-06-02 00:00:00
+2016-06-03 00:00:00
+2016-06-04 00:00:00
+drop table t1;
+End of 5.0 tests
+create table t1 (a int, b int);
+insert into t1 values (1,1),(2,2),(3,3);
+create table t2 (c varchar(30), d varchar(30));
+insert into t1 values ('1','1'),('2','2'),('4','4');
+create table t3 (e int, f int);
+insert into t3 values (1,1),(2,2),(31,31),(32,32);
+select e,f, (e , f) in (select e,b from t1 union select c,d from t2) as sub from t3;
+e	f	sub
+1	1	1
+2	2	1
+31	31	0
+32	32	0
+select avg(f), (e , f) in (select e,b from t1 union select c,d from t2) as sub from t3 group by sub;
+avg(f)	sub
+31.5000	0
+1.5000	1
+drop table t1,t2,t3;
+#
+# MDEV-14715 Assertion `!table || (!table->read_set ||
+# bitmap_is_set(table->read_set, field_index))'
+# failed in Field_num::val_decimal
+#
+CREATE TABLE t1 (a INT, b INT) ENGINE=MyISAM;
+CREATE VIEW v1 AS SELECT * FROM t1;
+INSERT INTO t1 VALUES (1, NULL),(3, 4);
+(SELECT a, sum(a) AS f FROM v1 group by a ORDER BY b + sum(a))
+UNION
+(SELECT 2, 2);
+ERROR HY000: Invalid use of group function
+(SELECT a, sum(a) AS f FROM v1 group by a ORDER BY b + 1)
+UNION
+(SELECT 2, 2);
+a	f
+1	1
+3	3
+2	2
+SELECT a, b FROM t1
+UNION
+(SELECT a, VAR_POP(a) AS f FROM v1 GROUP BY a ORDER BY b/a );
+a	b
+1	NULL
+3	4
+1	0
+3	0
+DROP TABLE t1;
+(SELECT a, sum(a) AS f FROM v1 group by a ORDER BY b + 1)
+UNION
+(SELECT 2, 2);
+ERROR HY000: View 'test.v1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+DROP VIEW v1;
+(SELECT a, sum(a) AS f FROM v1 group by a ORDER BY b + 1)
+UNION
+(SELECT 2, 2);
+ERROR 42S02: Table 'test.v1' doesn't exist
+#
+# Bug#27197235 USER VARIABLE + UINON + DECIMAL COLUMN RETURNS
+#              WRONG VALUES
+#
+SET NAMES utf8;
+SET @advertAcctId = 1000003;
+select @advertAcctId as a from dual union all select 1.0 from dual;
+a
+1000003.0
+1.0
+SET NAMES latin1;
+SET @advertAcctId = 1000003;
+select @advertAcctId as a from dual union all select 1.0 from dual;
+a
+1000003.0
+1.0
+End of 5.5 tests
 #
 # WL#1763 Avoid creating temporary table in UNION ALL
 #

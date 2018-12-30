@@ -1,11 +1,11 @@
 /*********** File AM Txt C++ Program Source Code File (.CPP) ***********/
 /* PROGRAM NAME: FILAMTXT                                              */
 /* -------------                                                       */
-/*  Version 1.6                                                        */
+/*  Version 1.7                                                        */
 /*                                                                     */
 /* COPYRIGHT:                                                          */
 /* ----------                                                          */
-/*  (C) Copyright to the author Olivier BERTRAND          2005-2015    */
+/*  (C) Copyright to the author Olivier BERTRAND          2005-2017    */
 /*                                                                     */
 /* WHAT THIS PROGRAM DOES:                                             */
 /* -----------------------                                             */
@@ -71,8 +71,23 @@ TXTFAM::TXTFAM(PDOSDEF tdp)
   {
   Tdbp = NULL;
   To_Fb = NULL;
-  To_File = tdp->Fn;
-  Lrecl = tdp->Lrecl;
+
+	if (tdp) {
+		To_File = tdp->Fn;
+		Lrecl = tdp->Lrecl;
+		Eof = tdp->Eof;
+		Ending = tdp->Ending;
+	} else {
+		To_File = NULL;
+		Lrecl = 0;
+		Eof = false;
+#if defined(__WIN__)
+		Ending = 2;
+#else
+		Ending = 1;
+#endif
+	}	// endif tdp
+
   Placed = false;
   IsRead = true;
   Blocked = false;
@@ -103,8 +118,6 @@ TXTFAM::TXTFAM(PDOSDEF tdp)
   Blksize = 0;
   Fpos = Spos = Tpos = 0;
   Padded = false;
-  Eof = tdp->Eof;
-  Ending = tdp->Ending;
   Abort = false;
   CrLf = (char*)(Ending == 1 ? "\n" : "\r\n");
   } // end of TXTFAM standard constructor
@@ -181,12 +194,12 @@ int TXTFAM::GetFileLength(PGLOBAL g)
   PlugSetPath(filename, To_File, Tdbp->GetPath());
   h= global_open(g, MSGID_OPEN_MODE_STRERROR, filename, _O_RDONLY);
 
-  if (trace)
+  if (trace(1))
     htrc("GetFileLength: fn=%s h=%d\n", filename, h);
 
   if (h == -1) {
     if (errno != ENOENT) {
-      if (trace)
+      if (trace(1))
         htrc("%s\n", g->Message);
 
       len = -1;
@@ -236,7 +249,7 @@ int TXTFAM::Cardinality(PGLOBAL g)
 
       } // endif Padded
 
-      if (trace)
+      if (trace(1))
         htrc(" Computed max_K=%d Filen=%d lrecl=%d\n",
               card, len, Lrecl);
 
@@ -377,7 +390,7 @@ int TXTFAM::UpdateSortedRows(PGLOBAL g)
   return RC_OK;
 
 err:
-  if (trace)
+  if (trace(1))
     htrc("%s\n", g->Message);
 
   return RC_FX;
@@ -414,7 +427,7 @@ int TXTFAM::DeleteSortedRows(PGLOBAL g)
 
   for (i = 0; i < Posar->GetNval(); i++) {
     if ((irc = InitDelete(g, Posar->GetIntValue(ix[i]), 
-                             Sosar->GetIntValue(ix[i])) == RC_FX))
+                             Sosar->GetIntValue(ix[i]))) == RC_FX)
       goto err;
 
     // Now delete the sorted rows
@@ -426,7 +439,7 @@ int TXTFAM::DeleteSortedRows(PGLOBAL g)
   return RC_OK;
 
 err:
-  if (trace)
+  if (trace(1))
     htrc("%s\n", g->Message);
 
   return RC_FX;
@@ -499,7 +512,7 @@ int DOSFAM::GetFileLength(PGLOBAL g)
     if ((len = _filelength(_fileno(Stream))) < 0)
       sprintf(g->Message, MSG(FILELEN_ERROR), "_filelength", To_File);
 
-  if (trace)
+  if (trace(1))
     htrc("File length=%d\n", len);
 
   return len;
@@ -561,6 +574,7 @@ bool DOSFAM::OpenTableFile(PGLOBAL g)
 
       // Selective delete, pass thru
       Bin = true;
+      /* fall through */
     case MODE_UPDATE:
       if ((UseTemp = Tdbp->IsUsingTemp(g))) {
         strcpy(opmode, "r");
@@ -584,14 +598,14 @@ bool DOSFAM::OpenTableFile(PGLOBAL g)
   PlugSetPath(filename, To_File, Tdbp->GetPath());
 
   if (!(Stream = PlugOpenFile(g, filename, opmode))) {
-    if (trace)
+    if (trace(1))
       htrc("%s\n", g->Message);
 
     return (mode == MODE_READ && errno == ENOENT)
             ? PushWarning(g, Tdbp) : true;
     } // endif Stream
 
-  if (trace)
+  if (trace(1))
     htrc("File %s open Stream=%p mode=%s\n", filename, Stream, opmode);
 
   To_Fb = dbuserp->Openlist;     // Keep track of File block
@@ -614,7 +628,7 @@ bool DOSFAM::AllocateBuffer(PGLOBAL g)
   // Lrecl does not include line ending
   Buflen = Lrecl + Ending + ((Bin) ? 1 : 0) + 1;     // Sergei
 
-  if (trace)
+  if (trace(1))
     htrc("SubAllocating a buffer of %d bytes\n", Buflen);
 
   To_Buf = (char*)PlugSubAlloc(g, NULL, Buflen);
@@ -754,7 +768,7 @@ int DOSFAM::ReadBuffer(PGLOBAL g)
   if (!Stream)
     return RC_EF;
 
-  if (trace > 1)
+  if (trace(2))
     htrc("ReadBuffer: Tdbp=%p To_Line=%p Placed=%d\n",
                       Tdbp, Tdbp->To_Line, Placed);
 
@@ -768,7 +782,7 @@ int DOSFAM::ReadBuffer(PGLOBAL g)
 
     CurBlk = (int)Rows++;
 
-    if (trace > 1)
+    if (trace(2))
       htrc("ReadBuffer: CurBlk=%d\n", CurBlk);
 
    /********************************************************************/
@@ -789,14 +803,14 @@ int DOSFAM::ReadBuffer(PGLOBAL g)
   } else
     Placed = false;
 
-  if (trace > 1)
+  if (trace(2))
     htrc(" About to read: stream=%p To_Buf=%p Buflen=%d\n",
                           Stream, To_Buf, Buflen);
 
   if (fgets(To_Buf, Buflen, Stream)) {
     p = To_Buf + strlen(To_Buf) - 1;
 
-    if (trace > 1)
+    if (trace(2))
       htrc(" Read: To_Buf=%p p=%c\n", To_Buf, To_Buf, p);
 
 #if defined(__WIN__)
@@ -824,7 +838,7 @@ int DOSFAM::ReadBuffer(PGLOBAL g)
     } else if (*p == '\n')
       *p = '\0';          // Eliminate ending new-line character
 
-    if (trace > 1)
+    if (trace(2))
       htrc(" To_Buf='%s'\n", To_Buf);
 
     strcpy(Tdbp->To_Line, To_Buf);
@@ -839,13 +853,13 @@ int DOSFAM::ReadBuffer(PGLOBAL g)
     sprintf(g->Message, MSG(READ_ERROR), To_File, strerror(0));
 #endif
 
-    if (trace)
+    if (trace(1))
       htrc("%s\n", g->Message);
 
     rc = RC_FX;
   } // endif's fgets
 
-  if (trace > 1)
+  if (trace(2))
     htrc("ReadBuffer: rc=%d\n", rc);
 
   IsRead = true;
@@ -881,7 +895,7 @@ int DOSFAM::WriteBuffer(PGLOBAL g)
     /*******************************************************************/
     curpos = ftell(Stream);
 
-    if (trace)
+    if (trace(1))
       htrc("Last : %d cur: %d\n", Fpos, curpos);
 
     if (UseTemp) {
@@ -923,7 +937,7 @@ int DOSFAM::WriteBuffer(PGLOBAL g)
       return RC_FX;
       } // endif
 
-  if (trace)
+  if (trace(1))
     htrc("write done\n");
 
   return RC_OK;
@@ -946,7 +960,7 @@ int DOSFAM::DeleteRecords(PGLOBAL g, int irc)
   /*      file, and at the end erase all trailing records.             */
   /*  This will be experimented.                                       */
   /*********************************************************************/
-  if (trace)
+  if (trace(1))
     htrc(
   "DOS DeleteDB: rc=%d UseTemp=%d curpos=%d Fpos=%d Tpos=%d Spos=%d\n",
                 irc, UseTemp, curpos, Fpos, Tpos, Spos);
@@ -958,7 +972,7 @@ int DOSFAM::DeleteRecords(PGLOBAL g, int irc)
     fseek(Stream, 0, SEEK_END);
     Fpos = ftell(Stream);
 
-    if (trace)
+    if (trace(1))
       htrc("Fpos placed at file end=%d\n", Fpos);
 
     } // endif irc
@@ -973,7 +987,7 @@ int DOSFAM::DeleteRecords(PGLOBAL g, int irc)
 
     } else {
       /*****************************************************************/
-      /*  Move of eventual preceding lines is not required here.      */
+      /*  Move of eventual preceding lines is not required here.       */
       /*  Set the target file as being the source file itself.         */
       /*  Set the future Tpos, and give Spos a value to block copying. */
       /*****************************************************************/
@@ -1001,7 +1015,7 @@ int DOSFAM::DeleteRecords(PGLOBAL g, int irc)
 
     Spos = GetNextPos();                     // New start position
 
-    if (trace)
+    if (trace(1))
       htrc("after: Tpos=%d Spos=%d\n", Tpos, Spos);
 
   } else {
@@ -1044,7 +1058,7 @@ int DOSFAM::DeleteRecords(PGLOBAL g, int irc)
 
       close(h);
 
-      if (trace)
+      if (trace(1))
         htrc("done, h=%d irc=%d\n", h, irc);
 
       } // endif !UseTemp
@@ -1069,7 +1083,7 @@ bool DOSFAM::OpenTempFile(PGLOBAL g)
   strcat(PlugRemoveType(tempname, tempname), ".t");
 
   if (!(T_Stream = PlugOpenFile(g, tempname, "wb"))) {
-    if (trace)
+    if (trace(1))
       htrc("%s\n", g->Message);
 
     rc = true;
@@ -1098,7 +1112,7 @@ bool DOSFAM::MoveIntermediateLines(PGLOBAL g, bool *b)
     req = (size_t)MY_MIN(n, Dbflen);
     len = fread(DelBuf, 1, req, Stream);
 
-    if (trace)
+    if (trace(1))
       htrc("after read req=%d len=%d\n", req, len);
 
     if (len != req) {
@@ -1117,13 +1131,13 @@ bool DOSFAM::MoveIntermediateLines(PGLOBAL g, bool *b)
       return true;
       } // endif
 
-    if (trace)
+    if (trace(1))
       htrc("after write pos=%d\n", ftell(Stream));
 
     Tpos += (int)req;
     Spos += (int)req;
 
-    if (trace)
+    if (trace(1))
       htrc("loop: Tpos=%d Spos=%d\n", Tpos, Spos);
 
     *b = true;
@@ -1159,15 +1173,15 @@ int DOSFAM::RenameTempFile(PGLOBAL g)
     remove(filetemp);   // May still be there from previous error
 
     if (rename(filename, filetemp)) {    // Save file for security
-      sprintf(g->Message, MSG(RENAME_ERROR),
+      snprintf(g->Message, MAX_STR, MSG(RENAME_ERROR),
               filename, filetemp, strerror(errno));
-      longjmp(g->jumper[g->jump_level], 51);
-    } else if (rename(tempname, filename)) {
-      sprintf(g->Message, MSG(RENAME_ERROR),
+			throw 51;
+		} else if (rename(tempname, filename)) {
+      snprintf(g->Message, MAX_STR, MSG(RENAME_ERROR),
               tempname, filename, strerror(errno));
       rc = rename(filetemp, filename);   // Restore saved file
-      longjmp(g->jumper[g->jump_level], 52);
-    } else if (remove(filetemp)) {
+			throw 52;
+		} else if (remove(filetemp)) {
       sprintf(g->Message, MSG(REMOVE_ERROR),
               filetemp, strerror(errno));
       rc = RC_INFO;                      // Acceptable
@@ -1203,7 +1217,7 @@ void DOSFAM::CloseTableFile(PGLOBAL g, bool abort)
   } else {
     rc = PlugCloseFile(g, To_Fb);
 
-    if (trace)
+    if (trace(1))
       htrc("DOS Close: closing %s rc=%d\n", To_File, rc);
 
   } // endif UseTemp
@@ -1337,7 +1351,7 @@ int BLKFAM::GetPos(void)
 /***********************************************************************/
 int BLKFAM::GetNextPos(void)
   {
-  return Fpos + NxtLine - CurLine;
+  return (int)(Fpos + NxtLine - CurLine);
   } // end of GetNextPos
 
 /***********************************************************************/
@@ -1382,7 +1396,8 @@ int BLKFAM::SkipRecord(PGLOBAL, bool header)
 /***********************************************************************/
 int BLKFAM::ReadBuffer(PGLOBAL g)
   {
-  int i, n, rc = RC_OK;
+  int i, rc = RC_OK;
+  size_t n;
 
   /*********************************************************************/
   /*  Sequential reading when Placed is not true.                      */
@@ -1438,13 +1453,13 @@ int BLKFAM::ReadBuffer(PGLOBAL g)
   // Calculate the length of block to read
   BlkLen = BlkPos[CurBlk + 1] - BlkPos[CurBlk];
 
-  if (trace)
+  if (trace(1))
     htrc("File position is now %d\n", ftell(Stream));
 
   // Read the entire next block
   n = fread(To_Buf, 1, (size_t)BlkLen, Stream);
 
-  if (n == BlkLen) {
+  if ((size_t) n == (size_t) BlkLen) {
 //  ReadBlks++;
     num_read++;
     Rbuf = (CurBlk == Block - 1) ? Last : Nrec;
@@ -1472,7 +1487,7 @@ int BLKFAM::ReadBuffer(PGLOBAL g)
     sprintf(g->Message, MSG(READ_ERROR), To_File, strerror(errno));
 #endif
 
-    if (trace)
+    if (trace(1))
       htrc("%s\n", g->Message);
 
     return RC_FX;
@@ -1483,7 +1498,7 @@ int BLKFAM::ReadBuffer(PGLOBAL g)
 
  fin:
   // Store the current record file position for Delete and Update
-  Fpos = BlkPos[CurBlk] + CurLine - To_Buf;
+  Fpos = (int)(BlkPos[CurBlk] + CurLine - To_Buf);
   return rc;
   } // end of ReadBuffer
 
@@ -1510,7 +1525,7 @@ int BLKFAM::WriteBuffer(PGLOBAL g)
 
     //  Now start the writing process.
     NxtLine = CurLine + strlen(CurLine);
-    BlkLen = NxtLine - To_Buf;
+    BlkLen = (int)(NxtLine - To_Buf);
 
     if (fwrite(To_Buf, 1, BlkLen, Stream) != (size_t)BlkLen) {
       sprintf(g->Message, MSG(FWRITE_ERROR), strerror(errno));
@@ -1622,7 +1637,7 @@ void BLKFAM::CloseTableFile(PGLOBAL g, bool abort)
 
     rc = PlugCloseFile(g, To_Fb);
 
-    if (trace)
+    if (trace(1))
       htrc("BLK CloseTableFile: closing %s mode=%d wrc=%d rc=%d\n",
             To_File, Tdbp->GetMode(), wrc, rc);
 

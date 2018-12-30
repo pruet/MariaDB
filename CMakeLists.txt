@@ -1,5 +1,5 @@
-# Copyright (c) 2006, 2014, Oracle and/or its affiliates.
-# Copyright (c) 2008, 2014, Monty Program Ab
+# Copyright (c) 2006, 2017, Oracle and/or its affiliates.
+# Copyright (c) 2008, 2018, MariaDB Corporation
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -56,9 +56,9 @@ ENDIF()
 SET(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING
    "Choose the type of build, options are: None(CMAKE_CXX_FLAGS or CMAKE_C_FLAGS used) Debug Release RelWithDebInfo MinSizeRel")
 
-# MAX_INDEXES - Set the maximum number of indexes per table, default 64U
+# MAX_INDEXES - Set the maximum number of indexes per table, default 64
 IF (NOT MAX_INDEXES)
-  SET(MAX_INDEXES 64U)
+  SET(MAX_INDEXES 64)
 ENDIF(NOT MAX_INDEXES)
 
 IF (${MAX_INDEXES} GREATER 128)
@@ -162,6 +162,7 @@ INCLUDE(plugin)
 INCLUDE(install_macros)
 INCLUDE(systemd)
 INCLUDE(mysql_add_executable)
+INCLUDE(compile_flags)
 
 # Handle options
 OPTION(DISABLE_SHARED 
@@ -178,6 +179,12 @@ ENDIF()
 OPTION (WITH_UNIT_TESTS "Compile MySQL with unit tests" ON)
 MARK_AS_ADVANCED(CYBOZU)
 
+IF (WITHOUT_SERVER)
+  SET (SKIP_COMPONENTS "Server|IniFiles|SuportFiles|Readme")
+ELSE()
+  SET (SKIP_COMPONENTS "N-O-N-E")
+ENDIF()
+
 OPTION(NOT_FOR_DISTRIBUTION "Allow linking with GPLv2-incompatible system libraries. Only set it you never plan to distribute the resulting binaries" OFF)
 
 INCLUDE(check_compiler_flag)
@@ -187,12 +194,16 @@ IF (WITH_ASAN)
   # gcc 4.8.1 and new versions of clang
   MY_CHECK_AND_SET_COMPILER_FLAG("-fsanitize=address -O1 -Wno-error -fPIC"
     DEBUG RELWITHDEBINFO)
+  SET(HAVE_C_FSANITIZE ${HAVE_C__fsanitize_address__O1__Wno_error__fPIC})
+  SET(HAVE_CXX_FSANITIZE ${HAVE_CXX__fsanitize_address__O1__Wno_error__fPIC})
   IF(HAVE_C_FSANITIZE AND HAVE_CXX_FSANITIZE)
     SET(WITH_ASAN_OK 1)
   ELSE()
     # older versions of clang
     MY_CHECK_AND_SET_COMPILER_FLAG("-faddress-sanitizer -O1 -fPIC"
       DEBUG RELWITHDEBINFO)
+    SET(HAVE_C_FADDRESS ${HAVE_C__faddress_sanitizer__O1__fPIC})
+    SET(HAVE_CXX_FADDRESS ${HAVE_CXX__faddress_sanitizer__O1__fPIC})
     IF(HAVE_C_FADDRESS AND HAVE_CXX_FADDRESS)
       SET(WITH_ASAN_OK 1)
     ENDIF()
@@ -219,11 +230,9 @@ IF(SECURITY_HARDENED)
   MY_CHECK_AND_SET_COMPILER_FLAG("-D_FORTIFY_SOURCE=2" RELEASE RELWITHDEBINFO)
 ENDIF()
 
-OPTION(ENABLE_DEBUG_SYNC "Enable debug sync (debug builds only)" ON) 
-IF(ENABLE_DEBUG_SYNC) 
-  SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DENABLED_DEBUG_SYNC") 
-  SET(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -DENABLED_DEBUG_SYNC") 
-ENDIF() 
+# Always enable debug sync for debug builds.
+SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DENABLED_DEBUG_SYNC")
+SET(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -DENABLED_DEBUG_SYNC")
  
 OPTION(ENABLE_GCOV "Enable gcov (debug, Linux builds only)" OFF)
 IF (ENABLE_GCOV)
@@ -279,7 +288,7 @@ ENDIF()
 
 # Set commonly used variables
 IF(WIN32)
-  SET(DEFAULT_MYSQL_HOME "C:/MariaDB${MYSQL_BASE_VERSION}")
+  SET(DEFAULT_MYSQL_HOME "C:/Program Files/MariaDB ${MYSQL_BASE_VERSION}")
   SET(SHAREDIR share)
 ELSE()
   SET(DEFAULT_MYSQL_HOME ${CMAKE_INSTALL_PREFIX})
@@ -324,6 +333,9 @@ SET(CMAKE_INCLUDE_DIRECTORIES_PROJECT_BEFORE ON)
 
 # Common defines and includes
 ADD_DEFINITIONS(-DHAVE_CONFIG_H)
+IF(_FILE_OFFSET_BITS)
+  ADD_DEFINITIONS(-D_FILE_OFFSET_BITS=${_FILE_OFFSET_BITS})
+ENDIF()
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}/include)
 
 # Add bundled or system zlib.
@@ -460,8 +472,9 @@ ADD_CUSTOM_TARGET(INFO_BIN ALL
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-INSTALL_DOCUMENTATION(README CREDITS COPYING COPYING.LESSER COPYING.thirdparty
+INSTALL_DOCUMENTATION(README CREDITS COPYING COPYING.thirdparty
                       EXCEPTIONS-CLIENT COMPONENT Readme)
+
 # MDEV-6526 these files are not installed anymore
 #INSTALL_DOCUMENTATION(${CMAKE_BINARY_DIR}/Docs/INFO_SRC
 #                      ${CMAKE_BINARY_DIR}/Docs/INFO_BIN)
@@ -472,6 +485,12 @@ IF(UNIX)
 ENDIF()
 
 INCLUDE(CPack)
+
+IF(WIN32 AND SIGNCODE)
+  # Configure post-install script for authenticode signing
+  CONFIGURE_FILE(${PROJECT_SOURCE_DIR}/cmake/sign.cmake.in sign.cmake @ONLY)
+  INSTALL(SCRIPT ${PROJECT_BINARY_DIR}/sign.cmake)
+ENDIF()
 
 IF(NON_DISTRIBUTABLE_WARNING)
   MESSAGE(WARNING "

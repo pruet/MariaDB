@@ -1,4 +1,5 @@
-/* Copyright (c) 2005, 2013, Oracle and/or its affiliates.
+/* Copyright (c) 2005, 2016, Oracle and/or its affiliates.
+   Copyright (c) 2009, 2017, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -2701,7 +2702,7 @@ void Item_xml_str_func::fix_length_and_dec()
 
 bool Item_xml_str_func::fix_fields(THD *thd, Item **ref)
 {
-  String *xp, tmp;
+  String *xp;
   MY_XPATH xpath;
   int rc;
 
@@ -2729,7 +2730,13 @@ bool Item_xml_str_func::fix_fields(THD *thd, Item **ref)
     return true;
   }
 
-  if (!(xp= args[1]->val_str(&tmp)))
+  /*
+    Get the XPath query text from args[1] and cache it in m_xpath_query.
+    Its fragments will be referenced by items created during my_xpath_parse(),
+    e.g. by Item_nodeset_func_axisbyname::node_name.
+  */
+  if (!(xp= args[1]->val_str(&m_xpath_query)) ||
+      (xp != &m_xpath_query && m_xpath_query.copy(*xp)))
     return false; // Will return NULL
   my_xpath_init(&xpath);
   xpath.thd= thd;
@@ -2820,9 +2827,9 @@ int xml_enter(MY_XML_PARSER *st,const char *attr, size_t len)
 
   node.parent= data->parent; // Set parent for the new node to old parent
   data->parent= numnodes;    // Remember current node as new parent
-  DBUG_ASSERT(data->level <= MAX_LEVEL);
+  DBUG_ASSERT(data->level < MAX_LEVEL);
   data->pos[data->level]= numnodes;
-  if (data->level < MAX_LEVEL)
+  if (data->level < MAX_LEVEL - 1)
     node.level= data->level++;
   else
     return MY_XML_ERROR;

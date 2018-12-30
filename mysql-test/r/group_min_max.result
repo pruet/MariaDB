@@ -2378,6 +2378,7 @@ SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
 Handler_read_key	8
 Handler_read_next	0
+Handler_read_retry	0
 EXPLAIN SELECT max(b), a FROM t1 GROUP BY a;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	SIMPLE	t1	range	NULL	a	5	NULL	8	Using index for group-by
@@ -2387,6 +2388,7 @@ SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
 Handler_read_key	8
 Handler_read_next	0
+Handler_read_retry	0
 FLUSH STATUS;
 SELECT * FROM (SELECT max(b), a FROM t1 GROUP BY a) b;
 max(b)	a
@@ -2398,6 +2400,7 @@ SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
 Handler_read_key	8
 Handler_read_next	0
+Handler_read_retry	0
 FLUSH STATUS;
 (SELECT max(b), a FROM t1 GROUP BY a) UNION 
 (SELECT max(b), a FROM t1 GROUP BY a);
@@ -2410,6 +2413,7 @@ SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
 Handler_read_key	16
 Handler_read_next	0
+Handler_read_retry	0
 EXPLAIN (SELECT max(b), a FROM t1 GROUP BY a) UNION 
 (SELECT max(b), a FROM t1 GROUP BY a);
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
@@ -2462,6 +2466,7 @@ SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
 Handler_read_key	8
 Handler_read_next	0
+Handler_read_retry	0
 DELETE FROM t3;
 FLUSH STATUS;
 INSERT INTO t3 SELECT 1, (SELECT MAX(b) FROM t1 GROUP BY a HAVING a < 2) 
@@ -2470,12 +2475,14 @@ SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
 Handler_read_key	8
 Handler_read_next	0
+Handler_read_retry	0
 FLUSH STATUS;
 DELETE FROM t3 WHERE (SELECT MAX(b) FROM t1 GROUP BY a HAVING a < 2) > 10000;
 SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
 Handler_read_key	8
 Handler_read_next	0
+Handler_read_retry	0
 FLUSH STATUS;
 DELETE FROM t3 WHERE (SELECT (SELECT MAX(b) FROM t1 GROUP BY a HAVING a < 2) x 
 FROM t1) > 10000;
@@ -2484,6 +2491,7 @@ SHOW STATUS LIKE 'handler_read__e%';
 Variable_name	Value
 Handler_read_key	8
 Handler_read_next	1
+Handler_read_retry	0
 DROP TABLE t1,t2,t3;
 CREATE TABLE t1 (a int, INDEX idx(a));
 INSERT INTO t1 VALUES
@@ -2554,7 +2562,7 @@ a	MIN(b)	MAX(b)	AVG(b)
 DROP TABLE t1;
 create table t1 (a int, b int, key (a,b), key `index` (a,b)) engine=MyISAM;
 Warnings:
-Note	1831	Duplicate index 'index' defined on the table 'test.t1'. This is deprecated and will be disallowed in a future release.
+Note	1831	Duplicate index `index`. This is deprecated and will be disallowed in a future release.
 insert into  t1 (a,b) values 
 (0,0),(0,1),(0,2),(0,3),(0,4),(0,5),(0,6),
 (0,7),(0,8),(0,9),(0,10),(0,11),(0,12),(0,13),
@@ -3725,6 +3733,34 @@ id	MIN(a)	MAX(a)
 4	 2001-01-04	 2001-01-04
 DROP TABLE t1;
 #
+# MDEV-17039: Query plan changes when we use GROUP BY optimization with optimizer_use_condition_selectivity=4
+# and use_stat_tables= PREFERABLY
+#
+CREATE TABLE t1 (a INT, b INT,c INT DEFAULT 0, INDEX (a,b));
+INSERT INTO t1 (a, b) VALUES (1,1), (1,2), (1,3), (1,4), (1,5),
+(2,2), (2,3), (2,1), (3,1), (4,1), (4,2), (4,3), (4,4), (4,5), (4,6);
+set @save_optimizer_use_condition_selectivity= @@optimizer_use_condition_selectivity;
+set @save_use_stat_tables= @@use_stat_tables;
+set @@optimizer_use_condition_selectivity=4;
+set @@use_stat_tables=PREFERABLY;
+explain extended SELECT a FROM t1 AS t1_outer WHERE a IN (SELECT max(b) FROM t1  GROUP BY a);
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<subquery2>	ALL	distinct_key	NULL	NULL	NULL	8	100.00	
+1	PRIMARY	t1_outer	ref	a	a	5	<subquery2>.max(b)	2	100.00	Using index
+2	MATERIALIZED	t1	range	NULL	a	5	NULL	8	100.00	Using index for group-by
+Warnings:
+Note	1003	select `test`.`t1_outer`.`a` AS `a` from  <materialize> (select max(`test`.`t1`.`b`) from `test`.`t1` group by `test`.`t1`.`a`) join `test`.`t1` `t1_outer` where (`test`.`t1_outer`.`a` = `<subquery2>`.`max(b)`)
+set @@optimizer_use_condition_selectivity=@save_optimizer_use_condition_selectivity;
+set @@use_stat_tables=@save_use_stat_tables;
+explain extended SELECT a FROM t1 AS t1_outer WHERE a IN (SELECT max(b) FROM t1   GROUP BY a);
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<subquery2>	ALL	distinct_key	NULL	NULL	NULL	8	100.00	
+1	PRIMARY	t1_outer	ref	a	a	5	<subquery2>.max(b)	2	100.00	Using index
+2	MATERIALIZED	t1	range	NULL	a	5	NULL	8	100.00	Using index for group-by
+Warnings:
+Note	1003	select `test`.`t1_outer`.`a` AS `a` from  <materialize> (select max(`test`.`t1`.`b`) from `test`.`t1` group by `test`.`t1`.`a`) join `test`.`t1` `t1_outer` where (`test`.`t1_outer`.`a` = `<subquery2>`.`max(b)`)
+drop table t1;
+#
 # End of 10.0 tests
 #
 #
@@ -3883,6 +3919,23 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 explain select min(a) from t1 where a between "abbbbbbbbbbbbbbbbbbbb" and "Cafe2";
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	SIMPLE	t1	index	a	a	13	NULL	2	Using where; Using index
+drop table t1;
+#
+# MDEV-15433: Optimizer does not use group by optimization with distinct
+#
+CREATE TABLE t1 (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, a INT NOT NULL, KEY(a));
+OPTIMIZE TABLE t1;
+Table	Op	Msg_type	Msg_text
+test.t1	optimize	status	OK
+EXPLAIN SELECT DISTINCT a FROM t1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	SIMPLE	t1	range	NULL	a	4	NULL	5	Using index for group-by
+SELECT DISTINCT a FROM t1;
+a
+1
+2
+3
+4
 drop table t1;
 #
 # End of 10.1 tests

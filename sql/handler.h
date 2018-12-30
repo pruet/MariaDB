@@ -2,7 +2,7 @@
 #define HANDLER_INCLUDED
 /*
    Copyright (c) 2000, 2016, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2016, MariaDB
+   Copyright (c) 2009, 2018, MariaDB
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License
@@ -602,7 +602,7 @@ struct xid_t {
     bqual_length= b;
     memcpy(data, d, g+b);
   }
-  bool is_null() { return formatID == -1; }
+  bool is_null() const { return formatID == -1; }
   void null() { formatID= -1; }
   my_xid quick_get_my_xid()
   {
@@ -1470,15 +1470,29 @@ struct THD_TRANS
   static unsigned int const CREATED_TEMP_TABLE= 0x02;
   static unsigned int const DROPPED_TEMP_TABLE= 0x04;
   static unsigned int const DID_WAIT= 0x08;
+  static unsigned int const DID_DDL= 0x10;
 
   void mark_created_temp_table()
   {
     DBUG_PRINT("debug", ("mark_created_temp_table"));
     m_unsafe_rollback_flags|= CREATED_TEMP_TABLE;
   }
+  void mark_dropped_temp_table()
+  {
+    DBUG_PRINT("debug", ("mark_dropped_temp_table"));
+    m_unsafe_rollback_flags|= DROPPED_TEMP_TABLE;
+  }
+  bool has_created_dropped_temp_table() const {
+    return
+      (m_unsafe_rollback_flags & (CREATED_TEMP_TABLE|DROPPED_TEMP_TABLE)) != 0;
+  }
   void mark_trans_did_wait() { m_unsafe_rollback_flags|= DID_WAIT; }
   bool trans_did_wait() const {
     return (m_unsafe_rollback_flags & DID_WAIT) != 0;
+  }
+  void mark_trans_did_ddl() { m_unsafe_rollback_flags|= DID_DDL; }
+  bool trans_did_ddl() const {
+    return (m_unsafe_rollback_flags & DID_DDL) != 0;
   }
 
 };
@@ -1749,6 +1763,13 @@ struct HA_CREATE_INFO: public Table_scope_and_contents_source_st,
     table_charset= default_table_charset= cs;
     used_fields|= (HA_CREATE_USED_CHARSET | HA_CREATE_USED_DEFAULT_CHARSET);  
     return false;
+  }
+  ulong table_options_with_row_type()
+  {
+    if (row_type == ROW_TYPE_DYNAMIC || row_type == ROW_TYPE_PAGE)
+      return table_options | HA_OPTION_PACK_RECORD;
+    else
+      return table_options;
   }
 };
 
@@ -3159,9 +3180,17 @@ private:
   */
   virtual int rnd_pos_by_record(uchar *record)
   {
+    int error;
     DBUG_ASSERT(table_flags() & HA_PRIMARY_KEY_REQUIRED_FOR_POSITION);
+
+    error = ha_rnd_init(false);
+    if (error != 0)
+      return error;
+
     position(record);
-    return rnd_pos(record, ref);
+    error = ha_rnd_pos(record, ref);
+    ha_rnd_end();
+    return error;
   }
   virtual int read_first_row(uchar *buf, uint primary_key);
 public:
@@ -3214,6 +3243,7 @@ public:
     If this method returns nonzero, it will also signal the storage
     engine that the next read will be a locking re-read of the row.
   */
+  bool ha_was_semi_consistent_read();
   virtual bool was_semi_consistent_read() { return 0; }
   /**
     Tell the engine whether it should avoid unnecessary lock waits.
@@ -3829,7 +3859,7 @@ protected:
 
     @note No errors are allowed during notify_table_changed().
  */
- virtual void notify_table_changed();
+ virtual void notify_table_changed() { }
 
 public:
  /* End of On-line/in-place ALTER TABLE interface. */
@@ -4286,4 +4316,7 @@ inline const char *table_case_name(HA_CREATE_INFO *info, const char *name)
 
 void print_keydup_error(TABLE *table, KEY *key, const char *msg, myf errflag);
 void print_keydup_error(TABLE *table, KEY *key, myf errflag);
+
+int del_global_index_stat(THD *thd, TABLE* table, KEY* key_info);
+int del_global_table_stat(THD *thd, LEX_STRING *db, LEX_STRING *table);
 #endif /* HANDLER_INCLUDED */
